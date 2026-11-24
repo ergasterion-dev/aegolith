@@ -264,7 +264,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-SSRF-002` | ssrf | block | A URL to localhost, a loopback, private or link-local address. Not applied to `Referer`. |
 | `AEG-XXE-001` | xxe | block | An XML `DOCTYPE` with an external identifier or an entity (only when `allow_xml` is set). |
 | `AEG-NOSQL-001` | nosqli | block | A JSON key that starts with `$` (a Mongo operator). |
-| `AEG-NOSQL-002` | nosqli | block | A query or form key that carries an operator (`q[$ne]=1`). |
+| `AEG-NOSQL-002` | nosqli | block | A query or form key that carries a known MongoDB operator (`q[$ne]=1`, `$where=...`); `amount[$USD]` is not one. |
 | `AEG-PPOLL-001` | protopollution | block | A JSON key `__proto__`, `constructor` or `prototype`. |
 | `AEG-SESSION-001` | session | block | A session identifier in a query, form or JSON value (`PHPSESSID=`, `JSESSIONID=`, `ASPSESSIONID`). |
 | `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, acunetix, nessus, openvas). |

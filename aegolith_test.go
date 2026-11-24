@@ -1495,3 +1495,21 @@ func TestBodyOverLimitDefaultBlocks(t *testing.T) {
 		t.Fatalf("body at the limit: %v", ruleIDs(d))
 	}
 }
+
+// A currency-style form or query key is not a NoSQL operator; a real one is.
+func TestQueryKeyCurrencyNotOperator(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	for _, r := range []*aegolith.Request{
+		withBody("POST", "/checkout", "application/x-www-form-urlencoded", "amount%5B%24USD%5D=12.50&price[$EUR]=3"),
+		get("/prices?total[$GBP]=4"),
+	} {
+		if d := fw.Inspect(r); len(d.Matches) != 0 {
+			t.Fatalf("%s %s: %v", r.Method, r.RawPath, ruleIDs(d))
+		}
+	}
+	d := fw.Inspect(withBody("POST", "/login", "application/x-www-form-urlencoded", "email[$ne]=x&password[$ne]=x"))
+	mustHave(t, d, "AEG-NOSQL-002", "")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("operator key: %v", ruleIDs(d))
+	}
+}

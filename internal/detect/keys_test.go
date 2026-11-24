@@ -31,21 +31,33 @@ func TestQueryKey(t *testing.T) {
 		"id[$in][]",
 		"id[$nin]",
 		"f[$exists]",
-		"[$anything]",
 		"$where",
+		"$in[]",
+		"$or[0][a]",
 		"email%5B%24ne%5D",
-		// any operator shape, not only a fixed list
 		"a[$or][0][b]",
 		"filter[$and]",
+		"filter[$nor][]",
+		"a[$not][$regex]",
 		"a[$size]",
 		"a[$elemMatch][b]",
+		"a[$exists]",
+		"a[$type]",
 		"a[$eq]",
 		"a[$expr]",
+		"a[$mod][]",
 		"tags[$all][]",
+		"[$text][$search]",
+		"[$jsonSchema]",
 	})
 	assertNoKeyHits(t, "QueryKey", QueryKey, []string{
 		"price", "page", "limit", "sort", "q", "items[]", "filter[name]", "a[0][b]", "cost$", "price[$5]x",
 		"a[$]", "a[$ne", "tag[$100]", "note[$ 5]", "price[usd$]",
+		// Currency-style form keys are not operators.
+		"amount[$USD]", "price[$EUR]", "total[$gbp]", "[$anything]", "$USD", "$", "$ne_count", "$wherever",
+		// Operators are case-sensitive in MongoDB.
+		"a[$NE]", "a[$Where]",
+		"a[$nex]", "a[$neq]", "$in5",
 	})
 }
 
