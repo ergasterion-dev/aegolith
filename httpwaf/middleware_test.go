@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -303,21 +304,22 @@ func TestMiddlewareNilFirewallFailsOpen(t *testing.T) {
 	}
 }
 
+// TestMiddlewareConcurrent: 16 blocked GETs and 16 monitored POSTs (a
+// long value raises AEG-PROTO-011) run at once; every decision of each
+// kind must be identical, match for match.
 func TestMiddlewareConcurrent(t *testing.T) {
 	var mu sync.Mutex
-	var rules []string
+	decisions := map[string][]string{} // method -> canonical decisions
 	h := Middleware(newFW(t, aegolith.Config{}), Options{
-		OnDecision: func(_ *aegolith.Request, d aegolith.Decision) {
-			if d.Action != aegolith.ActionBlock {
-				return
+		OnDecision: func(r *aegolith.Request, d aegolith.Decision) {
+			var b strings.Builder
+			fmt.Fprintf(&b, "action=%s monitored=%v route=%q err=%v", d.Action, d.Monitored, d.Route, d.Err)
+			for _, m := range d.Matches {
+				fmt.Fprintf(&b, " | %s %s %s %s %s %q", m.RuleID, m.Category, m.Location, m.Field, m.Action, m.Snippet)
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			var ids []string
-			for _, m := range d.Matches {
-				ids = append(ids, m.RuleID)
-			}
-			rules = append(rules, strings.Join(ids, ","))
+			decisions[r.Method] = append(decisions[r.Method], b.String())
 		},
 	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -344,13 +346,22 @@ func TestMiddlewareConcurrent(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	if len(rules) != 16 {
-		t.Fatalf("hook calls %d: %q", len(rules), rules)
-	}
-	for _, r := range rules {
-		if r != rules[0] || r == "" {
-			t.Fatalf("decisions differ: %q vs %q", r, rules[0])
+	for method, want := range map[string]string{"GET": "action=block monitored=false", "POST": "action=allow monitored=true"} {
+		got := decisions[method]
+		if len(got) != 16 {
+			t.Fatalf("%s hook calls %d: %q", method, len(got), got)
 		}
+		if !strings.HasPrefix(got[0], want) || !strings.Contains(got[0], " | ") {
+			t.Fatalf("%s decision %q, want prefix %q and matches", method, got[0], want)
+		}
+		for _, d := range got {
+			if d != got[0] {
+				t.Fatalf("%s decisions differ:\n%q\n%q", method, d, got[0])
+			}
+		}
+	}
+	if !strings.Contains(decisions["POST"][0], "AEG-PROTO-011") {
+		t.Fatalf("POST decision %q, want AEG-PROTO-011", decisions["POST"][0])
 	}
 }
 
