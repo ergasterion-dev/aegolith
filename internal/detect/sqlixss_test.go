@@ -21,7 +21,7 @@ var legitNegatives = []string{
 	"price<500",
 	"House #12, Lal Chowk, Srinagar 190001",
 	"50% off",
-	"+91 9000000000",
+	"+91 9000012345",
 	"Please ring the bell, don't knock. Gate code 1234 & leave at door",
 	"دودھ اور روٹی",
 	"दूध और ब्रेड",

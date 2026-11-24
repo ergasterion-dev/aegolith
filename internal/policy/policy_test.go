@@ -370,10 +370,10 @@ func TestValidateTypes(t *testing.T) {
 			{"", true, false},
 		}},
 		{"phone", FieldSpec{Type: "phone"}, []c{
-			{"+91 9000000000", true, true},
+			{"+91 9000012345", true, true},
 			{"+1-555-123-4567", true, true},
 			{"5551234", true, true},
-			{"9000000000", false, false},
+			{"9000012345", false, false},
 			{"9999999999; cat /etc/passwd", true, false},
 			{"123456", true, false},
 			{"1234567890123456", true, false},
