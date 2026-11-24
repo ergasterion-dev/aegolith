@@ -6,22 +6,13 @@ import (
 	libinjection "github.com/corazawaf/libinjection-go"
 
 	"github.com/ergasterion-dev/pylolith/internal/model"
-	"github.com/ergasterion-dev/pylolith/internal/normalize"
-)
-
-var (
-	sqliHit = Hit{RuleID: "PYL-SQLI-001", Category: model.CatSQLi, Severity: model.SeverityCritical}
-	xssHit  = Hit{RuleID: "PYL-XSS-001", Category: model.CatXSS, Severity: model.SeverityHigh}
 )
 
 // SQLi reports whether v looks like SQL injection. It checks v and, when one
 // percent-decoding pass changes it, the decoded value too.
 func SQLi(v string) (Hit, bool) {
-	if isSQLi(v) {
-		return sqliHit, true
-	}
-	if d, _ := normalize.DecodeValue(v); d != v && isSQLi(d) {
-		return sqliHit, true
+	if valueOrDecoded(v, isSQLi) {
+		return Hit{RuleID: "PYL-SQLI-001", Category: model.CatSQLi, Severity: model.SeverityCritical}, true
 	}
 	return Hit{}, false
 }
@@ -29,11 +20,8 @@ func SQLi(v string) (Hit, bool) {
 // XSS reports whether v looks like cross-site scripting. It checks v and,
 // when one percent-decoding pass changes it, the decoded value too.
 func XSS(v string) (Hit, bool) {
-	if isXSS(v) {
-		return xssHit, true
-	}
-	if d, _ := normalize.DecodeValue(v); d != v && isXSS(d) {
-		return xssHit, true
+	if valueOrDecoded(v, isXSS) {
+		return Hit{RuleID: "PYL-XSS-001", Category: model.CatXSS, Severity: model.SeverityHigh}, true
 	}
 	return Hit{}, false
 }
@@ -57,31 +45,49 @@ func isXSS(s string) bool {
 // parenthesised query or one table name with an optional column list, then
 // TO or FROM, PROGRAM and a quoted command. "Meet at 5; copy the list to
 // program 'abc'" does not match (two words between COPY and TO).
+//
+// The scan never looks at a ';' inside a parenthesis group or comment that
+// an earlier COPY already parsed (it does not start a statement there), and
+// stops at the first group or comment that never closes (everything after it
+// is inside). That keeps it linear on input such as a long repetition of
+// ";copy(".
 func hasStackedCopyProgram(s string) bool {
 	for i := strings.IndexByte(s, ';'); i >= 0; {
-		if copyProgramAt(s, i+1) {
+		match, end := copyProgramAt(s, i+1)
+		if match {
 			return true
 		}
-		n := strings.IndexByte(s[i+1:], ';')
-		if n < 0 {
-			break
+		if end < 0 {
+			return false
 		}
-		i += 1 + n
+		from := max(i+1, end)
+		n := strings.IndexByte(s[from:], ';')
+		if n < 0 {
+			return false
+		}
+		i = from + n
 	}
 	return false
 }
 
-func copyProgramAt(s string, i int) bool {
-	i, _ = skipSQLSpace(s, i)
+// copyProgramAt reports whether a COPY ... TO|FROM PROGRAM statement starts
+// at s[i]. end is how far it parsed, or -1 when a parenthesis group or
+// comment it entered never closes.
+func copyProgramAt(s string, i int) (match bool, end int) {
+	if i, _ = skipSQLSpace(s, i); i < 0 {
+		return false, -1
+	}
 	if !wordAt(s, i, "copy") {
-		return false
+		return false, i
 	}
 	i += len("copy")
 	i, sep := skipSQLSpace(s, i)
 	switch {
+	case i < 0:
+		return false, -1
 	case i < len(s) && s[i] == '(':
 		if i = skipParens(s, i); i < 0 {
-			return false
+			return false, -1
 		}
 	case sep:
 		start := i
@@ -89,38 +95,49 @@ func copyProgramAt(s string, i int) bool {
 			i++
 		}
 		if i == start {
-			return false
+			return false, i
 		}
-		if j, _ := skipSQLSpace(s, i); j < len(s) && s[j] == '(' {
+		j, _ := skipSQLSpace(s, i)
+		if j < 0 {
+			return false, -1
+		}
+		if j < len(s) && s[j] == '(' {
 			if i = skipParens(s, j); i < 0 {
-				return false
+				return false, -1
 			}
 		}
 	default:
-		return false
+		return false, i
 	}
-	i, _ = skipSQLSpace(s, i)
+	if i, _ = skipSQLSpace(s, i); i < 0 {
+		return false, -1
+	}
 	switch {
 	case wordAt(s, i, "to"):
 		i += len("to")
 	case wordAt(s, i, "from"):
 		i += len("from")
 	default:
-		return false
+		return false, i
 	}
 	i, sep = skipSQLSpace(s, i)
-	if !sep || !wordAt(s, i, "program") {
-		return false
+	if i < 0 {
+		return false, -1
 	}
-	i, _ = skipSQLSpace(s, i+len("program"))
+	if !sep || !wordAt(s, i, "program") {
+		return false, i
+	}
+	if i, _ = skipSQLSpace(s, i+len("program")); i < 0 {
+		return false, -1
+	}
 	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
 		i++ // E'...' escape-string literal
 	}
-	return i < len(s) && (s[i] == '\'' || s[i] == '$')
+	return i < len(s) && (s[i] == '\'' || s[i] == '$'), i
 }
 
 // skipSQLSpace skips whitespace and /* */ comments from i. sep reports
-// whether anything was skipped.
+// whether anything was skipped. next is -1 when a comment never closes.
 func skipSQLSpace(s string, i int) (next int, sep bool) {
 	start := i
 	for i < len(s) {
@@ -130,7 +147,7 @@ func skipSQLSpace(s string, i int) (next int, sep bool) {
 		case strings.HasPrefix(s[i:], "/*"):
 			end := strings.Index(s[i+2:], "*/")
 			if end < 0 {
-				return len(s), true
+				return -1, true
 			}
 			i += 2 + end + 2
 		default:

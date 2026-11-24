@@ -1,7 +1,9 @@
 package detect
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ergasterion-dev/pylolith/internal/model"
 )
@@ -155,6 +157,35 @@ func TestScriptURL(t *testing.T) {
 	} {
 		if hit, ok := XSS(v); ok {
 			t.Errorf("XSS(%q) = %+v, want no hit", v, hit)
+		}
+	}
+}
+
+// TestCopyProgramLinear checks the COPY scan stays linear on adversarial
+// repetitions that used to make every ';' rescan to the end of the value.
+func TestCopyProgramLinear(t *testing.T) {
+	const size = 8 << 10
+	for name, in := range map[string]string{
+		"unclosed parens":  strings.Repeat(";copy(", size/6),
+		"balanced parens":  strings.Repeat(";copy(", size/12) + strings.Repeat(")", size/12),
+		"unclosed comment": strings.Repeat(";copy/*", size/7),
+		"quotes":           strings.Repeat(";copy('", size/7),
+	} {
+		if d := bestOf(3, func() { hasStackedCopyProgram(in) }); d > time.Millisecond {
+			t.Errorf("%s: hasStackedCopyProgram took %v on %d bytes, want under 1ms", name, d, len(in))
+		}
+	}
+}
+
+// TestCopyProgramAfterEarlierStatement checks that skipping past a parsed
+// COPY group still finds a later stacked statement.
+func TestCopyProgramAfterEarlierStatement(t *testing.T) {
+	for _, v := range []string{
+		"x'; copy (select 1); copy (select '') to program 'id'--",
+		"x'; copy t; copy t to program 'id'--",
+	} {
+		if _, ok := SQLi(v); !ok {
+			t.Errorf("SQLi(%q) = no hit, want hit", v)
 		}
 	}
 }
