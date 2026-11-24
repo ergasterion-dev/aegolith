@@ -18,10 +18,11 @@ var ErrMalformed = errors.New("normalize: malformed JSON")
 // JSONValue is one string, number or boolean value (or one object key) found
 // in a JSON document. Path is dotted with arrays as "[]" (for example
 // "items[].sku"); Key is the last object key, empty for array elements. For
-// an object key, Value is the key itself and IsString is true.
+// an object key, IsKey is true, Value is the key itself and IsString is true.
 type JSONValue struct {
 	Path, Key, Value string
 	IsString         bool
+	IsKey            bool
 }
 
 type jsonFrame struct {
@@ -50,12 +51,12 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 		topSet bool // a complete top-level value has been read
 	)
 
-	emit := func(key, val string, isString bool) error {
+	emit := func(key, val string, isString, isKey bool) error {
 		if count >= lim.MaxFields {
 			return ErrLimit
 		}
 		count++
-		fn(JSONValue{Path: string(path), Key: key, Value: val, IsString: isString})
+		fn(JSONValue{Path: string(path), Key: key, Value: val, IsString: isString, IsKey: isKey})
 		return nil
 	}
 	// valueDone marks the current value complete in its parent frame.
@@ -110,17 +111,17 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 					path = append(path, '.')
 				}
 				path = append(path, v...)
-				if err := emit(v, v, true); err != nil {
+				if err := emit(v, v, true, true); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := emit(curKey(top), v, true); err != nil {
+			if err := emit(curKey(top), v, true, false); err != nil {
 				return err
 			}
 			valueDone()
 		case json.Number:
-			if err := emit(curKey(top), v.String(), false); err != nil {
+			if err := emit(curKey(top), v.String(), false, false); err != nil {
 				return err
 			}
 			valueDone()
@@ -129,7 +130,7 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 			if v {
 				s = "true"
 			}
-			if err := emit(curKey(top), s, false); err != nil {
+			if err := emit(curKey(top), s, false, false); err != nil {
 				return err
 			}
 			valueDone()

@@ -81,4 +81,54 @@ func TestRedact(t *testing.T) {
 	if Redact("") != "" {
 		t.Fatal("empty")
 	}
+	// Line/paragraph separators and format (Cf) characters such as bidi
+	// overrides can forge or reorder log lines.
+	for in, want := range map[string]string{
+		"a\u2028b":        "a?b",
+		"a\u2029b":        "a?b",
+		"x\u202eevil":     "x?evil",
+		"\u2066a\u2069":   "?a?",
+		"zero\u200bwidth": "zero?width",
+		"bom\ufeff":       "bom?",
+		"café اردو":       "café اردو",
+	} {
+		if got := Redact(in); got != want {
+			t.Errorf("Redact(%q) = %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestSafeName(t *testing.T) {
+	long := strings.Repeat("k", 300)
+	if got := SafeName(long); len(got) != 256 {
+		t.Fatalf("len = %d", len(got))
+	}
+	if got := SafeName("a\nb\u202ec"); got != "a?b?c" {
+		t.Fatalf("got %q", got)
+	}
+	if got := SafeName("items[].sku"); got != "items[].sku" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestMarshalInvalid(t *testing.T) {
+	for _, v := range []any{Action(-1), Action(3), Mode(-1), Mode(2)} {
+		if _, err := json.Marshal(v); err == nil {
+			t.Errorf("marshal %v: expected error", v)
+		}
+	}
+	if Action(7).String() != "unknown" || Mode(7).String() != "unknown" {
+		t.Fatal("String of invalid value")
+	}
+}
+
+func TestLimitsJSONTags(t *testing.T) {
+	b, err := json.Marshal(DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"max_body_bytes":1048576,"max_depth":32,"max_fields":1000,"max_value_len":8192}`
+	if string(b) != want {
+		t.Fatalf("got %s", b)
+	}
 }

@@ -105,12 +105,12 @@ func TestWalkJSONPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []JSONValue{
-		{Path: "a", Key: "a", Value: "a", IsString: true},
-		{Path: "a.b", Key: "b", Value: "b", IsString: true},
+		{Path: "a", Key: "a", Value: "a", IsString: true, IsKey: true},
+		{Path: "a.b", Key: "b", Value: "b", IsString: true, IsKey: true},
 		{Path: "a.b[]", Key: "", Value: "x", IsString: true},
 		{Path: "a.b[]", Key: "", Value: "1"},
 		{Path: "a.b[]", Key: "", Value: "true"},
-		{Path: "c", Key: "c", Value: "c", IsString: true},
+		{Path: "c", Key: "c", Value: "c", IsString: true, IsKey: true},
 		{Path: "c", Key: "c", Value: "y", IsString: true},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -125,13 +125,27 @@ func TestWalkJSONNestedArrayOfObjects(t *testing.T) {
 	}
 	var paths []string
 	for _, v := range got {
-		if !v.IsString || v.Value != v.Key {
+		if !v.IsKey {
 			paths = append(paths, v.Path+"="+v.Value)
 		}
 	}
 	want := []string{"items[].sku=A", "items[].sku=B"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("got %v want %v", paths, want)
+	}
+}
+
+func TestWalkJSONKeyEqualsValue(t *testing.T) {
+	got, err := collect(`{"a":"a"}`, model.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []JSONValue{
+		{Path: "a", Key: "a", Value: "a", IsString: true, IsKey: true},
+		{Path: "a", Key: "a", Value: "a", IsString: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v want %+v", got, want)
 	}
 }
 

@@ -334,6 +334,8 @@ func TestValidateTypes(t *testing.T) {
 			{"user@localhost", true, true},
 			{"first_last-1!#$%&*/=?^{|}~@mail.example-1.co.uk", true, true},
 			{"user@bücher.example", true, true},
+			{"user@b\xfccher.example", true, false},
+			{"user@\xff\xfe.example", true, false},
 			{"<script>alert(1)</script>@x", true, false},
 			{"o'brien@example.com", true, true},
 			// Validates: ' = and - are RFC 5322 atext. The type only checks the

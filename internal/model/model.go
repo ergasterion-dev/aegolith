@@ -198,10 +198,10 @@ type Request struct {
 
 // Limits bound the work done per request.
 type Limits struct {
-	MaxBodyBytes int64
-	MaxDepth     int
-	MaxFields    int
-	MaxValueLen  int
+	MaxBodyBytes int64 `json:"max_body_bytes"`
+	MaxDepth     int   `json:"max_depth"`
+	MaxFields    int   `json:"max_fields"`
+	MaxValueLen  int   `json:"max_value_len"`
 }
 
 // DefaultLimits returns the v0.1 defaults.
@@ -209,24 +209,38 @@ func DefaultLimits() Limits {
 	return Limits{MaxBodyBytes: 1 << 20, MaxDepth: 32, MaxFields: 1000, MaxValueLen: 8192}
 }
 
-const maxSnippet = 64
+const (
+	maxSnippet = 64
+	maxName    = 256
+)
 
 // Redact returns a log-safe snippet of s: at most 64 bytes, cut on a rune
-// boundary, with control characters and invalid UTF-8 replaced by '?'.
-func Redact(s string) string {
-	out := make([]byte, 0, maxSnippet)
+// boundary, with control characters, line and paragraph separators
+// (U+2028, U+2029), format characters (Unicode Cf, which includes bidi
+// overrides and zero-width characters) and invalid UTF-8 replaced by '?'.
+func Redact(s string) string { return neutralize(s, maxSnippet) }
+
+// SafeName applies Redact's character rules to a field name (a query, form
+// or cookie key, a JSON path or a header name) and caps it at 256 bytes, so
+// a Match.Field is safe to log while staying long enough to match exclusions.
+func SafeName(s string) string { return neutralize(s, maxName) }
+
+func neutralize(s string, limit int) string {
+	out := make([]byte, 0, min(len(s), limit))
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && size <= 1 {
-			r = '?'
-		} else if unicode.IsControl(r) {
+		if r == utf8.RuneError && size <= 1 || unsafeRune(r) {
 			r = '?'
 		}
-		if len(out)+utf8.RuneLen(r) > maxSnippet {
+		if len(out)+utf8.RuneLen(r) > limit {
 			break
 		}
 		out = utf8.AppendRune(out, r)
 		i += size
 	}
 	return string(out)
+}
+
+func unsafeRune(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Cf, r)
 }

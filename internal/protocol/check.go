@@ -4,7 +4,9 @@
 package protocol
 
 import (
+	"maps"
 	"mime"
+	"slices"
 	"strings"
 
 	"github.com/ergasterion-dev/aegolith/internal/model"
@@ -41,7 +43,7 @@ func Check(r *model.Request, cfg Config) []model.Match {
 	if len(methods) == 0 {
 		methods = DefaultMethods
 	}
-	if !contains(methods, r.Method) {
+	if !slices.Contains(methods, r.Method) {
 		add("AEG-PROTO-001", model.SeverityMedium, model.ActionBlock, model.LocMethod, "method", r.Method)
 	}
 
@@ -52,11 +54,11 @@ func Check(r *model.Request, cfg Config) []model.Match {
 		}
 	}
 
-	max := cfg.Limits.MaxBodyBytes
-	if max <= 0 {
-		max = model.DefaultLimits().MaxBodyBytes
+	maxBody := cfg.Limits.MaxBodyBytes
+	if maxBody <= 0 {
+		maxBody = model.DefaultLimits().MaxBodyBytes
 	}
-	if int64(len(r.Body)) > max {
+	if int64(len(r.Body)) > maxBody {
 		add("AEG-PROTO-003", model.SeverityLow, model.ActionMonitor, model.LocBody, "body", "")
 	}
 
@@ -64,8 +66,10 @@ func Check(r *model.Request, cfg Config) []model.Match {
 	if hasCtl(r.RawPath) || hasCtl(decoded) {
 		add("AEG-PROTO-004", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
 	} else {
-		for name, vals := range r.Header {
-			if anyCtl(vals) {
+		// Sorted keys: with control characters in several headers, the
+		// reported one must not depend on map iteration order.
+		for _, name := range slices.Sorted(maps.Keys(r.Header)) {
+			if vals := r.Header[name]; anyCtl(vals) {
 				add("AEG-PROTO-004", model.SeverityHigh, model.ActionBlock, model.LocHeader, "header."+strings.ToLower(name), strings.Join(vals, ","))
 				break
 			}
@@ -92,15 +96,6 @@ func Check(r *model.Request, cfg Config) []model.Match {
 		add("AEG-PROTO-007", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
 	}
 	return out
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 func contentTypeAllowed(ct string, cfg Config) bool {
@@ -138,13 +133,14 @@ func anyCtl(vals []string) bool {
 	return false
 }
 
-// hasTraversal reports ../ or ..\ in the raw path or in its once- or
-// twice-decoded forms, which covers %2e%2e%2f, ..%2f, %2e%2e/, ..%5c and
-// %252e%252e%252f (case-insensitive).
+// hasTraversal reports ../ or ..\ (or a path ending in /.. or \..) in the
+// raw path or in its once- or twice-decoded forms, which covers %2e%2e%2f,
+// ..%2f, %2e%2e/, ..%5c and %252e%252e%252f (case-insensitive).
 func hasTraversal(raw string) bool {
 	s := strings.ToLower(raw)
 	for i := 0; i < 3; i++ {
-		if strings.Contains(s, "../") || strings.Contains(s, "..\\") {
+		if strings.Contains(s, "../") || strings.Contains(s, "..\\") ||
+			strings.HasSuffix(s, "/..") || strings.HasSuffix(s, "\\..") {
 			return true
 		}
 		next, _ := normalize.DecodeValue(s)

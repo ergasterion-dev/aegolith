@@ -34,6 +34,10 @@ func TestCheck(t *testing.T) {
 		{"te chunked alone", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Transfer-Encoding": {"chunked"}}}, Config{}, nil},
 		{"traversal", model.Request{Method: "GET", RawPath: "/api/v1/files/../../etc/passwd"}, Config{}, []string{"AEG-PROTO-005"}},
 		{"traversal backslash", model.Request{Method: "GET", RawPath: "/a/..\\b"}, Config{}, []string{"AEG-PROTO-005"}},
+		{"traversal trailing /..", model.Request{Method: "GET", RawPath: "/api/v1/files/.."}, Config{}, []string{"AEG-PROTO-005"}},
+		{"traversal trailing /%2e%2e", model.Request{Method: "GET", RawPath: "/api/v1/files/%2e%2E"}, Config{}, []string{"AEG-PROTO-005"}},
+		{"traversal trailing \\..", model.Request{Method: "GET", RawPath: "/a\\.."}, Config{}, []string{"AEG-PROTO-005"}},
+		{"dots in name not traversal", model.Request{Method: "GET", RawPath: "/a/b..c/x..."}, Config{}, nil},
 		{"traversal ..%5c", model.Request{Method: "GET", RawPath: "/a/..%5Cb"}, Config{}, []string{"AEG-PROTO-005"}},
 		{"traversal %2e%2e/", model.Request{Method: "GET", RawPath: "/a/%2E%2E/b"}, Config{}, []string{"AEG-PROTO-005"}},
 		{"crlf path", model.Request{Method: "GET", RawPath: "/x%0d%0aX-Injected:%201"}, Config{}, []string{"AEG-PROTO-004"}},
@@ -89,6 +93,20 @@ func TestMatchShape(t *testing.T) {
 	m = Check(r, Config{})[0]
 	if m.Field != "header.transfer-encoding" || m.Location != model.LocHeader {
 		t.Fatalf("%+v", m)
+	}
+}
+
+// TestHeaderCtlDeterministic: with control characters in several headers,
+// the reported header must not depend on map iteration order.
+func TestHeaderCtlDeterministic(t *testing.T) {
+	r := &model.Request{Method: "GET", RawPath: "/a", Header: http.Header{
+		"Z-Last": {"a\nb"}, "M-Mid": {"a\rb"}, "A-First": {"a\x00b"},
+	}}
+	for range 200 {
+		ms := Check(r, Config{})
+		if len(ms) != 1 || ms[0].Field != "header.a-first" {
+			t.Fatalf("got %+v, want only header.a-first", ms)
+		}
 	}
 }
 

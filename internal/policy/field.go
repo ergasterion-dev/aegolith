@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Field types accepted in FieldSpec.Type.
@@ -273,7 +274,8 @@ func isDecimalLiteral(s string) bool {
 // isEmail checks the shape of an address: a dot-atom local part made of
 // RFC 5322 atext minus the backtick (so o'brien is accepted), an '@', and
 // a domain of hostname labels ([A-Za-z0-9-], or bytes >= 0x80 for IDN)
-// joined by single dots; at most 254 bytes. Quoted local parts, address
+// joined by single dots; at most 254 bytes. A domain with non-ASCII bytes
+// must be valid UTF-8. Quoted local parts, address
 // literals and comments are rejected, so markup (<>) and the remaining
 // specials ()[]\,;:" never pass. The type checks shape only: the engine
 // still runs ScanText on email values, which catches SQLi in the local part.
@@ -285,7 +287,17 @@ func isEmail(s string) bool {
 	if at <= 0 || at == len(s)-1 {
 		return false
 	}
-	return dotted(s[:at], isAtext) && dotted(s[at+1:], isHostByte)
+	domain := s[at+1:]
+	return dotted(s[:at], isAtext) && dotted(domain, isHostByte) && (isASCII(domain) || utf8.ValidString(domain))
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // dotted reports whether s is one or more non-empty runs of ok bytes
