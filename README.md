@@ -322,17 +322,17 @@ Measured on a developer laptop, not a server. Reproduce with the commands below.
 |---|---|
 | CPU | Apple M4 Pro (14 cores) |
 | Go | go1.25.12 darwin/arm64, GOMAXPROCS 14 |
-| Date | 2026-11-24 |
-| Load | The laptop was **not idle**: load average 9 to 11 during the final runs (other builds and tests were running), above the 8 I would want. Treat the numbers as upper bounds. |
+| Date | 2026-11-25 |
+| Load | The laptop was **not idle**: load average 8 to 11 during the final runs (other builds and tests were running), at or above the 8 I would want. Treat the numbers as upper bounds. |
 
 **Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Each number is the **lowest of 3 runs**. "Generic" is no policy, "api-aware" is the typed corpus policy.
 
 | Benchmark | Generic | API-aware | Allocs/op (generic) |
 |---|---|---|---|
-| `Inspect`, search GET (query string, browser headers) | 10.1 µs | 9.1 µs | 143 |
-| `Inspect`, JSON cart POST | 15.5 µs | 13.3 µs | 251 |
-| `Inspect`, the 91 legitimate corpus requests, per request | 4.5 µs | 3.2 µs | 80 |
-| `Inspect`, a 500-field JSON body | 353 µs | 347 µs | 9,438 |
+| `Inspect`, search GET (query string, browser headers) | 10.1 µs | 9.3 µs | 143 |
+| `Inspect`, JSON cart POST | 15.5 µs | 13.7 µs | 251 |
+| `Inspect`, the 91 legitimate corpus requests, per request | 4.9 µs | 3.4 µs | 80 |
+| `Inspect`, a 500-field JSON body | 351 µs | 358 µs | 9,438 |
 | `ScanText` on a short word | 82 ns | | 1 |
 | `ScanText` on a short prose sentence | 2.8 µs | | 59 |
 | `ScanText` on a SQLi payload | 0.88 µs | | 17 |
@@ -341,20 +341,20 @@ Measured on a developer laptop, not a server. Reproduce with the commands below.
 
 | Configuration | p50 | p99 | max |
 |---|---|---|---|
-| generic, corpus requests | 3.4 µs | 11.8 µs | 304 µs |
-| generic, with browser headers | 10.3 µs | 22.2 µs | 355 µs |
-| api-aware, corpus requests | 2.3 µs | 9.3 µs | 107 µs |
-| api-aware, with browser headers | 8.9 µs | 18.4 µs | 221 µs |
+| generic, corpus requests | 3.5 µs | 12.5 µs | 217 µs |
+| generic, with browser headers | 10.3 µs | 20.9 µs | 206 µs |
+| api-aware, corpus requests | 2.4 µs | 9.7 µs | 232 µs |
+| api-aware, with browser headers | 9.2 µs | 18.9 µs | 212 µs |
 
-The budget holds in all three final runs. In an earlier run on the same laptop at a load average near 30, one row (generic with browser headers) reached p99 58 µs, so the strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
+The budget holds in all three runs. In an earlier run on the same laptop at a load average near 30, one row (generic with browser headers) reached p99 58 µs, so the strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
 
 **Worst case.** Cost is linear in the input and bounded, but a hostile large body is not cheap. The adversarial 1 MiB bodies in `BenchmarkInspectWorstCase` (lowest of 3):
 
 | Body | Time | Allocated |
 |---|---|---|
-| repeated invalid UTF-8 plus `<`, trailing SQLi | 410 ms | 128 MB |
-| many tags, trailing SQLi | 260 ms | 96 MB |
-| many tags in one value | 134 ms | 50 MB |
+| repeated invalid UTF-8 plus `<`, trailing SQLi | 407 ms | 128 MB |
+| many tags, trailing SQLi | 261 ms | 96 MB |
+| many tags in one value | 129 ms | 50 MB |
 
 About 93% of the worst case is inside libinjection-go. Front the service with a body size limit set to what you actually accept; see [resource bounds](docs/threat-model.md#resource-bounds).
 
