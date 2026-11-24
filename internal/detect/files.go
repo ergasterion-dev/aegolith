@@ -94,7 +94,7 @@ func isTraversal(s string) bool {
 		if n == 0 {
 			continue
 		}
-		if i > 0 && !(isTraversalBoundary(s[i-1]) || i >= 3 && sepAt(s, i-3) == 3) {
+		if i > 0 && !isTraversalBoundary(s[i-1]) && (i < 3 || sepAt(s, i-3) != 3) {
 			continue
 		}
 		m := dotAt(s, i+n)

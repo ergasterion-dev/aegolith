@@ -477,7 +477,7 @@ func flagEnd(s string, j int) int {
 		}
 	case s[j] == '-':
 		k++
-		if k >= len(s) || !isASCIILetter(s[k]) && !(s[k] >= '0' && s[k] <= '9') {
+		if k >= len(s) || !isASCIILetter(s[k]) && (s[k] < '0' || s[k] > '9') {
 			return j
 		}
 	case s[j] == '+':
