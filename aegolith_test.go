@@ -549,6 +549,32 @@ func TestInspectRawRescanWithinBudget(t *testing.T) {
 	mustHave(t, d, "AEG-SQLI-001", "body")
 }
 
+// Fix round 4, ruling A1: a walked value longer than MaxValueLen is scanned
+// in overlapping windows (up to 2x) and the raw rescan after a stop costs
+// up to 2x again; a body within MaxBodyBytes still cannot exhaust the budget,
+// so a payload after the long value is seen.
+func TestInspectLongValueRescanWithinBudget(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	const sqli = `"1' OR '1'='1"`
+	long := strings.Repeat("a", (1<<20)-200)
+	half := strings.Repeat("a", (1<<19)-100)
+	for name, body := range map[string]string{
+		"trailing data":    `["` + long + `"] ` + sqli,
+		"depth overflow":   `["` + long + `",` + strings.Repeat("[", 40) + sqli + strings.Repeat("]", 41),
+		"malformed middle": `["` + long + `", x ` + sqli + `]`,
+		"two 512K values":  `["` + half + `","` + half + `"] ` + sqli,
+	} {
+		if len(body) > 1<<20 {
+			t.Fatalf("%s: body %d bytes", name, len(body))
+		}
+		d := fw.Inspect(postJSON("/s", body))
+		if d.Action != aegolith.ActionBlock {
+			t.Fatalf("%s: %v", name, ruleIDs(d))
+		}
+		mustHave(t, d, "AEG-SQLI-001", "body")
+	}
+}
+
 // Fix round 4, ruling N1: under a long (capped) path, containers and keys
 // that leave the path bytes unchanged do not copy it, so filler under a
 // 17 x 256-byte-key prefix costs about what it costs under a short path.
@@ -646,14 +672,15 @@ func TestInspectLongJSONKeyBounded(t *testing.T) {
 	}
 }
 
-// Fix-round rulings 4 and round-3 A: the per-request scan budget is
-// 3 x (MaxBodyBytes + 256 KiB) + 64 KiB, so only inputs beyond the limits
+// Fix-round rulings 4 and round-4 A1: the per-request scan budget is
+// 4 x (MaxBodyBytes + 256 KiB) + 64 KiB, so only inputs beyond the limits
 // (here a query string far over 256 KiB) can exhaust it. Exhaustion raises
 // AEG-PROTO-011 once as a monitor match and stops scanning: a documented
 // known gap, not a block, and never a panic.
 func TestInspectScanBudgetExhausted(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxBodyBytes: 64 << 10, MaxValueLen: 1024}})
-	r := get("/s?pad=" + strings.Repeat("a", 600<<10) + "&q=1%27%20OR%20%271%27%3D%271")
+	// The budget is 1,344 KiB; an 800 KiB value is charged about 1,600 KiB.
+	r := get("/s?pad=" + strings.Repeat("a", 800<<10) + "&q=1%27%20OR%20%271%27%3D%271")
 	d := fw.Inspect(r)
 	if d.Err != nil || d.Action != aegolith.ActionAllow || !d.Monitored {
 		t.Fatalf("decision %+v", d)

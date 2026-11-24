@@ -176,16 +176,25 @@ func (s *state) capped(v string) string {
 }
 
 // scanBudget is the per-request limit on bytes handed to the text
-// detectors: 3 x (MaxBodyBytes + 256 KiB) + 64 KiB. A body byte is scanned
-// at most three times (once as part of a walked value, then twice by the
-// overlapping windows of a raw rescan after malformed JSON or a depth
-// overflow), and a value is charged its length once per window it
-// occupies. So no request whose body is within MaxBodyBytes and whose
-// other inputs (path, query, cookies, scanned headers) total at most
-// 256 KiB can exhaust it. Beyond that it can (a documented gap: one
-// monitor match, never a block or a panic); servers cap those inputs well
-// below it anyway (net/http: 1 MiB of headers; Fiber: 4 KiB buffers).
-func (e *Engine) scanBudget() int64 { return 3*(e.lim.MaxBodyBytes+256<<10) + 64<<10 }
+// detectors: 4 x (MaxBodyBytes + 256 KiB) + 64 KiB. Every scanned value is
+// charged its length once per window it occupies; windows of a value over
+// MaxValueLen overlap by half, so a value is charged at most 2x its length.
+// Per byte, then:
+//   - a body byte is charged at most 4x: up to 2x as part of a walked
+//     value (or a form, multipart, XML or text value), plus up to 2x by
+//     the windowed raw rescan after malformed JSON or a depth overflow;
+//   - a byte of any other input (path, query, cookies, scanned headers) is
+//     charged at most 2x.
+//
+// One exception to the body bound: the JSON decoder turns each byte of
+// invalid UTF-8 inside a string into U+FFFD (3 bytes), so such a byte can
+// be charged up to 6x in the walk (plus 2x in a rescan). Apart from that,
+// no request whose body is within MaxBodyBytes and whose other inputs
+// total at most 256 KiB can exhaust it. Beyond that it can (a documented
+// gap: one monitor match, never a block or a panic); servers cap those
+// inputs well below it anyway (net/http: 1 MiB of headers; Fiber: 4 KiB
+// buffers).
+func (e *Engine) scanBudget() int64 { return 4*(e.lim.MaxBodyBytes+256<<10) + 64<<10 }
 
 // bodyInspectLimit is how much of a body is inspected: 2 x MaxBodyBytes.
 // Protocol reports a body over MaxBodyBytes (AEG-PROTO-003); inspecting
