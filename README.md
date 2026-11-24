@@ -40,7 +40,7 @@ Things it deliberately is not: a CRS clone, a ModSecurity-rule engine, a rate li
 You need Go 1.25 or later. The core module depends on the standard library and [libinjection-go](https://github.com/corazawaf/libinjection-go) only.
 
 ```sh
-go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.1
+go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.2
 ```
 
 (This is an alpha release; see [Status](#status-and-roadmap).)
@@ -88,7 +88,7 @@ func main() {
 The Fiber adapter is its own Go module, so the core never pulls Fiber:
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.1
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.2
 ```
 
 ```go

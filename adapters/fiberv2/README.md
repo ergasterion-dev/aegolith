@@ -8,7 +8,7 @@ module stays free of Fiber.
 ## Install
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.1
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.2
 ```
 
 ## Usage
