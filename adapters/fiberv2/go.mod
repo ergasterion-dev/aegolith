@@ -3,7 +3,7 @@ module github.com/ergasterion-dev/aegolith/adapters/fiberv2
 go 1.25
 
 require (
-	github.com/ergasterion-dev/aegolith v0.0.0
+	github.com/ergasterion-dev/aegolith v0.1.0-alpha.1
 	github.com/gofiber/fiber/v2 v2.52.16
 )
 
@@ -21,7 +21,3 @@ require (
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 )
-
-// Local development only: this replace directive is removed at release,
-// when the core module is tagged and the require line pins that version.
-replace github.com/ergasterion-dev/aegolith => ../..

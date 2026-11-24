@@ -8,12 +8,8 @@ module stays free of Fiber.
 ## Install
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.1
 ```
-
-During development of the repository `go.mod` carries a
-`replace github.com/ergasterion-dev/aegolith => ../..` directive. It is
-removed at release, when the core module is tagged and required by version.
 
 ## Usage
 
