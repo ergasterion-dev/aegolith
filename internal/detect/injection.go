@@ -19,11 +19,37 @@ import (
 // (; | & ` $( or a line break) followed by a known command used the way a
 // shell is used, or an absolute system path, or a reverse-shell or
 // Shellshock marker.
+//
+// A literal line break in the value gets a stricter rule than other
+// operators (a bare command alone on a line, "Notes:\nls", is prose). A
+// line break that only appears after percent-decoding (%0a, %0d) is what
+// scanners send and keeps the ordinary rule.
 func CmdI(v string) (Hit, bool) {
-	if valueOrDecoded(v, isCmdI) {
+	hit := isCmdI(v, true)
+	if !hit {
+		if d, _ := normalize.DecodeValue(v); d != v {
+			hit = isCmdI(d, !hasEncodedLineBreak(v))
+		}
+	}
+	if hit {
 		return Hit{RuleID: "PYL-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}, true
 	}
 	return Hit{}, false
+}
+
+// hasEncodedLineBreak reports whether s contains %0a or %0d (any case).
+func hasEncodedLineBreak(s string) bool {
+	for i := strings.IndexByte(s, '%'); i >= 0 && i+2 < len(s); {
+		if s[i+1] == '0' && (s[i+2]|0x20 == 'a' || s[i+2]|0x20 == 'd') {
+			return true
+		}
+		n := strings.IndexByte(s[i+1:], '%')
+		if n < 0 {
+			break
+		}
+		i += 1 + n
+	}
+	return false
 }
 
 // CodeI reports whether v carries code for an interpreter: PHP open tags,
@@ -103,6 +129,9 @@ type cmdWord struct {
 	// interp: an interpreter, where -c or -e followed by a quoted string is
 	// code.
 	interp bool
+	// netcat: any flag plus a port-like number (nc -lvnp 4444), or -e/-c
+	// with an argument, is a hit.
+	netcat bool
 }
 
 // cmdWords is read-only after init.
@@ -118,7 +147,9 @@ var cmdWords = [...]cmdWord{
 	{name: "cat"},
 	{name: "wget", url: true},
 	{name: "curl", url: true},
-	{name: "nc"},
+	{name: "nc", netcat: true},
+	{name: "ncat", netcat: true},
+	{name: "netcat", netcat: true},
 	{name: "ping"},
 	{name: "rm"},
 	{name: "chmod"},
@@ -130,7 +161,9 @@ var cmdWords = [...]cmdWord{
 	{name: "powershell.exe", windows: true},
 }
 
-func isCmdI(s string) bool {
+// isCmdI scans s for an operator followed by a command. strictNewline
+// applies the stricter bare-command rule after a line break.
+func isCmdI(s string, strictNewline bool) bool {
 	if hasCmdMarker(s) {
 		return true
 	}
@@ -152,7 +185,7 @@ func isCmdI(s string) bool {
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '|' || s[j] == '&') {
 			j++
 		}
-		if commandAt(s, j, afterNewline) {
+		if commandAt(s, j, afterNewline && strictNewline) {
 			return true
 		}
 		// The skipped bytes all lead to the same j: do not rescan them.
@@ -206,17 +239,30 @@ func commandAt(s string, i int, afterNewline bool) bool {
 }
 
 // unixArgsAt reports whether the arguments starting at s[j] make the
-// command w a shell invocation: optional flags (each possibly followed by a
-// numeric value, as in "-c 3"), then an operand that looks like a shell one
-// (see unixOperandAt). A bare command also matches with only flags after it
-// at the end of the value or before an operator, except after a line break,
-// where it needs a flag or a following non-newline operator.
+// command w a shell invocation. It walks up to maxArgTokens tokens: flags
+// ("-x", "--word", "+x"), each optionally followed by one value token
+// ("-c 3", "-X POST"), and a lone "--" (end of options). It reports a hit at
+// the first operand that looks like a shell one (see unixOperandAt), for
+// chmod with a mode, for an interpreter's -c/-e with a quoted string, and
+// for netcat with a flag and a port number or -e/-c. A bare command also
+// matches when only flags and numeric values follow it up to the end of the
+// value or an operator; with afterNewline it then needs at least one flag
+// or a following non-newline operator. An English word that is neither a
+// flag's value nor an operand ends the scan with no hit: "ping -Ali at
+// gate", "cat -lovers mug".
 func unixArgsAt(s string, j int, w cmdWord, afterNewline bool) bool {
+	const maxArgTokens = 16
 	flags := 0
 	lastFlag := ""
-	for t := 0; t < 6; t++ {
+	afterFlag := false // the previous token was a flag, so this one may be its value
+	wordValue := false // a non-numeric flag value was skipped
+	sawNumber := false
+	for t := 0; t < maxArgTokens; t++ {
 		if j >= len(s) || isShellOperator(s[j]) {
-			if !w.bare {
+			if w.netcat && flags > 0 && sawNumber {
+				return true
+			}
+			if !w.bare || wordValue {
 				return false
 			}
 			atLineEnd := j >= len(s) || s[j] == '\n' || s[j] == '\r'
@@ -225,23 +271,83 @@ func unixArgsAt(s string, j int, w cmdWord, afterNewline bool) bool {
 		if unixOperandAt(s, j, w.url) {
 			return true
 		}
-		if w.interp && (lastFlag == "-c" || lastFlag == "-e") && (s[j] == '\'' || s[j] == '"') {
+		if t == 0 && w.name == "chmod" && chmodModeAt(s, j) {
 			return true
 		}
-		if k := flagEnd(s, j); k > j {
-			flags++
-			lastFlag = s[j:k]
+		if lastFlag == "-c" || lastFlag == "-e" {
+			if w.netcat || w.interp && (s[j] == '\'' || s[j] == '"') {
+				return true
+			}
+		}
+		k := tokenEnd(s, j)
+		if k == j+2 && s[j] == '-' && s[j+1] == '-' {
+			lastFlag, afterFlag = "", false // end of options
 			j = skipBlanks(s, k)
 			continue
 		}
-		if k := digitsEnd(s, j); flags > 0 && k > j {
-			lastFlag = ""
-			j = skipBlanks(s, k) // a flag's numeric value: ping -c 3
+		if f := flagEnd(s, j); f > j {
+			flags++
+			lastFlag, afterFlag = s[j:f], true
+			j = skipBlanks(s, f)
 			continue
 		}
-		return false
+		if !afterFlag {
+			return false
+		}
+		if digitsEnd(s, j) == k {
+			sawNumber = true
+		} else {
+			wordValue = true
+		}
+		lastFlag, afterFlag = "", false
+		j = skipBlanks(s, k)
 	}
 	return false
+}
+
+// tokenEnd returns the end of the token at s[j]: the next blank or shell
+// operator.
+func tokenEnd(s string, j int) int {
+	for j < len(s) && s[j] != ' ' && s[j] != '\t' && !isShellOperator(s[j]) {
+		j++
+	}
+	return j
+}
+
+// chmodModeAt reports whether s[j] starts a chmod mode followed by a blank,
+// the end or an operator: three or four octal digits (755, 4777) or a
+// symbolic mode such as +x, u+s or go-w.
+func chmodModeAt(s string, j int) bool {
+	k := tokenEnd(s, j)
+	tok := s[j:k]
+	if n := len(tok); n == 3 || n == 4 {
+		octal := true
+		for i := 0; i < n; i++ {
+			if tok[i] < '0' || tok[i] > '7' {
+				octal = false
+			}
+		}
+		if octal {
+			return true
+		}
+	}
+	i := 0
+	for i < len(tok) && strings.IndexByte("ugoa", tok[i]) >= 0 {
+		i++
+	}
+	if i >= len(tok) || strings.IndexByte("+-=", tok[i]) < 0 {
+		return false
+	}
+	i++
+	if i == len(tok) {
+		return false
+	}
+	for ; i < len(tok); i++ {
+		if strings.IndexByte("rwxXst", tok[i]) < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // flagEnd returns the end of a command-line flag token at s[j] ("-la",
