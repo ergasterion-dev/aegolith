@@ -200,15 +200,19 @@ func TestScriptURL(t *testing.T) {
 // TestCopyProgramLinear checks the COPY scan stays linear on adversarial
 // repetitions that used to make every ';' rescan to the end of the value.
 func TestCopyProgramLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wall-clock bound; skipped under -short")
+	}
 	const size = 8 << 10
+	lim := wallLimit(time.Millisecond, 20*time.Millisecond)
 	for name, in := range map[string]string{
 		"unclosed parens":  strings.Repeat(";copy(", size/6),
 		"balanced parens":  strings.Repeat(";copy(", size/12) + strings.Repeat(")", size/12),
 		"unclosed comment": strings.Repeat(";copy/*", size/7),
 		"quotes":           strings.Repeat(";copy('", size/7),
 	} {
-		if d := bestOf(3, func() { hasStackedCopyProgram(in) }); d > time.Millisecond {
-			t.Errorf("%s: hasStackedCopyProgram took %v on %d bytes, want under 1ms", name, d, len(in))
+		if d := bestOf(3, func() { hasStackedCopyProgram(in) }); d > lim {
+			t.Errorf("%s: hasStackedCopyProgram took %v on %d bytes, want under %v", name, d, len(in), lim)
 		}
 	}
 }

@@ -290,8 +290,9 @@ func TestInspectHugeBody(t *testing.T) {
 	d := fw.Inspect(r)
 	el := time.Since(start)
 	t.Logf("inspect took %v", el)
-	if !testing.Short() && el > 500*time.Millisecond*raceSlowdown {
-		t.Fatalf("took %v", el)
+	// Quiet machine: 51 ms (649 ms with -race).
+	if lim := wallLimit(500*time.Millisecond, 5*time.Second); !testing.Short() && el > lim {
+		t.Fatalf("took %v, want under %v", el, lim)
 	}
 	m := mustHave(t, d, "AEG-PROTO-010", "body")
 	if m.Action != aegolith.ActionMonitor || d.Action != aegolith.ActionAllow || !d.Monitored {
@@ -467,8 +468,9 @@ func TestInspectTinyPairsBoundedAndBlock(t *testing.T) {
 	d := fw.Inspect(withBody("POST", "/s", "application/x-www-form-urlencoded", body))
 	el := time.Since(start)
 	t.Logf("100k pairs: %v", el)
-	if !testing.Short() && el > time.Second*raceSlowdown {
-		t.Fatalf("took %v", el)
+	// Quiet machine: 18.5 ms (283 ms with -race).
+	if lim := wallLimit(time.Second, 10*time.Second); !testing.Short() && el > lim {
+		t.Fatalf("took %v, want under %v", el, lim)
 	}
 	if d.Action != aegolith.ActionBlock {
 		t.Fatalf("decision %v", ruleIDs(d))
@@ -600,9 +602,9 @@ func TestInspectInvalidUTF8ValueWithinBudget(t *testing.T) {
 		runtime.ReadMemStats(&after)
 		alloc := after.TotalAlloc - before.TotalAlloc
 		t.Logf("%s: %v, %d MiB allocated", name, el, alloc>>20)
-		// Measured 50-200 ms and 16 MiB on an Apple M4 Pro without -race.
-		if !testing.Short() && el > time.Second*raceSlowdown {
-			t.Errorf("%s took %v, want under %v", name, el, time.Second*raceSlowdown)
+		// Quiet machine: 50-200 ms and 16 MiB (Apple M4 Pro, no -race).
+		if lim := wallLimit(time.Second, 10*time.Second); !testing.Short() && el > lim {
+			t.Errorf("%s took %v, want under %v", name, el, lim)
 		}
 		if alloc > 64<<20 {
 			t.Errorf("%s allocated %d MiB, want under 64 MiB", name, alloc>>20)
@@ -641,7 +643,9 @@ func TestInspectLongJSONPathFillerBounded(t *testing.T) {
 		runtime.ReadMemStats(&after)
 		alloc := after.TotalAlloc - before.TotalAlloc
 		t.Logf("%s: %v, %d MiB allocated", name, el, alloc>>20)
-		if !testing.Short() && el > 250*time.Millisecond*raceSlowdown {
+		// Quiet machine: 7-58 ms. The regression this guards (248 ms,
+		// 1,360 MiB) is caught deterministically by the allocation bound.
+		if lim := wallLimit(250*time.Millisecond, 5*time.Second); !testing.Short() && el > lim {
 			t.Fatalf("%s took %v", name, el)
 		}
 		if alloc > 64<<20 {
@@ -696,8 +700,10 @@ func TestInspectLongJSONKeyBounded(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	alloc := after.TotalAlloc - before.TotalAlloc
 	t.Logf("256 KiB key x %d items: %v, %d MiB allocated", n, el, alloc>>20)
-	if !testing.Short() && el > time.Second*raceSlowdown {
-		t.Fatalf("took %v", el)
+	// Quiet machine: 65 ms. The regression this guards took 7 s and 98 GB;
+	// the allocation bound below catches it deterministically.
+	if lim := wallLimit(time.Second, 10*time.Second); !testing.Short() && el > lim {
+		t.Fatalf("took %v, want under %v", el, lim)
 	}
 	if alloc > 256<<20 {
 		t.Fatalf("allocated %d MiB", alloc>>20)
@@ -767,8 +773,9 @@ func TestInspectScanBudgetBoundsTime(t *testing.T) {
 		d := fw.Inspect(r)
 		el := time.Since(start)
 		t.Logf("%s: %v", name, el)
-		if !testing.Short() && el > time.Second*raceSlowdown {
-			t.Fatalf("%s took %v", name, el)
+		// Quiet machine: at most 231 ms (3.1 s with -race).
+		if lim := wallLimit(time.Second, 20*time.Second); el > lim {
+			t.Fatalf("%s took %v, want under %v", name, el, lim)
 		}
 		if d.Err != nil {
 			t.Fatalf("%s: %v", name, d.Err)

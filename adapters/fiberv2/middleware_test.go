@@ -325,8 +325,17 @@ func TestFiberRequestSurvivesBufferReuse(t *testing.T) {
 func itoa(n int) string { return strconv.Itoa(n) }
 
 // rawServer runs a real Fiber server with the middleware in monitor mode and
-// returns what the engine saw for one raw request.
+// returns what the engine saw for one raw request. The 30 s deadline only
+// guards against a hang; a response normally arrives in milliseconds, and a
+// loaded machine must not turn a slow response into a failure.
 func rawServer(t *testing.T, raw string) (seen http.Header, status int) {
+	t.Helper()
+	return rawServerWait(t, raw, 30*time.Second)
+}
+
+// rawServerWait is rawServer with an explicit deadline, for a request that
+// is expected never to complete (the wait is how long to give it).
+func rawServerWait(t *testing.T, raw string, wait time.Duration) (seen http.Header, status int) {
 	t.Helper()
 	var mu sync.Mutex
 	app := newApp(Config{
@@ -348,7 +357,7 @@ func rawServer(t *testing.T, raw string) (seen http.Header, status int) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(1 * time.Second))
+	_ = c.SetDeadline(time.Now().Add(wait))
 	if _, err := c.Write([]byte(raw)); err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +398,9 @@ func TestRealServerSmugglingHeadersReachEngine(t *testing.T) {
 	if v := seen.Values("Transfer-Encoding"); status != 200 || len(v) != 1 || v[0] != "chunked" {
 		t.Fatalf("dup TE: status=%d seen=%v", status, seen)
 	}
-	seen, status = rawServer(t, pre+"Transfer-Encoding: xchunked\r\nContent-Length: 3\r\n\r\nabc")
+	// Never completes: one second is enough to show the handler is not
+	// reached, and load can only delay the server further.
+	seen, status = rawServerWait(t, pre+"Transfer-Encoding: xchunked\r\nContent-Length: 3\r\n\r\nabc", time.Second)
 	if seen != nil || status != 0 {
 		t.Fatalf("xchunked: status=%d seen=%v (handler reached)", status, seen)
 	}

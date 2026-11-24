@@ -10,10 +10,11 @@ import (
 )
 
 // fuzzInspectBound is the wall-clock limit for one Inspect on a fuzzed
-// request, scaled for the race detector. Fuzz inputs are small (the mutator
-// rarely grows them past a few KiB), so a legit-sized request costs
-// microseconds; 100 ms only trips on a real pathology.
-const fuzzInspectBound = 100 * time.Millisecond * raceSlowdown
+// request: 100 ms with AEGOLITH_PERF=1, otherwise 2 s (see wallLimit),
+// scaled for -race. Fuzz inputs are small (the mutator rarely grows them
+// past a few KiB), so a legit-sized request costs microseconds; the bound
+// only trips on a real pathology. Not checked under -short.
+var fuzzInspectBound = wallLimit(100*time.Millisecond, 2*time.Second)
 
 // FuzzInspect feeds arbitrary methods, paths, queries, content types,
 // bodies, cookies and User-Agents through a generic enforce firewall, a
@@ -81,7 +82,7 @@ func FuzzInspect(f *testing.F) {
 				_, again := timedInspect(w.fw, r)
 				el = min(el, again)
 			}
-			if el > fuzzInspectBound {
+			if !testing.Short() && el > fuzzInspectBound {
 				t.Fatalf("%s: Inspect took %v (bound %v) on a %d-byte body", w.name, el, fuzzInspectBound, len(body))
 			}
 			if d.Err != nil {

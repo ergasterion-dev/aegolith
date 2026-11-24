@@ -407,10 +407,17 @@ func TestInjectionAdversarialTime(t *testing.T) {
 		"codei":  strings.Repeat("<?eval(", 1170),
 	}
 	fns := []func(string) (Hit, bool){CmdI, CodeI, LDAP, SSTI, JNDI, CRLF}
+	if testing.Short() {
+		t.Skip("wall-clock bound; skipped under -short")
+	}
+	// At most 120 µs each even at load average 59. A quadratic scan of
+	// 8 KiB costs tens of milliseconds, which the catastrophic bound still
+	// catches.
+	lim := wallLimit(2*time.Millisecond, 20*time.Millisecond)
 	for name, in := range inputs {
 		for _, fn := range fns {
-			if d := bestOf(3, func() { fn(in) }); d > 2*time.Millisecond {
-				t.Errorf("%s: %v on %d bytes, want under 2ms", name, d, len(in))
+			if d := bestOf(3, func() { fn(in) }); d > lim {
+				t.Errorf("%s: %v on %d bytes, want under %v", name, d, len(in), lim)
 			}
 		}
 	}
@@ -425,19 +432,28 @@ func TestCmdIProseSemicolonLinear(t *testing.T) {
 	}
 	shape := func(n int) string { return strings.Repeat("x", n/2) + strings.Repeat("; a", n/6) }
 	s, m, l := shape(64<<10), shape(256<<10), shape(1<<20)
-	if raceSlowdown == 1 {
-		ds := bestOf(3, func() { CmdI(s) })
-		dm := bestOf(3, func() { CmdI(m) })
-		if ds > 200*time.Microsecond && dm > 8*ds {
-			t.Errorf("CmdI on %d bytes took %v, over 8x its %v on %d bytes: super-linear", len(m), dm, ds, len(s))
-		}
+	// Growth ratio, measured within this run on this machine: it must be
+	// over 8x for four times the input three times in a row to count, so
+	// load spikes do not trip it.
+	if raceSlowdown == 1 && cmdISuperLinear(s, m) && cmdISuperLinear(s, m) && cmdISuperLinear(s, m) {
+		t.Errorf("CmdI on %d bytes took over 8x its time on %d bytes three times: super-linear", len(m), len(s))
 	}
-	if d := bestOf(3, func() { CmdI(l) }); d > raceSlowdown*100*time.Millisecond {
-		t.Errorf("CmdI on %d bytes took %v, want under %v", len(l), d, raceSlowdown*100*time.Millisecond)
+	// The quadratic regression took 27 s on 1 MiB.
+	if lim := wallLimit(100*time.Millisecond, 2*time.Second); bestOf(3, func() { CmdI(l) }) > lim {
+		t.Errorf("CmdI on %d bytes took over %v", len(l), lim)
 	}
-	if d := bestOf(3, func() { ScanText(l) }); d > raceSlowdown*500*time.Millisecond {
-		t.Errorf("ScanText on %d bytes took %v, want under %v", len(l), d, raceSlowdown*500*time.Millisecond)
+	if lim := wallLimit(500*time.Millisecond, 10*time.Second); bestOf(3, func() { ScanText(l) }) > lim {
+		t.Errorf("ScanText on %d bytes took over %v", len(l), lim)
 	}
+}
+
+// cmdISuperLinear reports whether CmdI on m (four times the length of s)
+// took more than eight times as long as on s, best of three runs each. Runs
+// on s under 200µs are too fast to time reliably and never count.
+func cmdISuperLinear(s, m string) bool {
+	ds := bestOf(3, func() { CmdI(s) })
+	dm := bestOf(3, func() { CmdI(m) })
+	return ds > 200*time.Microsecond && dm > 8*ds
 }
 
 // TestJNDILargePayloadTime checks nested lookups around a large payload:
@@ -448,13 +464,16 @@ func TestJNDILargePayloadTime(t *testing.T) {
 	if testing.Short() {
 		sizes = nil // wall-clock bound; skipped under -short
 	}
+	// About 3 ms at 1 MiB even at load average 59. Unbounded nested
+	// resolution would cost the depth times the length: seconds.
+	lim := wallLimit(10*time.Millisecond, 200*time.Millisecond)
 	for _, size := range sizes {
 		payload := strings.Repeat("a", size)
 		for _, depth := range []int{maxLookupDepth, 1000} {
 			for _, open := range []string{"${lower:", "${upper:", "${x:-", "${::-"} {
 				in := strings.Repeat(open, depth) + payload + strings.Repeat("}", depth)
-				if d := bestOf(3, func() { JNDI(in) }); d > raceSlowdown*10*time.Millisecond {
-					t.Errorf("JNDI(%q x %d around %d bytes): %v, want under %v", open, depth, size, d, raceSlowdown*10*time.Millisecond)
+				if d := bestOf(3, func() { JNDI(in) }); d > lim {
+					t.Errorf("JNDI(%q x %d around %d bytes): %v, want under %v", open, depth, size, d, lim)
 				}
 			}
 		}

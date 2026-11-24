@@ -184,15 +184,15 @@ func TestScanTextLinear(t *testing.T) {
 		"backslashes": "..\\",
 	}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
-	limit := time.Duration(raceSlowdown) * 2 * time.Second
+	limit := wallLimit(2*time.Second, 20*time.Second)
 	for name, unit := range units {
 		s := strings.Repeat(unit, small/len(unit))
 		m := strings.Repeat(unit, medium/len(unit))
 		l := strings.Repeat(unit, large/len(unit))
 		// The race detector's instrumentation and GC pauses make ratios
 		// noisy, so the growth check runs only without -race, and a ratio
-		// over the limit is measured once more before it counts.
-		if raceSlowdown == 1 && superLinear(s, m) && superLinear(s, m) {
+		// over the limit must repeat three times in a row to count.
+		if raceSlowdown == 1 && superLinear(s, m) && superLinear(s, m) && superLinear(s, m) {
 			t.Errorf("%s: ScanText on %d bytes took over 8x its time on %d bytes: super-linear", name, len(m), len(s))
 		}
 		if dl := bestOf(3, func() { ScanText(l) }); dl > limit {
