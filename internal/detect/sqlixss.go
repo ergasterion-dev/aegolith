@@ -231,8 +231,13 @@ func isIdentByte(c byte) bool {
 // such as the book title "JavaScript: The Good Parts", the scheme must be
 // followed by code: an optional dotted identifier chain directly followed
 // by '(', '`' or '=' (alert(1), window.location=...), or a '/' comment
-// opener (javascript://%0Aalert(1)).
+// opener (javascript://%0Aalert(1)). HTML whitespace character references
+// (&#9;, &#x0A;, &Tab;, ...) count as the whitespace they stand for, since a
+// value written raw into an href is entity-decoded before the URL is read.
 func isScriptURL(s string) bool {
+	if strings.IndexByte(s, '&') >= 0 {
+		s = decodeWhitespaceRefs(s)
+	}
 	i := 0
 	for i < len(s) && s[i] <= ' ' {
 		i++
@@ -270,9 +275,132 @@ func isScriptURL(s string) bool {
 		// bare name, is how prose writes a key and value, unless the name
 		// is a browser global (assigning it navigates) or the rest holds
 		// a call, template or statement ("a=1;alert(1)", "x=alert,x(1)").
-		return !spaced || dotted || isBrowserGlobal(s[start:i]) || strings.ContainsAny(s[i+1:], "(`;")
+		if !spaced || dotted {
+			return true
+		}
+		rhs := s[i+1:]
+		return isBrowserGlobal(s[start:i]) && !isInertWord(rhs) || hasCodeAfterAssign(rhs)
 	}
 	return false
+}
+
+// isInertWord reports whether rhs starts with a plain word that ends at a
+// blank or the end of the value and is not a browser global: as a script,
+// "top=10 tips" or "name=Ali" is at most a ReferenceError, while
+// "location=name" navigates.
+func isInertWord(rhs string) bool {
+	j := 0
+	for j < len(rhs) && isIdentByte(rhs[j]) {
+		j++
+	}
+	if j == 0 || isBrowserGlobal(rhs[:j]) {
+		return false
+	}
+	return j == len(rhs) || rhs[j] == ' ' || rhs[j] == '\t' || rhs[j] == '\n' || rhs[j] == '\r'
+}
+
+// hasCodeAfterAssign reports whether the text after "name=" holds a template
+// literal, a call ('(' right after an identifier, ')' or ']': "alert(1)",
+// "x(1)") or a statement separator followed directly by more code
+// ("1;alert(1)"). Prose writes "level=beginner (2 weeks)" and
+// "a=1; b=2", with a blank before '(' and after ';'.
+func hasCodeAfterAssign(rhs string) bool {
+	for j := 0; j < len(rhs); j++ {
+		switch rhs[j] {
+		case '`':
+			return true
+		case '(':
+			if j > 0 && (isIdentByte(rhs[j-1]) || rhs[j-1] == ')' || rhs[j-1] == ']') {
+				return true
+			}
+		case ';':
+			if j+1 < len(rhs) && rhs[j+1] != ' ' && rhs[j+1] != '\t' && rhs[j+1] != '\n' && rhs[j+1] != '\r' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// decodeWhitespaceRefs replaces the HTML character references for tab, LF
+// and CR (&#9;, &#09;, &#x9;, &#X0A;, &#10;, &#13;, &Tab;, &NewLine; and
+// their forms without the closing ';') with the bytes they stand for.
+// Other references are left as they are.
+func decodeWhitespaceRefs(s string) string {
+	var b strings.Builder
+	last := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '&' {
+			continue
+		}
+		c, n := whitespaceRefAt(s[i:])
+		if n == 0 {
+			continue
+		}
+		if b.Len() == 0 {
+			b.Grow(len(s))
+		}
+		b.WriteString(s[last:i])
+		b.WriteByte(c)
+		i += n - 1
+		last = i + 1
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// whitespaceRefAt matches a whitespace character reference at the start of
+// s ("&..."). It returns the byte and the reference length, or 0, 0.
+func whitespaceRefAt(s string) (byte, int) {
+	for _, r := range [...]struct {
+		name string
+		c    byte
+	}{{"&Tab;", '\t'}, {"&NewLine;", '\n'}} {
+		if strings.HasPrefix(s, r.name) {
+			return r.c, len(r.name)
+		}
+	}
+	if len(s) < 3 || s[1] != '#' {
+		return 0, 0
+	}
+	j, base := 2, 10
+	if s[j] == 'x' || s[j] == 'X' {
+		j, base = 3, 16
+	}
+	start, v := j, 0
+	for ; j < len(s) && j-start < 8; j++ {
+		d := hexVal(s[j])
+		if d < 0 || d >= base {
+			break
+		}
+		v = v*base + d
+	}
+	if j == start {
+		return 0, 0
+	}
+	if j < len(s) && s[j] == ';' {
+		j++
+	}
+	switch v {
+	case 9, 10, 13:
+		return byte(v), j
+	}
+	return 0, 0
+}
+
+func hexVal(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
 }
 
 // isBrowserGlobal reports whether name is a window property whose

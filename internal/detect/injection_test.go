@@ -113,6 +113,12 @@ var (
 		"x & rm -rf /",
 		"x & cat /app/config.yaml",
 		"powershell -ep bypass -File x.ps1",
+		// Final fix wave: still attacks next to the tighter prose-"&" guard.
+		"x & cat /.env",
+		"x & ls -lah /tmp",
+		"x & ping -c 3 10.0.0.1",
+		"x & nc -lvp 4444",
+		"x & cat -n /etc/passwd",
 	}
 	cmdINegatives = []string{
 		"see you; id card copy",
@@ -178,6 +184,12 @@ var (
 		"cat -- both",
 		"House 12, Main Bazar\nDir",
 		"Mohalla Bazar\nDir Upper, KP",
+		// Final fix wave: English words after a dash, one-segment web paths.
+		"Delivery & ping -me 10.0.0.1",
+		"Tea & cat -lovers /club",
+		"Dog & cat /pet-food.html",
+		"Snacks & cat -the /treats",
+		"Mom & ping -you 192.168.1.1",
 	}
 	codeIPositives = []string{
 		"<?php system($_GET['c']); ?>",
@@ -296,6 +308,12 @@ var (
 		"x\r\nContent-Type: text/html",
 		"x\rTransfer-Encoding: chunked",
 		"x\r\nAccess-Control-Allow-Origin: *",
+		// Location with any URL shape, and a Refresh redirect.
+		"a\r\nLocation: \\\\evil.example",
+		"a\r\nLocation: javascript:alert(1)",
+		"a\r\nlocation:data:text/html,x",
+		"a\r\nRefresh: 0;url=http://evil.example",
+		"x%0d%0aRefresh:%205,%20URL=//evil.example",
 	}
 	crlfNegatives = []string{
 		"Line 1\nNote: ring bell",
@@ -305,6 +323,11 @@ var (
 		"Notes\r\nSet up a time: 5pm",
 		"Set-Cookie: on one line is just text",
 		"Cookie: chocolate chip\nCookies: 2 packs",
+		"Address:\r\nLocation: Karachi: Block 5",
+		"Address:\nLocation: Main St. 5:30pm pickup",
+		"Steps\r\nRefresh: later please",
+		"Steps\nRefresh: 5, then retry",
+		"Line\nLocation:",
 	}
 )
 

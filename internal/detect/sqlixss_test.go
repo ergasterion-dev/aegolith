@@ -101,6 +101,16 @@ var (
 		"javascript: a=1;alert(1)",
 		"javascript: top=1;alert(1)",
 		"javascript: x=alert,x(1)",
+		// HTML whitespace references decoded like the whitespace itself.
+		"javascript:&#9;location=name",
+		"javascript:&Tab;location=name",
+		"java&#x09;script:alert(1)",
+		"java&#10script:alert(1)",
+		"javascript:&#X0A;alert(1)",
+		"&#13;javascript:alert(1)",
+		// a call after ')' and a global assigned a global
+		"javascript: x=(alert)(1)",
+		"javascript: top=self",
 	}
 	scriptURLNegatives = []string{
 		"JavaScript: The Good Parts",
@@ -109,6 +119,15 @@ var (
 		"javascript:",
 		"JavaScript: version=ES6",
 		"JavaScript: Name=Ali",
+		// key=value prose with ';', '(' or a browser-global key
+		"javascript: a=1; b=2",
+		"JavaScript: level=beginner (2 weeks)",
+		"javascript: name=Ali",
+		"javascript: top=10 tips",
+		"JavaScript: yes=no; maybe",
+		"javascript: &#9; is a tab",
+		"javascript:&amp;",
+		"javascript: version=&#9;ES6",
 	}
 )
 

@@ -44,11 +44,15 @@ func isOperatorKey(k string) bool {
 		if n < 0 {
 			return false
 		}
+		// A Mongo operator shape: "[$" + ASCII letters + "]" ($ne, $or,
+		// $elemMatch, ...), not a fixed list.
 		at := off + n + 2
-		for _, op := range [...]string{"ne]", "gt]", "gte]", "lt]", "lte]", "regex]", "where]", "in]", "nin]", "exists]"} {
-			if strings.HasPrefix(k[at:], op) {
-				return true
-			}
+		j := at
+		for j < len(k) && (k[j] >= 'a' && k[j] <= 'z' || k[j] >= 'A' && k[j] <= 'Z') {
+			j++
+		}
+		if j > at && j < len(k) && k[j] == ']' {
+			return true
 		}
 		off = at
 	}

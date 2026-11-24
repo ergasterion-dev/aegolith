@@ -355,6 +355,15 @@ func unixArgsAt(s string, j int, w cmdWord, afterNewline bool, ctx opContext) bo
 			if ctx == opProseAmp && len(w.name) <= 2 && s[j+1] != '-' && f-j > 4 {
 				return false // a hyphenated word: "Bring CNIC & id -card"
 			}
+			if ctx == opProseAmp && !w.netcat && s[j+1] != '-' && isDashedWord(s[j+1:f]) {
+				// "Delivery & ping -me 10.0.0.1", "Tea & cat -lovers /club":
+				// an English word after a dash is not a flag, so the prose
+				// operand rules stay on.
+				wordValue = true
+				lastFlag, afterFlag = "", false
+				j = skipBlanks(s, f)
+				continue
+			}
 			flags++
 			lastFlag, afterFlag = s[j:f], true
 			j = skipBlanks(s, f)
@@ -372,6 +381,38 @@ func unixArgsAt(s string, j int, w cmdWord, afterNewline bool, ctx opContext) bo
 		j = skipBlanks(s, k)
 	}
 	return false
+}
+
+// isDashedWord reports whether the letters after a single '-' read as an
+// English word rather than a cluster of short options: a common two- or
+// three-letter lower-case word ("me", "you", "the"), or five or more
+// lower-case letters with at least two vowels ("lovers"). Option clusters
+// such as -la, -lah, -rf or -lvnp are neither.
+func isDashedWord(w string) bool {
+	vowels := 0
+	for i := 0; i < len(w); i++ {
+		c := w[i]
+		if c < 'a' || c > 'z' {
+			return false
+		}
+		if strings.IndexByte("aeiou", c) >= 0 {
+			vowels++
+		}
+	}
+	switch len(w) {
+	case 2, 3:
+		switch w {
+		case "me", "my", "us", "we", "he", "is", "am", "as", "at", "be", "by", "do", "go", "if", "no",
+			"of", "on", "or", "so", "to", "up", "ok", "the", "and", "for", "you", "our", "not", "are",
+			"all", "can", "her", "him", "his", "its", "was", "who", "why", "how", "new", "old", "too",
+			"get", "got", "any", "now", "out", "one", "two", "yes", "she", "see", "pls":
+			return true
+		}
+		return false
+	case 4:
+		return false
+	}
+	return len(w) >= 5 && vowels >= 2
 }
 
 // tokenEnd returns the end of the token at s[j]: the next blank or shell
@@ -484,11 +525,11 @@ func isShellOperator(c byte) bool {
 // path, a home or relative path, a variable, a redirection into a path or
 // descriptor, an IPv4 address, or (for curl and wget) a URL. "$5", "/2",
 // "-- both" and "food" do not count. With prose set (after a lone "&" and
-// no real flag), a URL and a one-segment root path without a dot are prose
+// no real flag), a URL and a one-segment root path that is not a dot-file are prose
 // ("dog & cat /dog-food", "Hair & curl https://..."), and an IPv4 address
 // counts only for netcat ("x & nc 10.0.0.1 4444"); a system path, a deeper
-// or dotted path, a home or relative path, a variable and a redirection
-// still count.
+// path, a root dot-file, a home or relative path, a variable and a
+// redirection still count.
 func unixOperandAt(s string, i int, url, prose, netcat bool) bool {
 	for i < len(s) && (s[i] == '\'' || s[i] == '"') {
 		i++
@@ -502,8 +543,10 @@ func unixOperandAt(s string, i int, url, prose, netcat bool) bool {
 	}
 	switch c := s[i]; {
 	case c == '/' && prose:
+		// A system path, a deeper path or a root dot-file ("/.env")
+		// counts; "/dog-food" and "/pet-food.html" read as prose.
 		tok := s[i+1 : tokenEnd(s, i)]
-		return absPathAt(s, i) || strings.ContainsAny(tok, "/.")
+		return absPathAt(s, i) || strings.Contains(tok, "/") || strings.HasPrefix(tok, ".")
 	case c == '/':
 		return isASCIILetter(next) || next == '.' || next == '_' || i+1 == len(s) || isShellOperator(next)
 	case c == '~':
@@ -1005,11 +1048,12 @@ func isCRLF(s string) bool {
 }
 
 // injectedHeaderAt reports whether s[i] starts a response header an attacker
-// would inject, followed by ':'. Location needs a URL or path value so that
-// "Location: near masjid" in an address stays clear.
+// would inject, followed by ':'. Location needs a URL or path value ("/",
+// "\\" or a "scheme:") and Refresh a "<seconds>;url=" value, so that
+// "Location: near masjid" or "Refresh: later" in prose stays clear.
 func injectedHeaderAt(s string, i int) bool {
 	for _, name := range [...]string{
-		"set-cookie", "location", "content-type", "content-length", "transfer-encoding",
+		"set-cookie", "location", "refresh", "content-type", "content-length", "transfer-encoding",
 		"access-control-allow-origin", "content-security-policy", "x-xss-protection",
 	} {
 		if !hasPrefixFold(s[i:], name) {
@@ -1022,16 +1066,63 @@ func injectedHeaderAt(s string, i int) bool {
 		if j >= len(s) || s[j] != ':' {
 			continue
 		}
-		if name != "location" {
+		if name != "location" && name != "refresh" {
 			return true
 		}
 		j++
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
 			j++
 		}
-		return j < len(s) && s[j] == '/' || hasPrefixFold(s[j:], "http:") || hasPrefixFold(s[j:], "https:")
+		if name == "refresh" {
+			return refreshURLAt(s[j:])
+		}
+		return j < len(s) && (s[j] == '/' || s[j] == '\\') || urlSchemeAt(s[j:])
 	}
 	return false
+}
+
+// urlSchemeAt reports whether s starts with a URL scheme, its colon and a
+// non-blank byte: a letter, then letters, digits, '+', '-' or '.', then ':'
+// ("http://", "javascript:alert", "data:text"). "near masjid", "5pm: gate"
+// and "Karachi: Block 5" do not.
+func urlSchemeAt(s string) bool {
+	if s == "" || !isASCIILetter(s[0]) {
+		return false
+	}
+	for j := 1; j < len(s); j++ {
+		c := s[j]
+		switch {
+		case c == ':':
+			return j+1 < len(s) && s[j+1] != ' ' && s[j+1] != '\t' && s[j+1] != '\r' && s[j+1] != '\n'
+		case isASCIILetter(c), c >= '0' && c <= '9', c == '+', c == '-', c == '.':
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// refreshURLAt reports whether s is a Refresh redirect value: digits, then
+// ';' or ',', optional blanks, then "url=" (any case).
+func refreshURLAt(s string) bool {
+	j := 0
+	for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+		j++
+	}
+	if j == 0 {
+		return false
+	}
+	for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+		j++
+	}
+	if j >= len(s) || (s[j] != ';' && s[j] != ',') {
+		return false
+	}
+	j++
+	for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+		j++
+	}
+	return hasPrefixFold(s[j:], "url=")
 }
 
 // --- byte helpers ---

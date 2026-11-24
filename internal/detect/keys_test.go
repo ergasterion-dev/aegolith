@@ -34,9 +34,18 @@ func TestQueryKey(t *testing.T) {
 		"[$anything]",
 		"$where",
 		"email%5B%24ne%5D",
+		// any operator shape, not only a fixed list
+		"a[$or][0][b]",
+		"filter[$and]",
+		"a[$size]",
+		"a[$elemMatch][b]",
+		"a[$eq]",
+		"a[$expr]",
+		"tags[$all][]",
 	})
 	assertNoKeyHits(t, "QueryKey", QueryKey, []string{
 		"price", "page", "limit", "sort", "q", "items[]", "filter[name]", "a[0][b]", "cost$", "price[$5]x",
+		"a[$]", "a[$ne", "tag[$100]", "note[$ 5]", "price[usd$]",
 	})
 }
 
