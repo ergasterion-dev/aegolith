@@ -1222,11 +1222,13 @@ func TestLoadConfig(t *testing.T) {
 func TestLoadConfigRejectsUnknownKeys(t *testing.T) {
 	dir := t.TempDir()
 	for name, doc := range map[string]string{
-		"top":      `{"mode":"enforce","modee":"x"}`,
-		"nested":   `{"routes":[{"method":"GET","path":"/a","bodyy":{}}]}`,
-		"limits":   `{"limits":{"max_feilds":1}}`,
-		"bad enum": `{"mode":"off"}`,
-		"trailing": `{"mode":"enforce"} {"mode":"monitor"}`,
+		"top":                  `{"mode":"enforce","modee":"x"}`,
+		"nested":               `{"routes":[{"method":"GET","path":"/a","bodyy":{}}]}`,
+		"limits":               `{"limits":{"max_feilds":1}}`,
+		"bad enum":             `{"mode":"off"}`,
+		"trailing":             `{"mode":"enforce"} {"mode":"monitor"}`,
+		"unknown_route allow":  `{"unknown_route":"allow"}`,
+		"unknown_fields allow": `{"unknown_fields":"allow"}`,
 	} {
 		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".json")
 		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
@@ -1340,5 +1342,110 @@ func TestMaxValueLenClampKeepsBudgetCharge(t *testing.T) {
 	mustHave(t, d, "AEG-XSS-001", "query.z")
 	if d.Action != aegolith.ActionBlock {
 		t.Fatalf("budget exhausted before query.z: %v", ruleIDs(d))
+	}
+}
+
+func TestLoadConfigExplicitAllowPointsToRuleActions(t *testing.T) {
+	dir := t.TempDir()
+	for field, rule := range map[string]string{"unknown_route": "AEG-ROUTE-001", "unknown_fields": "AEG-SCHEMA-002"} {
+		path := filepath.Join(dir, field+".json")
+		if err := os.WriteFile(path, []byte(`{"`+field+`":"allow"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := aegolith.LoadConfig(path)
+		if err == nil || !strings.Contains(err.Error(), "rule_actions") || !strings.Contains(err.Error(), rule) {
+			t.Errorf("%s allow: err = %v, want a pointer to rule_actions %s", field, err, rule)
+		}
+	}
+	// "monitor" and "block" are still accepted, and so is a route's own
+	// unknown_fields "allow" (a pointer, so explicit).
+	path := filepath.Join(dir, "ok.json")
+	doc := `{"unknown_route":"block","unknown_fields":"monitor","routes":[{"method":"GET","path":"/a","unknown_fields":"allow"}]}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := aegolith.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UnknownRoute != aegolith.ActionBlock || *cfg.Routes[0].UnknownFields != aegolith.ActionAllow {
+		t.Fatalf("loaded %+v", cfg)
+	}
+}
+
+func TestCaseInsensitiveRoutes(t *testing.T) {
+	block := aegolith.ActionBlock
+	routes := []aegolith.Route{{
+		Method:        "POST",
+		Path:          "/api/v1/cart/items",
+		Body:          map[string]aegolith.Field{"qty": {Type: aegolith.TypeInt}},
+		UnknownFields: &block,
+	}}
+	const bad = `{"qty":"lots","is_admin":true}`
+	// Default: case-sensitive, so a case variant is an unknown route (monitor).
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeEnforce, Routes: routes})
+	if d := fw.Inspect(postJSON("/API/v1/cart/items", bad)); d.Action != aegolith.ActionAllow {
+		t.Fatalf("case-sensitive default: %v %v", d.Action, ruleIDs(d))
+	} else if _, ok := find(d, "AEG-ROUTE-001"); !ok {
+		t.Fatalf("case-sensitive default: want AEG-ROUTE-001, got %v", ruleIDs(d))
+	}
+	// Per request (the Fiber adapter sets this).
+	r := postJSON("/API/v1/cart/items", bad)
+	r.CaseInsensitiveRoutes = true
+	if d := fw.Inspect(r); d.Action != aegolith.ActionBlock {
+		t.Fatalf("per-request fold: %v %v", d.Action, ruleIDs(d))
+	}
+	// Config option, also loadable from JSON.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.json")
+	doc := `{"case_insensitive_routes":true,"routes":[{"method":"POST","path":"/api/v1/cart/items","body":{"qty":{"type":"int"}},"unknown_fields":"block"}]}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := aegolith.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CaseInsensitiveRoutes {
+		t.Fatal("case_insensitive_routes not loaded")
+	}
+	fw = mustNew(t, cfg)
+	for _, p := range []string{"/api/v1/cart/items", "/API/V1/Cart/Items/"} {
+		d := fw.Inspect(postJSON(p, bad))
+		if d.Action != aegolith.ActionBlock {
+			t.Errorf("%s: %v %v", p, d.Action, ruleIDs(d))
+		}
+		if _, ok := find(d, "AEG-SCHEMA-001"); !ok {
+			t.Errorf("%s: want AEG-SCHEMA-001, got %v", p, ruleIDs(d))
+		}
+	}
+	if d := fw.Inspect(postJSON("/API/v1/cart/items", `{"qty":2}`)); d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
+		t.Fatalf("legit case variant: %v %v", d.Action, ruleIDs(d))
+	}
+	// Templates that differ only in case collide when folding.
+	_, err = aegolith.New(aegolith.Config{CaseInsensitiveRoutes: true, Routes: []aegolith.Route{
+		{Method: "GET", Path: "/a/Users"}, {Method: "GET", Path: "/a/users"},
+	}})
+	if err == nil {
+		t.Fatal("case-colliding templates accepted")
+	}
+}
+
+func TestNewCopiesFieldBounds(t *testing.T) {
+	minV, maxV := 1.0, 99.0
+	cfg := aegolith.Config{Mode: aegolith.ModeEnforce, Routes: []aegolith.Route{{
+		Method: "POST", Path: "/cart",
+		Body: map[string]aegolith.Field{"qty": {Type: aegolith.TypeInt, Min: &minV, Max: &maxV}},
+	}}}
+	fw := mustNew(t, cfg)
+	if d := fw.Inspect(postJSON("/cart", `{"qty":500}`)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("qty 500 before mutation: %v", d.Action)
+	}
+	maxV, minV = 1000, -1000 // the caller changes its own copies
+	if d := fw.Inspect(postJSON("/cart", `{"qty":500}`)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("qty 500 after the caller raised Max: %v (firewall aliased the caller's bounds)", d.Action)
+	}
+	if d := fw.Inspect(postJSON("/cart", `{"qty":0}`)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("qty 0 after the caller lowered Min: %v", d.Action)
 	}
 }

@@ -187,13 +187,21 @@ type Decision struct {
 
 // Request is the transport-independent view of an HTTP request. RawPath is
 // the escaped path exactly as received.
+//
+// CaseInsensitiveRoutes is set by an adapter whose server routes literal
+// path segments case-insensitively (Fiber's default): the route table then
+// matches "/API/v1/x" to the template "/api/v1/x" for this request, so the
+// route policy the handler is actually served under still applies.
+// Parameter values keep their case. Config.CaseInsensitiveRoutes does the
+// same for every request.
 type Request struct {
-	Method     string
-	RawPath    string
-	RawQuery   string
-	RemoteAddr string
-	Header     http.Header
-	Body       []byte
+	Method                string
+	RawPath               string
+	RawQuery              string
+	RemoteAddr            string
+	Header                http.Header
+	Body                  []byte
+	CaseInsensitiveRoutes bool
 }
 
 // Limits bound the work done per request.

@@ -66,7 +66,7 @@ const maxRequestIDLen = 64
 // handlers (c.Next) are not touched.
 func New(cfg Config) fiber.Handler {
 	maxBody := cfg.Firewall.Limits().MaxBodyBytes
-	if maxBody >= math.MaxInt64 {
+	if maxBody == math.MaxInt64 {
 		maxBody = math.MaxInt64 - 1 // keep maxBody+1 from overflowing
 	}
 	return func(c *fiber.Ctx) error {
@@ -107,6 +107,10 @@ func inspect(fw *aegolith.Firewall, c *fiber.Ctx, maxBody int64) (ar *aegolith.R
 		RemoteAddr: strings.Clone(c.IP()),
 		Header:     engineHeader(c),
 		Body:       inspectBody(c, maxBody),
+		// Fiber routes case-insensitively unless CaseSensitive is set, so
+		// "/API/v1/x" reaches the "/api/v1/x" handler; match the route
+		// policy the same way.
+		CaseInsensitiveRoutes: !c.App().Config().CaseSensitive,
 	}
 	return ar, fw.Inspect(ar), true
 }

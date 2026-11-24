@@ -445,3 +445,101 @@ func TestValidateLinearTime(t *testing.T) {
 		t.Error("pattern should not match")
 	}
 }
+
+func TestMatchCaseFolding(t *testing.T) {
+	routes := []Route{
+		{Method: "POST", Path: "/api/v1/cart/items"},
+		{Method: "GET", Path: "/api/v1/products/:id"},
+		{Method: "GET", Path: "/api/v1/Mixed/:id"},
+		{Method: "GET", Path: "/files/*"},
+	}
+	sens, err := Compile(routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fold, err := CompileFold(routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		method, path string
+		wantSens     bool // case-sensitive table, Match
+		wantFold     bool // folded table, or MatchFold on the case-sensitive table
+		wantKey      string
+		wantParams   map[string]string
+	}{
+		{"POST", "/api/v1/cart/items", true, true, "POST /api/v1/cart/items", nil},
+		{"POST", "/API/v1/cart/items", false, true, "POST /api/v1/cart/items", nil},
+		{"POST", "/Api/V1/CART/Items/", false, true, "POST /api/v1/cart/items", nil},
+		// parameter values keep their case
+		{"GET", "/API/V1/PRODUCTS/AbC-12", false, true, "GET /api/v1/products/:id", map[string]string{"id": "AbC-12"}},
+		{"GET", "/api/v1/Mixed/X", true, true, "GET /api/v1/Mixed/:id", map[string]string{"id": "X"}},
+		{"GET", "/api/v1/mixed/X", false, true, "GET /api/v1/Mixed/:id", map[string]string{"id": "X"}},
+		{"GET", "/FILES/A/B", false, true, "GET /files/*", map[string]string{"*": "A/B"}},
+		// non-ASCII and percent-encoded segments are not folded
+		{"POST", "/api/v1/cart/%49tems", false, false, "", nil},
+		{"POST", "/api/v1/cart/ıtems", false, false, "", nil},
+		{"POST", "/api/v1/cart", false, false, "", nil},
+	}
+	check := func(t *testing.T, m Matched, ok, want bool, key string, params map[string]string) {
+		t.Helper()
+		if ok != want {
+			t.Fatalf("ok = %v, want %v (key %q)", ok, want, m.Key)
+		}
+		if !ok {
+			return
+		}
+		if m.Key != key {
+			t.Fatalf("key = %q, want %q", m.Key, key)
+		}
+		if len(m.Params) != len(params) {
+			t.Fatalf("params = %v, want %v", m.Params, params)
+		}
+		for k, v := range params {
+			if m.Params[k] != v {
+				t.Fatalf("param %q = %q, want %q", k, m.Params[k], v)
+			}
+		}
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			m, ok := sens.Match(tt.method, tt.path)
+			check(t, m, ok, tt.wantSens, tt.wantKey, tt.wantParams)
+			m, ok = sens.MatchFold(tt.method, tt.path, true)
+			check(t, m, ok, tt.wantFold, tt.wantKey, tt.wantParams)
+			m, ok = fold.Match(tt.method, tt.path)
+			check(t, m, ok, tt.wantFold, tt.wantKey, tt.wantParams)
+			m, ok = fold.MatchFold(tt.method, tt.path, false) // a folded table always folds
+			check(t, m, ok, tt.wantFold, tt.wantKey, tt.wantParams)
+		})
+	}
+}
+
+func TestMatchFoldPrefersExactCase(t *testing.T) {
+	tbl, err := Compile([]Route{
+		{Method: "GET", Path: "/a/Users"},
+		{Method: "GET", Path: "/a/users"},
+		{Method: "GET", Path: "/b/X/end"},
+		{Method: "GET", Path: "/b/x/:id/z"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ path, key string }{
+		{"/a/users", "GET /a/users"},
+		{"/a/Users", "GET /a/Users"},
+		{"/a/USERS", "GET /a/Users"}, // first declared among the folded candidates
+		// the exact-case branch dead-ends, so the folded sibling is tried
+		{"/b/x/end", "GET /b/X/end"},
+		{"/b/x/7/z", "GET /b/x/:id/z"},
+	} {
+		m, ok := tbl.MatchFold("GET", c.path, true)
+		if !ok || m.Key != c.key {
+			t.Errorf("MatchFold(%s) = %q,%v; want %q", c.path, m.Key, ok, c.key)
+		}
+	}
+	// CompileFold rejects templates that differ only in letter case.
+	if _, err := CompileFold([]Route{{Method: "GET", Path: "/a/Users"}, {Method: "GET", Path: "/a/users"}}); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("CompileFold case-duplicate err = %v", err)
+	}
+}

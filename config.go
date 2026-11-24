@@ -53,13 +53,26 @@ type Config struct {
 	// Routes declare the API surface. With no routes every input is
 	// untyped and gets every detector.
 	Routes []Route `json:"routes,omitempty"`
+	// CaseInsensitiveRoutes matches the literal segments of route templates
+	// regardless of ASCII case ("/API/v1/cart" matches "/api/v1/cart");
+	// parameter values keep their case. Set it when the server routes
+	// case-insensitively, otherwise a case variant of a path reaches the
+	// handler but is treated as an unknown route and escapes the route's
+	// typed fields and unknown-field action. Default false (net/http, chi
+	// and gorilla are case-sensitive). The Fiber adapter turns it on per
+	// request unless fiber.Config.CaseSensitive is set. Two templates that
+	// differ only in letter case are then duplicates and rejected by New.
+	CaseInsensitiveRoutes bool `json:"case_insensitive_routes,omitempty"`
 	// UnknownRoute is the action for a request matching no route when
-	// Routes is set. Default (and the zero value): monitor. Use
-	// RuleActions{"AEG-ROUTE-001": allow} to silence it.
+	// Routes is set. Default (and the zero value, ActionAllow): monitor, so
+	// it cannot be set to allow here; LoadConfig rejects an explicit
+	// "allow". Use RuleActions{"AEG-ROUTE-001": allow} to silence it.
 	UnknownRoute Action `json:"unknown_route"`
 	// UnknownFields is the action for a query, form or JSON field a matched
 	// route does not declare, unless the route sets its own. Default (and
-	// the zero value): monitor. Undeclared values are still scanned.
+	// the zero value, ActionAllow): monitor; LoadConfig rejects an explicit
+	// "allow" (use RuleActions{"AEG-SCHEMA-002": allow}). Undeclared values
+	// are still scanned.
 	UnknownFields Action `json:"unknown_fields"`
 	// Exclusions drop matches for known false positives.
 	Exclusions []Exclusion `json:"exclusions,omitempty"`
@@ -92,6 +105,21 @@ func LoadConfig(path string) (Config, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("aegolith: config %s: trailing data after the JSON object", path)
 	}
+	// "allow" is the zero Action, which these two fields read as their
+	// monitor default, so an explicit "allow" would silently mean monitor.
+	var explicit struct {
+		UnknownRoute  *Action `json:"unknown_route"`
+		UnknownFields *Action `json:"unknown_fields"`
+	}
+	if err := json.Unmarshal(b, &explicit); err != nil {
+		return Config{}, fmt.Errorf("aegolith: config %s: %w", path, err)
+	}
+	if explicit.UnknownRoute != nil && *explicit.UnknownRoute == ActionAllow {
+		return Config{}, fmt.Errorf(`aegolith: config %s: "unknown_route": "allow" is not supported (it would mean monitor); use "rule_actions": {"AEG-ROUTE-001": "allow"} to silence unknown routes`, path)
+	}
+	if explicit.UnknownFields != nil && *explicit.UnknownFields == ActionAllow {
+		return Config{}, fmt.Errorf(`aegolith: config %s: "unknown_fields": "allow" is not supported (it would mean monitor); use "rule_actions": {"AEG-SCHEMA-002": "allow"} to silence undeclared fields`, path)
+	}
 	return cfg, nil
 }
 
@@ -115,17 +143,18 @@ func (c Config) options() (engine.Options, error) {
 		}
 	}
 	o := engine.Options{
-		Mode:                c.Mode,
-		AllowedMethods:      methods,
-		AllowedContentTypes: c.AllowedContentTypes,
-		AllowXML:            c.AllowXML,
-		Limits:              lim,
-		Routes:              c.Routes,
-		UnknownRoute:        orMonitor(c.UnknownRoute),
-		UnknownFields:       orMonitor(c.UnknownFields),
-		RuleActions:         c.RuleActions,
-		InspectHeaders:      c.InspectHeaders,
-		FailOpen:            c.FailOpen == nil || *c.FailOpen,
+		Mode:                  c.Mode,
+		AllowedMethods:        methods,
+		AllowedContentTypes:   c.AllowedContentTypes,
+		AllowXML:              c.AllowXML,
+		Limits:                lim,
+		Routes:                c.Routes,
+		CaseInsensitiveRoutes: c.CaseInsensitiveRoutes,
+		UnknownRoute:          orMonitor(c.UnknownRoute),
+		UnknownFields:         orMonitor(c.UnknownFields),
+		RuleActions:           c.RuleActions,
+		InspectHeaders:        c.InspectHeaders,
+		FailOpen:              c.FailOpen == nil || *c.FailOpen,
 	}
 	for _, x := range c.Exclusions {
 		o.Exclusions = append(o.Exclusions, engine.Exclusion{Rule: x.Rule, Route: x.Route, Field: x.Field})

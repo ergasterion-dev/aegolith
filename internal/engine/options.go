@@ -31,18 +31,19 @@ type Exclusion struct {
 // Options is the fully resolved engine configuration: every limit is
 // positive and every action has its default filled in.
 type Options struct {
-	Mode                model.Mode
-	AllowedMethods      []string
-	AllowedContentTypes []string
-	AllowXML            bool
-	Limits              model.Limits
-	Routes              []policy.Route
-	UnknownRoute        model.Action
-	UnknownFields       model.Action
-	Exclusions          []Exclusion
-	RuleActions         map[string]model.Action
-	InspectHeaders      []string
-	FailOpen            bool
+	Mode                  model.Mode
+	AllowedMethods        []string
+	AllowedContentTypes   []string
+	AllowXML              bool
+	Limits                model.Limits
+	Routes                []policy.Route
+	CaseInsensitiveRoutes bool
+	UnknownRoute          model.Action
+	UnknownFields         model.Action
+	Exclusions            []Exclusion
+	RuleActions           map[string]model.Action
+	InspectHeaders        []string
+	FailOpen              bool
 }
 
 type prefixAction struct {
@@ -121,7 +122,11 @@ func New(o Options) (*Engine, error) {
 		},
 	}
 	if len(o.Routes) > 0 {
-		t, err := policy.Compile(o.Routes)
+		compile := policy.Compile
+		if o.CaseInsensitiveRoutes {
+			compile = policy.CompileFold
+		}
+		t, err := compile(o.Routes)
 		if err != nil {
 			return nil, err
 		}

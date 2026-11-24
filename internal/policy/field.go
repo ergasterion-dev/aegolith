@@ -78,6 +78,16 @@ func (s FieldSpec) compile() (FieldSpec, error) {
 		}
 		s.re = re
 	}
+	// Copy everything the caller could still change through a pointer or
+	// slice, so a compiled table cannot be altered after Compile.
+	if s.Min != nil {
+		v := *s.Min
+		s.Min = &v
+	}
+	if s.Max != nil {
+		v := *s.Max
+		s.Max = &v
+	}
 	s.Enum = append([]string(nil), s.Enum...)
 	return s, nil
 }

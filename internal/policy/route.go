@@ -27,14 +27,16 @@ type Route struct {
 // Table is a compiled, immutable route table, safe for concurrent use.
 type Table struct {
 	byMethod map[string]*node
+	fold     bool // literal segments match regardless of ASCII case
 }
 
 // node is one segment position in a method's route trie.
 type node struct {
 	literal  map[string]*node
-	param    *node  // any non-empty segment
-	wildcard *entry // route whose template ends in "*" at this position
-	end      *entry // route whose template ends exactly here
+	folded   map[string][]*node // ASCII-lower-cased literal -> children, in insertion order
+	param    *node              // any non-empty segment
+	wildcard *entry             // route whose template ends in "*" at this position
+	end      *entry             // route whose template ends exactly here
 }
 
 type entry struct {
@@ -50,10 +52,23 @@ type Matched struct {
 	Params map[string]string // path parameter values; "*" holds the wildcard rest
 }
 
-// Compile validates routes and builds the table. The table keeps its own
-// copy of every route, so later changes to routes do not affect it.
+// Compile validates routes and builds a case-sensitive table. The table
+// keeps its own copy of every route, so later changes to routes do not
+// affect it.
 func Compile(routes []Route) (*Table, error) {
-	t := &Table{byMethod: map[string]*node{}}
+	return compile(routes, false)
+}
+
+// CompileFold is Compile for a server that routes case-insensitively:
+// literal segments are folded to ASCII lower case, so "/API/v1" matches the
+// template "/api/v1". Parameter values keep their case. Two templates that
+// differ only in the case of their literal segments are duplicates.
+func CompileFold(routes []Route) (*Table, error) {
+	return compile(routes, true)
+}
+
+func compile(routes []Route, fold bool) (*Table, error) {
+	t := &Table{byMethod: map[string]*node{}, fold: fold}
 	for i := range routes {
 		r, err := compileRoute(routes[i])
 		if err != nil {
@@ -178,13 +193,19 @@ func (t *Table) insert(r *Route) error {
 			}
 			n = n.param
 		default:
+			if t.fold {
+				s = asciiLower(s)
+			}
 			if n.literal == nil {
 				n.literal = map[string]*node{}
+				n.folded = map[string][]*node{}
 			}
 			c := n.literal[s]
 			if c == nil {
 				c = &node{}
 				n.literal[s] = c
+				ls := asciiLower(s)
+				n.folded[ls] = append(n.folded[ls], c)
 			}
 			n = c
 		}
@@ -201,29 +222,43 @@ func (t *Table) insert(r *Route) error {
 // an encoded "/" (%2F) can neither split a segment nor forge one.
 // At each segment a literal beats a parameter, which beats a trailing "*";
 // a branch that dead-ends falls back to the next option. HEAD requests
-// match GET routes when no HEAD route matches.
+// match GET routes when no HEAD route matches. Literal segments match
+// case-insensitively when the table was built with CompileFold.
 func (t *Table) Match(method, path string) (Matched, bool) {
 	if t == nil {
 		return Matched{}, false
 	}
+	return t.MatchFold(method, path, t.fold)
+}
+
+// MatchFold is Match with literal-segment case folding chosen per call; a
+// table built with CompileFold always folds. When folding, an exact-case
+// literal is tried first, then the other literals equal to the segment
+// under ASCII case folding, in declaration order. Parameter values and the
+// wildcard rest keep their case.
+func (t *Table) MatchFold(method, path string, fold bool) (Matched, bool) {
+	if t == nil {
+		return Matched{}, false
+	}
+	fold = fold || t.fold
 	method = strings.ToUpper(method)
 	segs := splitPath(path)
-	if m, ok := t.matchMethod(method, segs); ok {
+	if m, ok := t.matchMethod(method, segs, fold); ok {
 		return m, true
 	}
 	if method == "HEAD" {
-		return t.matchMethod("GET", segs)
+		return t.matchMethod("GET", segs, fold)
 	}
 	return Matched{}, false
 }
 
-func (t *Table) matchMethod(method string, segs []string) (Matched, bool) {
+func (t *Table) matchMethod(method string, segs []string, fold bool) (Matched, bool) {
 	root := t.byMethod[method]
 	if root == nil {
 		return Matched{}, false
 	}
 	var bound []string // param values in template order
-	e, rest := root.find(segs, 0, &bound)
+	e, rest := root.find(segs, 0, fold, &bound)
 	if e == nil {
 		return Matched{}, false
 	}
@@ -241,10 +276,11 @@ func (t *Table) matchMethod(method string, segs []string) (Matched, bool) {
 }
 
 // find walks the trie depth-first, preferring literal, then param, then
-// wildcard. Each trie node is visited at most once, so the cost is bounded
-// by the table size, not exponential in the path. It returns the entry and
-// the index of the first segment the wildcard consumed (-1 if none).
-func (n *node) find(segs []string, i int, bound *[]string) (*entry, int) {
+// wildcard. Each trie node is visited at most once (every node has one
+// parent and is entered only from it), so the cost is bounded by the table
+// size, not exponential in the path. It returns the entry and the index of
+// the first segment the wildcard consumed (-1 if none).
+func (n *node) find(segs []string, i int, fold bool, bound *[]string) (*entry, int) {
 	if i == len(segs) {
 		if n.end != nil {
 			return n.end, -1
@@ -255,14 +291,25 @@ func (n *node) find(segs []string, i int, bound *[]string) (*entry, int) {
 		return nil, -1
 	}
 	s := segs[i]
-	if c := n.literal[s]; c != nil {
-		if e, r := c.find(segs, i+1, bound); e != nil {
+	exact := n.literal[s]
+	if exact != nil {
+		if e, r := exact.find(segs, i+1, fold, bound); e != nil {
 			return e, r
+		}
+	}
+	if fold && n.folded != nil {
+		for _, c := range n.folded[asciiLower(s)] {
+			if c == exact {
+				continue
+			}
+			if e, r := c.find(segs, i+1, fold, bound); e != nil {
+				return e, r
+			}
 		}
 	}
 	if n.param != nil && s != "" {
 		*bound = append(*bound, s)
-		if e, r := n.param.find(segs, i+1, bound); e != nil {
+		if e, r := n.param.find(segs, i+1, fold, bound); e != nil {
 			return e, r
 		}
 		*bound = (*bound)[:len(*bound)-1]
@@ -271,6 +318,23 @@ func (n *node) find(segs []string, i int, bound *[]string) (*entry, int) {
 		return n.wildcard, i
 	}
 	return nil, -1
+}
+
+// asciiLower lower-cases ASCII letters only, as Fiber's router does; other
+// bytes (UTF-8, percent escapes) are left alone.
+func asciiLower(s string) string {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 'A' && c <= 'Z' {
+			b := []byte(s)
+			for j := i; j < len(b); j++ {
+				if b[j] >= 'A' && b[j] <= 'Z' {
+					b[j] += 'a' - 'A'
+				}
+			}
+			return string(b)
+		}
+	}
+	return s
 }
 
 // Field returns the spec declared for a path param, query value or body

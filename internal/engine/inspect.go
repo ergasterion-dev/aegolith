@@ -109,7 +109,7 @@ func canonicalHeader(h http.Header) http.Header {
 // which only adds inspection.
 func (s *state) matchRoute() {
 	if s.e.table != nil {
-		if m, ok := s.e.table.Match(s.req.Method, s.req.RawPath); ok {
+		if m, ok := s.e.table.MatchFold(s.req.Method, s.req.RawPath, s.req.CaseInsensitiveRoutes); ok {
 			s.routed, s.route, s.routeKey = true, m, m.Key
 			if len(m.Params) > 0 {
 				s.params = make(map[string]string, len(m.Params))

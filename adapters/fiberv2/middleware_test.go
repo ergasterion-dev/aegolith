@@ -128,7 +128,7 @@ func TestFiberBodyIntact(t *testing.T) {
 			if code != 200 || !bytes.Equal(got, body) {
 				t.Fatalf("code=%d len(got)=%d len(want)=%d", code, len(got), len(body))
 			}
-			if name == "over-limit" && sawSize.Load() > 1<<20+1 {
+			if name == "over-limit" && (sawSize.Load() == 0 || sawSize.Load() > 1<<20+1) {
 				t.Fatalf("engine got %d bytes, want at most limit+1", sawSize.Load())
 			}
 		})
@@ -586,4 +586,82 @@ func doErr(app *fiber.App, req *http.Request) (int, []byte, http.Header) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, b, resp.Header
+}
+
+// TestFiberCaseVariantPathKeepsRoutePolicy: Fiber routes case-insensitively
+// by default, so "/API/v1/cart/items" reaches the "/api/v1/cart/items"
+// handler. The route policy (typed fields, unknown_fields block) must apply
+// to every variant that reaches the handler.
+func TestFiberCaseVariantPathKeepsRoutePolicy(t *testing.T) {
+	block := aegolith.ActionBlock
+	fw := newFW(t, aegolith.Config{Mode: aegolith.ModeEnforce, Routes: []aegolith.Route{{
+		Method: "POST",
+		Path:   "/api/v1/cart/items",
+		Body: map[string]aegolith.Field{
+			"product_id": {Type: aegolith.TypeUUID},
+			"qty":        {Type: aegolith.TypeInt},
+		},
+		UnknownFields: &block,
+	}}})
+	const bad = `{"product_id":"not-a-uuid","qty":"lots","is_admin":true}`
+	const good = `{"product_id":"4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b","qty":2}`
+	for _, sensitive := range []bool{false, true} {
+		var calls atomic.Int32
+		app := fiber.New(fiber.Config{DisableStartupMessage: true, CaseSensitive: sensitive})
+		app.Use(New(Config{Firewall: fw}))
+		app.Post("/api/v1/cart/items", func(c *fiber.Ctx) error {
+			calls.Add(1)
+			return c.SendStatus(200)
+		})
+		for _, c := range []struct {
+			path, body string
+			want       int
+		}{
+			{"/api/v1/cart/items", bad, 403},
+			{"/API/v1/cart/items", bad, 403},
+			{"/Api/V1/Cart/Items", bad, 403},
+			{"/api/v1/cart/items/", bad, 403},
+			{"/api/v1/cart/items", good, 200},
+			{"/API/v1/cart/items", good, 200},
+		} {
+			if sensitive && c.path != strings.ToLower(c.path) {
+				// Fiber itself 404s case variants when CaseSensitive is set.
+				c.want = 404
+			}
+			calls.Store(0)
+			req := httptest.NewRequest("POST", c.path, strings.NewReader(c.body))
+			req.Header.Set("Content-Type", "application/json")
+			code, _, _ := do(t, app, req)
+			if code != c.want {
+				t.Errorf("CaseSensitive=%v %s %s: status %d, want %d", sensitive, c.path, c.body, code, c.want)
+			}
+			if reached := calls.Load() > 0; reached != (c.want == 200) {
+				t.Errorf("CaseSensitive=%v %s: handler reached=%v", sensitive, c.path, reached)
+			}
+		}
+	}
+}
+
+// TestFiberOverLimitPaddingBlockedByRuleAction: with AEG-PROTO-003 set to
+// block, an attack pushed past MaxBodyBytes by padding is refused; with the
+// default (monitor) it reaches the handler, which is the documented gap.
+func TestFiberOverLimitPaddingBlockedByRuleAction(t *testing.T) {
+	body := `{"pad":"` + strings.Repeat("a", 1<<20) + `","q":"1' OR '1'='1"}`
+	for _, c := range []struct {
+		name string
+		cfg  aegolith.Config
+		want int
+	}{
+		{"default", aegolith.Config{Mode: aegolith.ModeEnforce}, 200},
+		{"proto-003 block", aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}}, 403},
+	} {
+		var calls atomic.Int32
+		app := newApp(Config{Firewall: newFW(t, c.cfg)}, &calls)
+		req := httptest.NewRequest("POST", "/search", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		code, _, _ := do(t, app, req)
+		if code != c.want || (calls.Load() > 0) != (c.want == 200) {
+			t.Errorf("%s: code=%d calls=%d, want %d", c.name, code, calls.Load(), c.want)
+		}
+	}
 }
