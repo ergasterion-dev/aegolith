@@ -1,12 +1,14 @@
 package httpwaf
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -122,11 +124,10 @@ func (c *countingBody) Close() error { c.closed.Store(true); return nil }
 
 func TestMiddlewareReadsAtMostLimitPlusOneAndKeepsClose(t *testing.T) {
 	cb := &countingBody{r: bytes.NewReader(jsonBody(3 << 20))}
+	inspected := -1
 	h := Middleware(newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor}), Options{
 		OnDecision: func(r *aegolith.Request, _ aegolith.Decision) {
-			if int64(len(r.Body)) != 1<<20+1 {
-				t.Errorf("inspected %d bytes", len(r.Body))
-			}
+			inspected = len(r.Body)
 		},
 	})(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		if cb.n.Load() > 1<<20+1 {
@@ -141,6 +142,9 @@ func TestMiddlewareReadsAtMostLimitPlusOneAndKeepsClose(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if !cb.closed.Load() {
 		t.Fatal("original Close not preserved")
+	}
+	if inspected != 1<<20+1 {
+		t.Fatalf("hook ran=%v, inspected %d bytes", inspected >= 0, inspected)
 	}
 }
 
@@ -191,7 +195,7 @@ func TestMiddlewareMonitorCallsHook(t *testing.T) {
 	}
 }
 
-func TestMiddlewareProtocolHeaders(t *testing.T) {
+func TestEngineHeaderBuildingFromHandBuiltRequest(t *testing.T) {
 	var seen http.Header
 	var method, rawPath string
 	h := Middleware(newFW(t, aegolith.Config{}), Options{
@@ -300,7 +304,22 @@ func TestMiddlewareNilFirewallFailsOpen(t *testing.T) {
 }
 
 func TestMiddlewareConcurrent(t *testing.T) {
-	h := Middleware(newFW(t, aegolith.Config{}), Options{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var mu sync.Mutex
+	var rules []string
+	h := Middleware(newFW(t, aegolith.Config{}), Options{
+		OnDecision: func(_ *aegolith.Request, d aegolith.Decision) {
+			if d.Action != aegolith.ActionBlock {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			var ids []string
+			for _, m := range d.Matches {
+				ids = append(ids, m.RuleID)
+			}
+			rules = append(rules, strings.Join(ids, ","))
+		},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 	}))
 	var wg sync.WaitGroup
@@ -325,6 +344,14 @@ func TestMiddlewareConcurrent(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	if len(rules) != 16 {
+		t.Fatalf("hook calls %d: %q", len(rules), rules)
+	}
+	for _, r := range rules {
+		if r != rules[0] || r == "" {
+			t.Fatalf("decisions differ: %q vs %q", r, rules[0])
+		}
+	}
 }
 
 // recHandler captures slog records.
@@ -382,6 +409,15 @@ func TestSlogHook(t *testing.T) {
 	if !strings.Contains(a["rules"].String(), "AEG-SQLI") {
 		t.Fatalf("rules %v", a["rules"])
 	}
+	fields, snips := a["fields"].Any().([]string), a["snippets"].Any().([]string)
+	if len(fields) == 0 || len(fields) != len(snips) || len(a["categories"].Any().([]string)) != len(fields) {
+		t.Fatalf("attr shapes %v", a)
+	}
+	for i := range fields {
+		if !strings.HasPrefix(fields[i], "query.") || snips[i] == "" || len(snips[i]) > 64 {
+			t.Fatalf("field %q snippet %q", fields[i], snips[i])
+		}
+	}
 }
 
 func TestSlogHookNilLoggerUsesDefault(t *testing.T) {
@@ -389,4 +425,128 @@ func TestSlogHookNilLoggerUsesDefault(t *testing.T) {
 		t.Fatal("nil hook")
 	}
 	SlogHook(nil)(&aegolith.Request{}, aegolith.Decision{}) // must not panic
+}
+
+// rawTCP sends raw bytes to a real net/http server wrapped by the middleware
+// and returns the headers the engine saw (nil if the hook did not run), the
+// response status and the body length the application read.
+func rawTCP(t *testing.T, req string) (seen http.Header, status, bodyN int) {
+	t.Helper()
+	var mu sync.Mutex
+	h := Middleware(newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor}), Options{
+		OnDecision: func(r *aegolith.Request, _ aegolith.Decision) { mu.Lock(); seen = r.Header; mu.Unlock() },
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodyN = len(b)
+		mu.Unlock()
+	}))
+	s := httptest.NewServer(h)
+	defer s.Close()
+	c, err := net.Dial("tcp", s.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Write([]byte(req)); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	return seen, resp.StatusCode, bodyN
+}
+
+// Through a real server net/http neutralises TE.CL itself: Content-Length is
+// dropped when Transfer-Encoding: chunked is present, so the engine sees only
+// the Transfer-Encoding header (the smuggling rules matter for other servers).
+func TestRealServerTransferEncodingContentLength(t *testing.T) {
+	const pre = "POST /x HTTP/1.1\r\nHost: a\r\nContent-Type: application/json\r\nConnection: close\r\n"
+	seen, status, n := rawTCP(t, pre+"Transfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n3\r\nabc\r\n0\r\n\r\n")
+	if status != 200 || seen.Get("Transfer-Encoding") != "chunked" || seen.Get("Content-Length") != "" || n != 3 {
+		t.Fatalf("status=%d seen=%v bodyN=%d", status, seen, n)
+	}
+	if _, status, _ := rawTCP(t, pre+"Transfer-Encoding: xchunked\r\n\r\n"); status != 501 {
+		t.Fatalf("xchunked status %d", status)
+	}
+	if _, status, _ := rawTCP(t, pre+"Content-Length: 5\r\nContent-Length: 6\r\n\r\nabcdef"); status != 400 {
+		t.Fatalf("duplicate CL status %d", status)
+	}
+}
+
+func TestMiddlewareNoSyntheticContentLengthZero(t *testing.T) {
+	var seen http.Header
+	h := Middleware(newFW(t, aegolith.Config{}), Options{
+		OnDecision: func(r *aegolith.Request, _ aegolith.Decision) { seen = r.Header },
+	})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", sqliQuery, nil))
+	if _, ok := seen["Content-Length"]; ok {
+		t.Fatalf("synthetic Content-Length on bodyless request: %v", seen)
+	}
+}
+
+func TestMiddlewareMaxInt64LimitNoOverflow(t *testing.T) {
+	fw := newFW(t, aegolith.Config{Limits: aegolith.Limits{MaxBodyBytes: 1<<63 - 1}})
+	var got []byte
+	h := Middleware(fw, Options{})(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got, _ = io.ReadAll(r.Body) }))
+	req := httptest.NewRequest("POST", "/x", strings.NewReader(`{"a":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if string(got) != `{"a":1}` {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestMiddlewareHeadBlocks(t *testing.T) {
+	h := Middleware(newFW(t, aegolith.Config{}), Options{})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("next called") }))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("HEAD", sqliQuery, nil))
+	if rec.Code != 403 {
+		t.Fatalf("code %d", rec.Code)
+	}
+}
+
+func TestMiddlewareHookOnInternalError(t *testing.T) {
+	var hooked int
+	var nilFW *aegolith.Firewall
+	h := Middleware(nilFW, Options{
+		OnDecision: func(_ *aegolith.Request, d aegolith.Decision) {
+			hooked++
+			if d.Err == nil {
+				t.Error("expected Err")
+			}
+		},
+	})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	if hooked != 1 {
+		t.Fatalf("hooked %d", hooked)
+	}
+}
+
+func TestSlogHookErrorLevelAndTruncation(t *testing.T) {
+	rh := &recHandler{}
+	hook := SlogHook(slog.New(rh))
+	hook(&aegolith.Request{Method: "GET", RawPath: "/"}, aegolith.Decision{Err: errors.New("boom\nsecond line")})
+	if len(rh.recs) != 1 || rh.recs[0].Level != slog.LevelError {
+		t.Fatalf("recs %v", rh.recs)
+	}
+	e := attrs(rh.recs[0])["error"].String()
+	if strings.Contains(e, "\n") || !strings.Contains(e, "boom") {
+		t.Fatalf("error attr %q", e)
+	}
+	hook(&aegolith.Request{Method: "GET", RawPath: "/" + strings.Repeat("p", 500) + "?q=secret"}, aegolith.Decision{
+		Action:  aegolith.ActionBlock,
+		Matches: []aegolith.Match{{RuleID: "AEG-X", Category: aegolith.CatSQLi, Field: strings.Repeat("f", 300), Snippet: "snip"}},
+	})
+	a := attrs(rh.recs[1])
+	if len(a["path"].String()) != 256 {
+		t.Fatalf("path len %d", len(a["path"].String()))
+	}
+	if f := a["fields"].Any().([]string)[0]; len(f) != 128 {
+		t.Fatalf("field len %d", len(f))
+	}
 }

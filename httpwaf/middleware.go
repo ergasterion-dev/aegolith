@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -16,9 +17,13 @@ import (
 
 // Options tunes the middleware. The zero value is valid.
 type Options struct {
-	// OnDecision is called for every blocked or monitored request (never for
-	// a clean allow), before a block response is written. A panic in the
+	// OnDecision is called for every blocked or monitored request and for
+	// any decision carrying an internal error (never for a clean allow), before a block response is written. A panic in the
 	// hook is recovered and does not affect the request.
+	//
+	// The *aegolith.Request passed to the hook (and to BlockHandler via
+	// r.Body) shares the buffered body bytes without copying: treat them as
+	// read-only.
 	OnDecision func(*aegolith.Request, aegolith.Decision)
 	// BlockHandler answers a blocked request. Default: 403 with the JSON
 	// body {"error":"request blocked","request_id":"<id>"}.
@@ -31,6 +36,16 @@ type Options struct {
 const maxRequestIDLen = 64
 
 // Middleware returns a handler wrapper that inspects each request with fw.
+//
+// net/http neutralises the classic Transfer-Encoding/Content-Length
+// smuggling variants itself (it drops Content-Length next to chunked and
+// rejects malformed Transfer-Encoding or duplicate Content-Length with 4xx/501
+// before any handler runs), so the AEG-PROTO smuggling rules matter chiefly
+// for other servers such as fasthttp/Fiber.
+//
+// Inspecting the body means it is read before the decision, so an
+// "Expect: 100-continue" request has its 100 sent before a block is decided.
+//
 // The request body is read up to Limits.MaxBodyBytes+1 bytes for inspection
 // and then restored, so the next handler sees the complete original stream.
 // Internal errors follow the firewall's fail-open or fail-closed setting; a
@@ -38,6 +53,9 @@ const maxRequestIDLen = 64
 // next handler are not touched.
 func Middleware(fw *aegolith.Firewall, opts Options) func(http.Handler) http.Handler {
 	maxBody := fw.Limits().MaxBodyBytes
+	if maxBody >= math.MaxInt64 {
+		maxBody = math.MaxInt64 - 1 // keep maxBody+1 from overflowing
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ar, dec, ok := inspect(fw, r, maxBody)
@@ -50,7 +68,7 @@ func Middleware(fw *aegolith.Firewall, opts Options) func(http.Handler) http.Han
 				block(w, r, opts)
 				return
 			}
-			if dec.Action != aegolith.ActionAllow || dec.Monitored {
+			if dec.Action != aegolith.ActionAllow || dec.Monitored || dec.Err != nil {
 				callHook(opts.OnDecision, ar, dec)
 			}
 			if dec.Action == aegolith.ActionBlock {
@@ -94,7 +112,7 @@ func engineHeader(r *http.Request) http.Header {
 			h.Add("Transfer-Encoding", te)
 		}
 	}
-	if r.ContentLength >= 0 && h.Get("Content-Length") == "" {
+	if r.ContentLength > 0 && h.Get("Content-Length") == "" {
 		h.Set("Content-Length", strconv.FormatInt(r.ContentLength, 10))
 	}
 	if h.Get("Host") == "" && r.Host != "" {
