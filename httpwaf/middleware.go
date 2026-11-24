@@ -48,6 +48,16 @@ const maxRequestIDLen = 64
 //
 // The request body is read up to Limits.MaxBodyBytes+1 bytes for inspection
 // and then restored, so the next handler sees the complete original stream.
+// Bytes past that limit are not inspected, and AEG-PROTO-003 (body over the
+// limit) is monitor by default, so padding can push an attack out of sight:
+// wrap the body in http.MaxBytesReader at or below MaxBodyBytes before this
+// middleware, or set AEG-PROTO-003 to block in Config.RuleActions.
+//
+// net/http does not decode Content-Encoding and neither does this
+// middleware: a compressed body is inspected as compressed bytes (normally
+// blocked as AEG-LFI-001 for its NUL bytes). Put any request-decompression
+// middleware before this one, not after it, or reject Content-Encoding other
+// than identity.
 // Internal errors follow the firewall's fail-open or fail-closed setting; a
 // panic inside the inspection step never reaches the host. Panics in the
 // next handler are not touched.

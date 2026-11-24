@@ -18,7 +18,7 @@ removed at release, when the core module is tagged and required by version.
 ## Usage
 
 ```go
-fw, err := aegolith.New(aegolith.Config{})
+fw, err := aegolith.New(aegolith.Config{Mode: aegolith.ModeMonitor})
 if err != nil {
 	log.Fatal(err) // invalid configuration is reported at startup
 }
@@ -27,9 +27,12 @@ app := fiber.New()
 app.Use(fiberv2.New(fiberv2.Config{
 	Firewall:   fw,
 	OnDecision: httpwaf.SlogHook(slog.Default()), // from .../aegolith/httpwaf
-	Next: func(c *fiber.Ctx) bool { return c.Path() == "/healthz" },
+	Next:       func(c *fiber.Ctx) bool { return c.Path() == "/healthz" },
 }))
 ```
+
+This is `ExampleNew` in [`example_test.go`](example_test.go) in monitor mode;
+the example itself enforces and is compiled and run as a test.
 
 `Config` fields: `Firewall`, `OnDecision` (called for blocked and monitored
 requests and for decisions carrying an internal error, never for a clean
@@ -42,15 +45,40 @@ A nil `Firewall` does not panic: requests pass through and `OnDecision` is
 called with `Decision.Err` set. Internal errors follow `Config.FailOpen` of the
 firewall.
 
+## Route matching and letter case
+
+Fiber routes case-insensitively unless `fiber.Config{CaseSensitive: true}` is
+set, so `/API/v1/cart/items` reaches the `/api/v1/cart/items` handler. The
+middleware reads `c.App().Config().CaseSensitive` and, when it is false,
+matches the literal segments of your route policies case-insensitively too
+(parameter values keep their case). Without this, a case variant of a path
+would be an unknown route and escape the route's typed fields and
+`unknown_fields: block`. Nothing to configure; templates that differ only in
+letter case are matched exact-case first.
+
 ## Body inspection
 
 The engine inspects what the handler sees: `c.Body()`, which applies
-`Content-Encoding` (gzip, deflate, br), so a compressed attack body is
-inspected decompressed. At most `Limits.MaxBodyBytes+1` bytes are copied; a
-longer body makes the engine report `AEG-PROTO-003` (monitor only) on that
-prefix. The handler still receives the complete, unmodified body. Fasthttp
-inflates the whole body on `c.Body()`, so bound compressed uploads with
-`fiber.Config.BodyLimit`.
+`Content-Encoding` (`gzip`, `deflate`, `br`, also stacked such as
+`gzip, gzip`), so a compressed attack body is inspected decompressed. A list
+that starts with a coding Fiber does not know (`identity, gzip`) gives an
+empty `c.Body()` for both the engine and your handler. Codings Fiber does not
+decode (`x-gzip`, upper-case `GZIP`, `zstd`) stay compressed: the engine sees
+binary data and normally blocks it (`AEG-LFI-001`). A handler that decodes
+`c.Request().Body()` itself sees data Aegolith did not. For an API, reject
+request `Content-Encoding` other than `identity` before this middleware.
+
+**Cap the body, or padding bypasses inspection.** At most
+`Limits.MaxBodyBytes+1` bytes are copied (default 1 MiB); a longer body only
+makes the engine report `AEG-PROTO-003` (monitor by default) on that prefix,
+so an attack placed after the padding reaches the handler even in enforce
+mode. Fiber's default `BodyLimit` (4 MiB) is larger than that. Either set
+`fiber.Config{BodyLimit: ...}` at or below `max_body_bytes`, or set
+`RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}`.
+`BodyLimit` caps the compressed size; fasthttp inflates the whole body on
+`c.Body()`, so it is also your bound on decompression.
+
+The handler still receives the complete, unmodified body.
 
 All strings and byte slices given to the engine and your hook are copies;
 fasthttp buffers are reused after the handler returns.

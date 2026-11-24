@@ -107,15 +107,21 @@ app.Use(fiberv2.New(fiberv2.Config{
 }))
 ```
 
-Both snippets are compiled and run as tests: see [`httpwaf/example_test.go`](httpwaf/example_test.go), [`adapters/fiberv2/example_test.go`](adapters/fiberv2/example_test.go) and [`example_test.go`](example_test.go). More on the adapter in [`adapters/fiberv2/README.md`](adapters/fiberv2/README.md).
+The snippets above are not themselves compiled. The same setup, in enforce mode and driven by `httptest` instead of a listening server, is compiled and run as the examples in [`httpwaf/example_test.go`](httpwaf/example_test.go) and [`adapters/fiberv2/example_test.go`](adapters/fiberv2/example_test.go). More on the adapter in [`adapters/fiberv2/README.md`](adapters/fiberv2/README.md).
+
+Fiber routes case-insensitively by default (`/API/v1/cart` reaches the `/api/v1/cart` handler). The adapter sees this and matches route policies the same way, unless you set `fiber.Config{CaseSensitive: true}`. For another case-insensitive router, set `case_insensitive_routes: true`.
 
 ### Turning on enforcement
 
 1. Run with `Mode: aegolith.ModeMonitor` and a hook for a while on real traffic. A monitored request is allowed; `Decision.Monitored` is true and `Decision.Matches` says what would have blocked it.
 2. Read the decisions. For every legitimate request that was flagged, either declare the field in a [route policy](#route-policies) with the right type, add an exclusion for that rule, route and field, or [report the false positive](#reporting-a-false-positive).
-3. When the log is quiet, switch to `Mode: aegolith.ModeEnforce` (or `"mode": "enforce"` in the JSON file). A blocked request gets `403` with `{"error":"request blocked","request_id":"..."}`. The body names no product and no rule.
+3. **Cap the request body**, or Aegolith can be bypassed by padding. Only the first `max_body_bytes` (default 1 MiB) of a body are inspected, and a longer body is only reported (`AEG-PROTO-003`, monitor), so an attack placed after 1 MiB of padding reaches your handler even in enforce mode. Do one of these:
+   - limit the body at or below `max_body_bytes` in the server: `http.MaxBytesReader` (net/http has no limit by default) or `fiber.Config{BodyLimit: ...}` (Fiber's default, 4 MiB, is larger than 1 MiB), or at the reverse proxy; or
+   - set `"rule_actions": {"AEG-PROTO-003": "block"}` so a body over the limit is refused (raise `max_body_bytes` if you accept larger bodies).
+4. **Decide about compressed request bodies.** net/http never decodes `Content-Encoding`, so a gzip body is inspected as compressed bytes and normally blocked (`AEG-LFI-001`, for the NUL bytes in it); decoding it after Aegolith is not supported. Fiber decodes `gzip`, `deflate` and `br` before inspection but not `x-gzip` or `zstd`. For an API, reject request `Content-Encoding` other than `identity` in front of Aegolith; if you must accept it, decode it in a middleware placed before Aegolith. Details in the [threat model](docs/threat-model.md#servers-and-encodings).
+5. When the log is quiet, switch to `Mode: aegolith.ModeEnforce` (or `"mode": "enforce"` in the JSON file). A blocked request gets `403` with `{"error":"request blocked","request_id":"..."}`. The body names no product and no rule.
 
-Unknown routes and unknown fields stay in monitor by default even in enforce mode, so a new endpoint does not break clients before the policy is updated.
+Unknown routes and unknown fields stay in monitor by default even in enforce mode, so a new endpoint does not break clients before the policy is updated. Once your routes cover the API, set `unknown_route` to `block`: a path that Aegolith does not match to a declared route is scanned, but its typed fields and `unknown_fields` action do not apply.
 
 ### Using the decision directly
 
@@ -222,7 +228,7 @@ The same structure loads from a JSON file with `aegolith.LoadConfig(path)`, whic
 }
 ```
 
-Other settings: `allowed_methods`, `allowed_content_types`, `allow_xml` (also runs the XXE rule on XML bodies), `limits` (`max_body_bytes`, `max_depth`, `max_fields`, `max_value_len`; defaults 1 MiB, 32, 1,000, 8 KiB), `rule_actions` (override the action of a rule ID, an ID prefix ending in `*`, or a category; `allow` drops the match) and `fail_open` (default true). Both examples above are compiled and loaded by the tests in [`example_test.go`](example_test.go).
+Other settings: `allowed_methods`, `allowed_content_types`, `allow_xml` (also runs the XXE rule on XML bodies), `limits` (`max_body_bytes`, `max_depth`, `max_fields`, `max_value_len`; defaults 1 MiB, 32, 1,000, 8 KiB), `case_insensitive_routes` (match literal route segments regardless of letter case; default false, and the Fiber adapter turns it on per request when Fiber routes case-insensitively), `rule_actions` (override the action of a rule ID, an ID prefix ending in `*`, or a category; `allow` drops the match) and `fail_open` (default true). `unknown_route` and `unknown_fields` accept `monitor` or `block`; to silence them, use `rule_actions` with `AEG-ROUTE-001` or `AEG-SCHEMA-002` set to `allow`. Both examples above are compiled and loaded by the tests in [`example_test.go`](example_test.go).
 
 ### Reporting a false positive
 
@@ -236,7 +242,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 |---|---|---|---|
 | `AEG-PROTO-001` | protocol | block | Method not in the allow-list. |
 | `AEG-PROTO-002` | protocol | block | Body with a content type not in the allow-list. |
-| `AEG-PROTO-003` | protocol | monitor | Body larger than `max_body_bytes`. |
+| `AEG-PROTO-003` | protocol | monitor | Body larger than `max_body_bytes`. The rest of the body is not inspected: cap the body or set this rule to `block` (see [Turning on enforcement](#turning-on-enforcement)). |
 | `AEG-PROTO-004` | protocol | block | CR, LF or NUL in the path (raw or decoded) or in a header value. |
 | `AEG-PROTO-005` | protocol | block | Path traversal in the raw path (`../`, `..\`, `%2e%2e%2f`, `..%2f`, `%252e%252e%252f`). |
 | `AEG-PROTO-006` | protocol | block | `Transfer-Encoding` other than `chunked`, or together with `Content-Length`. |
@@ -372,7 +378,7 @@ Aegolith v0.1 is **pre-alpha**. What that means:
 - **No tagged release yet.** Use `@main` or a pinned commit. The public API, the config format and rule behaviour can change without notice before a release.
 - **Tuned on one corpus.** It blocks 103 and 104 of the 107 corpus attacks with no false positives on 91 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
-- **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service.
+- **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 
 Roadmap:
 

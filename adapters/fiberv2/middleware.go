@@ -47,13 +47,21 @@ const maxRequestIDLen = 64
 // fasthttp buffers are reused once the handler returns, so every string and
 // byte slice given to the engine, the hook and the logs is a copy.
 //
+// Routes: Fiber matches routes case-insensitively unless
+// fiber.Config.CaseSensitive is set, so the middleware asks the firewall to
+// match literal route segments case-insensitively for each request in that
+// case (see aegolith.Request.CaseInsensitiveRoutes).
+//
 // Body: the engine inspects what the handler would see. c.Body() applies the
 // request's Content-Encoding (gzip, deflate, br), so a compressed attack body
-// is inspected decompressed. At most Limits().MaxBodyBytes+1 bytes of it are
-// copied for inspection; a longer body makes the engine raise AEG-PROTO-003 on
-// that prefix. The handler still sees the complete, unmodified body.
-// Fiber/fasthttp itself inflates the whole body on c.Body(); bound that with
-// fiber.Config.BodyLimit, which caps the compressed size.
+// is inspected decompressed; codings Fiber does not decode (x-gzip, zstd)
+// stay compressed. At most Limits().MaxBodyBytes+1 bytes of it are copied
+// for inspection; a longer body makes the engine raise AEG-PROTO-003 on that
+// prefix, which is monitor by default, so the rest is not inspected: set
+// fiber.Config.BodyLimit at or below MaxBodyBytes, or set AEG-PROTO-003 to
+// block in Config.RuleActions. The handler still sees the complete,
+// unmodified body. Fiber/fasthttp itself inflates the whole body on
+// c.Body(); fiber.Config.BodyLimit caps the compressed size.
 //
 // fasthttp does not neutralise the Transfer-Encoding/Content-Length
 // smuggling variants the way net/http does, so the AEG-PROTO smuggling rules
