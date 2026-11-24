@@ -1,0 +1,128 @@
+{
+  "mode": "enforce",
+  "inspect_headers": ["X-Api-Version"],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/products/search",
+      "query": {
+        "q": {"type": "text", "max_len": 200},
+        "page": {"type": "int", "min": 1, "max": 1000},
+        "limit": {"type": "int", "min": 1, "max": 100},
+        "sort": {"type": "enum", "enum": ["relevance", "price", "-price", "rating", "-rating", "created_at", "-created_at"]},
+        "category": {"type": "string", "max_len": 64, "pattern": "[a-z0-9-]+"},
+        "min_price": {"type": "number", "min": 0, "max": 1000000},
+        "max_price": {"type": "number", "min": 0, "max": 1000000},
+        "in_stock": {"type": "bool"}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/products",
+      "query": {
+        "page": {"type": "int", "min": 1, "max": 1000},
+        "limit": {"type": "int", "min": 1, "max": 100},
+        "sort": {"type": "enum", "enum": ["relevance", "price", "-price", "rating", "-rating", "created_at", "-created_at"]},
+        "category": {"type": "string", "max_len": 64, "pattern": "[a-z0-9-]+"}
+      }
+    },
+    {"method": "OPTIONS", "path": "/api/v1/products"},
+    {"method": "DELETE", "path": "/api/v1/products"},
+    {
+      "method": "GET",
+      "path": "/api/v1/products/:id",
+      "path_params": {"id": {"type": "uuid"}}
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/cart/items",
+      "unknown_fields": "block",
+      "body": {
+        "product_id": {"type": "uuid"},
+        "qty": {"type": "int", "min": 1, "max": 99},
+        "variant": {"type": "string", "max_len": 50},
+        "note": {"type": "text", "max_len": 500},
+        "payment_method": {"type": "enum", "enum": ["cod", "upi", "card", "wallet"]},
+        "review": {"type": "text", "max_len": 2000},
+        "rating": {"type": "int", "min": 1, "max": 5},
+        "image_url": {"type": "url"},
+        "name": {"type": "text", "max_len": 200},
+        "price": {"type": "number", "min": 0, "max": 1000000},
+        "description": {"type": "text", "max_len": 2000},
+        "phone": {"type": "phone"},
+        "line1": {"type": "text", "max_len": 200},
+        "line2": {"type": "text", "max_len": 200},
+        "address_line1": {"type": "text", "max_len": 200},
+        "city": {"type": "text", "max_len": 100},
+        "pincode": {"type": "string", "pattern": "[0-9]{5,6}"},
+        "landmark": {"type": "text", "max_len": 200},
+        "address.line1": {"type": "text", "max_len": 200},
+        "address.line2": {"type": "text", "max_len": 200},
+        "address.city": {"type": "text", "max_len": 100},
+        "address.pincode": {"type": "string", "pattern": "[0-9]{5,6}"},
+        "address.landmark": {"type": "text", "max_len": 200}
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/cart/items",
+      "unknown_fields": "block",
+      "body": {
+        "product_id": {"type": "uuid"},
+        "qty": {"type": "int", "min": 1, "max": 99},
+        "variant": {"type": "string", "max_len": 50},
+        "note": {"type": "text", "max_len": 500}
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/cart/items",
+      "unknown_fields": "block",
+      "body": {
+        "line1": {"type": "text", "max_len": 200},
+        "line2": {"type": "text", "max_len": 200},
+        "city": {"type": "text", "max_len": 100},
+        "pincode": {"type": "string", "pattern": "[0-9]{5,6}"},
+        "landmark": {"type": "text", "max_len": 200},
+        "note": {"type": "text", "max_len": 500}
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/cart/items",
+      "unknown_fields": "block",
+      "body": {
+        "product_id": {"type": "uuid"}
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "body": {
+        "email": {"type": "email"}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/:id",
+      "path_params": {"id": {"type": "uuid"}}
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/vendors/:id/products",
+      "path_params": {"id": {"type": "int", "min": 1}},
+      "query": {
+        "page": {"type": "int", "min": 1, "max": 1000},
+        "limit": {"type": "int", "min": 1, "max": 100},
+        "sort": {"type": "enum", "enum": ["relevance", "price", "-price", "rating", "-rating", "created_at", "-created_at"]}
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/me/avatar",
+      "body": {
+        "caption": {"type": "text", "max_len": 200}
+      }
+    }
+  ]
+}
