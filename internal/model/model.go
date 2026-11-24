@@ -201,7 +201,9 @@ type Limits struct {
 	MaxBodyBytes int64 `json:"max_body_bytes"`
 	MaxDepth     int   `json:"max_depth"`
 	MaxFields    int   `json:"max_fields"`
-	MaxValueLen  int   `json:"max_value_len"`
+	// MaxValueLen is the window size for scanning one value. Config rounds
+	// it down to an even number, minimum 2.
+	MaxValueLen int `json:"max_value_len"`
 }
 
 // DefaultLimits returns the v0.1 defaults.

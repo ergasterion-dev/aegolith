@@ -47,7 +47,8 @@ type Config struct {
 	// the XXE rule on them.
 	AllowXML bool `json:"allow_xml,omitempty"`
 	// Limits bound the work per request; each zero field takes its default
-	// (see DefaultLimits). Negative values are rejected.
+	// (see DefaultLimits). Negative values are rejected. MaxValueLen is
+	// rounded down to an even number, minimum 2.
 	Limits Limits `json:"limits"`
 	// Routes declare the API surface. With no routes every input is
 	// untyped and gets every detector.
@@ -157,5 +158,10 @@ func resolveLimits(l Limits) (Limits, error) {
 	if l.MaxValueLen == 0 {
 		l.MaxValueLen = d.MaxValueLen
 	}
+	// A long value is scanned in windows of MaxValueLen bytes that start
+	// every MaxValueLen/2 bytes. Rounding down to an even number (minimum 2)
+	// keeps the step exactly half a window, so every byte is scanned at most
+	// twice, which the per-request scan budget relies on.
+	l.MaxValueLen = max(l.MaxValueLen&^1, 2)
 	return l, nil
 }

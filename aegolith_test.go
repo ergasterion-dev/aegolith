@@ -578,7 +578,7 @@ func TestInspectLongValueRescanWithinBudget(t *testing.T) {
 // Fix round 5: the JSON decoder turns each invalid UTF-8 byte in a string
 // into U+FFFD (3 bytes), so a walked value can be charged 6x its body
 // bytes; with the raw rescan that is 8x, still within the budget, so a
-// payload after such a value is seen.
+// payload after such a value is seen, in bounded time and memory.
 func TestInspectInvalidUTF8ValueWithinBudget(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{})
 	fw.Inspect(get("/warm"))
@@ -598,7 +598,15 @@ func TestInspectInvalidUTF8ValueWithinBudget(t *testing.T) {
 		d := fw.Inspect(postJSON("/s", body))
 		el := time.Since(start)
 		runtime.ReadMemStats(&after)
-		t.Logf("%s: %v, %d MiB allocated", name, el, (after.TotalAlloc-before.TotalAlloc)>>20)
+		alloc := after.TotalAlloc - before.TotalAlloc
+		t.Logf("%s: %v, %d MiB allocated", name, el, alloc>>20)
+		// Measured 50-200 ms and 16 MiB on an Apple M4 Pro without -race.
+		if !testing.Short() && el > time.Second*raceSlowdown {
+			t.Errorf("%s took %v, want under %v", name, el, time.Second*raceSlowdown)
+		}
+		if alloc > 64<<20 {
+			t.Errorf("%s allocated %d MiB, want under 64 MiB", name, alloc>>20)
+		}
 		if d.Action != aegolith.ActionBlock {
 			t.Fatalf("%s: %v", name, ruleIDs(d))
 		}
@@ -1274,5 +1282,22 @@ func TestFirewallLimitsAndFailOpen(t *testing.T) {
 	var nilFW *aegolith.Firewall
 	if nilFW.Limits() != aegolith.DefaultLimits() || !nilFW.FailOpen() {
 		t.Fatal("nil Firewall accessors")
+	}
+}
+
+// MaxValueLen is clamped to an even number of at least 2: windows of a long
+// value step MaxValueLen/2, and the scan budget's "each byte scanned at
+// most twice" derivation needs the step to be exactly half the window.
+func TestMaxValueLenClampedEven(t *testing.T) {
+	for in, want := range map[int]int{1: 2, 2: 2, 3: 2, 5: 4, 8191: 8190, 8192: 8192, 0: aegolith.DefaultLimits().MaxValueLen} {
+		fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxValueLen: in}})
+		if got := fw.Limits().MaxValueLen; got != want {
+			t.Errorf("MaxValueLen %d resolved to %d, want %d", in, got, want)
+		}
+	}
+	// An odd value still finds an attack straddling a window edge.
+	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxValueLen: 33}})
+	if d := fw.Inspect(get("/s?q=" + strings.Repeat("a", 20) + "1%27+OR+%271%27%3D%271")); d.Action != aegolith.ActionBlock {
+		t.Fatalf("odd MaxValueLen: %v", ruleIDs(d))
 	}
 }
