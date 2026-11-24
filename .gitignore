@@ -1,0 +1,6 @@
+bin/
+*.test
+*.out
+.superpowers/
+.DS_Store
+# testdata/fuzz/ is tracked on purpose (fuzz regression corpus)
