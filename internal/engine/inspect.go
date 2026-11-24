@@ -176,12 +176,16 @@ func (s *state) capped(v string) string {
 }
 
 // scanBudget is the per-request limit on bytes handed to the text
-// detectors: 2 x MaxBodyBytes + 64 KiB. A value is charged its length once
-// per window it occupies (at most twice per byte), so a request within the
-// configured limits (body up to MaxBodyBytes, plus a query string, cookies
-// and headers of ordinary size) cannot exhaust it; only a request already
-// over MaxBodyBytes can, and that stays a monitor match.
-func (e *Engine) scanBudget() int64 { return 2*e.lim.MaxBodyBytes + 64<<10 }
+// detectors: 3 x (MaxBodyBytes + 256 KiB) + 64 KiB. A body byte is scanned
+// at most three times (once as part of a walked value, then twice by the
+// overlapping windows of a raw rescan after malformed JSON or a depth
+// overflow), and a value is charged its length once per window it
+// occupies. So no request whose body is within MaxBodyBytes and whose
+// other inputs (path, query, cookies, scanned headers) total at most
+// 256 KiB can exhaust it. Beyond that it can (a documented gap: one
+// monitor match, never a block or a panic); servers cap those inputs well
+// below it anyway (net/http: 1 MiB of headers; Fiber: 4 KiB buffers).
+func (e *Engine) scanBudget() int64 { return 3*(e.lim.MaxBodyBytes+256<<10) + 64<<10 }
 
 // bodyInspectLimit is how much of a body is inspected: 2 x MaxBodyBytes.
 // Protocol reports a body over MaxBodyBytes (AEG-PROTO-003); inspecting

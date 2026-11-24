@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -512,18 +513,113 @@ func TestInspectContainersDoNotCountTowardMaxFields(t *testing.T) {
 	mustNotHave(t, d, "AEG-PROTO-010")
 }
 
-// Fix-round ruling 4: when the per-request scan budget (2 x MaxBodyBytes
-// bytes handed to detectors) runs out, AEG-PROTO-011 is raised once as a
-// monitor match and scanning stops: a documented known gap, not a block.
+// jsonOf8KValues builds a JSON array of 8,000-byte strings filling about
+// size bytes (each value within MaxValueLen, the body within MaxBodyBytes).
+func jsonOf8KValues(size int) string {
+	v := strings.Repeat("a", 8000)
+	var b strings.Builder
+	b.WriteString("[")
+	for i := 0; b.Len() < size-200; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(`"` + v + `"`)
+	}
+	return b.String()
+}
+
+// Fix round 3, ruling A: a body within limits that is walked (1x) and then
+// rescanned raw in overlapping windows (2x) cannot exhaust the budget.
+func TestInspectRawRescanWithinBudget(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	arr := jsonOf8KValues(1 << 20)
+	trailing := arr + `] "1' OR '1'='1"`
+	if len(trailing) > 1<<20 {
+		t.Fatalf("body %d bytes", len(trailing))
+	}
+	d := fw.Inspect(postJSON("/s", trailing))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("malformed after 1 MiB of values: %v", ruleIDs(d))
+	}
+	deep := arr + "," + strings.Repeat("[", 40) + `"1' OR '1'='1"` + strings.Repeat("]", 41)
+	d = fw.Inspect(postJSON("/s", deep))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("depth overflow after 1 MiB of values: %v", ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-SQLI-001", "body")
+}
+
+// Fix round 3, ruling A: a long padded body value (scanned ~2x) plus more
+// than 64 KiB of query or cookie data does not exhaust the budget.
+func TestInspectPaddedBodyPlusOtherInputs(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	pad := strings.Repeat("a", (1<<20)-64)
+	form := "p=" + pad[:len(pad)-40] + "+1'+OR+'1'='1"
+	var q []string
+	for i := range 80 {
+		q = append(q, fmt.Sprintf("k%d=%s", i, strings.Repeat("b", 1000)))
+	}
+	r := withBody("POST", "/s?"+strings.Join(q, "&"), "application/x-www-form-urlencoded", form)
+	if d := fw.Inspect(r); d.Action != aegolith.ActionBlock {
+		t.Fatalf("80 KB query + padded form: %v", ruleIDs(d))
+	}
+	r = withBody("POST", "/s", "application/x-www-form-urlencoded", "p="+pad)
+	r.Header.Set("Cookie", strings.Join(q, "; ")+"; z=<script>alert(1)</script>")
+	d := fw.Inspect(r)
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("padded form + 80 KB cookie: %v", ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-XSS-001", "cookie.z")
+}
+
+// Fix round 3, ruling N1: JSON paths are bounded (256 bytes per key segment,
+// 4 KiB in total), so a huge key over many array items costs no more than
+// a short one, and a long key's value is still scanned.
+func TestInspectLongJSONKeyBounded(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	fw.Inspect(get("/warm"))
+	key := strings.Repeat("k", 256<<10)
+	n := 380000
+	body := `{"` + key + `":[` + strings.Repeat(`1,`, n) + `"1' OR '1'='1"]}`
+	if len(body) > (1<<20)+64 {
+		t.Fatalf("body %d bytes", len(body))
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+	d := fw.Inspect(postJSON("/s", body))
+	el := time.Since(start)
+	runtime.ReadMemStats(&after)
+	alloc := after.TotalAlloc - before.TotalAlloc
+	t.Logf("256 KiB key x %d items: %v, %d MiB allocated", n, el, alloc>>20)
+	if el > time.Second*raceSlowdown {
+		t.Fatalf("took %v", el)
+	}
+	if alloc > 256<<20 {
+		t.Fatalf("allocated %d MiB", alloc>>20)
+	}
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("payload after long-key array: %v", ruleIDs(d))
+	}
+	d = fw.Inspect(postJSON("/s", `{"`+strings.Repeat("k", 300)+`":"1' OR '1'='1"}`))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("long key value: %v", ruleIDs(d))
+	}
+}
+
+// Fix-round rulings 4 and round-3 A: the per-request scan budget is
+// 3 x (MaxBodyBytes + 256 KiB) + 64 KiB, so only inputs beyond the limits
+// (here a query string far over 256 KiB) can exhaust it. Exhaustion raises
+// AEG-PROTO-011 once as a monitor match and stops scanning: a documented
+// known gap, not a block, and never a panic.
 func TestInspectScanBudgetExhausted(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxBodyBytes: 64 << 10, MaxValueLen: 1024}})
-	body := `{"pad":"` + strings.Repeat("a", 100<<10) + `","q":"1' OR '1'='1"}`
-	d := fw.Inspect(postJSON("/s", body))
+	r := get("/s?pad=" + strings.Repeat("a", 600<<10) + "&q=1%27%20OR%20%271%27%3D%271")
+	d := fw.Inspect(r)
 	if d.Err != nil || d.Action != aegolith.ActionAllow || !d.Monitored {
 		t.Fatalf("decision %+v", d)
 	}
-	m := mustHave(t, d, "AEG-PROTO-011", "body.pad")
-	if m.Action != aegolith.ActionMonitor {
+	if m := mustHave(t, d, "AEG-PROTO-011", "query.pad"); m.Action != aegolith.ActionMonitor {
 		t.Fatalf("%+v", m)
 	}
 	mustNotHave(t, d, "AEG-SQLI-001")
@@ -535,6 +631,11 @@ func TestInspectScanBudgetExhausted(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("PROTO-011 reported %d times: %v", n, ruleIDs(d))
+	}
+	// The same body-borne padding within the limits does not exhaust it.
+	body := `{"pad":"` + strings.Repeat("a", 60<<10) + `","q":"1' OR '1'='1"}`
+	if d := fw.Inspect(postJSON("/s", body)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("in-limit padded body: %v", ruleIDs(d))
 	}
 }
 

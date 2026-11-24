@@ -202,13 +202,18 @@ func (s *state) checkJSON(body []byte) {
 	lim := s.e.lim
 	lim.MaxFields = len(body) + 1 // every counted item takes at least one byte
 	fields := 0
+	// WalkJSON reuses one Path string while the path is unchanged (every
+	// element of an array), so the field name is rebuilt only when it changes.
+	lastPath, field := "", "body"
 	err := normalize.WalkJSON(body, lim, func(v normalize.JSONValue) {
 		if s.stop {
 			return
 		}
-		field := "body"
-		if v.Path != "" {
-			field = joinField("body", v.Path)
+		if v.Path != lastPath {
+			lastPath, field = v.Path, "body"
+			if v.Path != "" {
+				field = joinField("body", v.Path)
+			}
 		}
 		if v.IsContainer {
 			if s.routed && s.declares(model.LocBody) {
