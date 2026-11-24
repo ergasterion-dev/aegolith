@@ -94,6 +94,13 @@ var (
 		"javascript%3Aalert(1)",
 		"javascript:location=name",
 		"javascript: document.cookie=1",
+		// Fix round 1: the key=value prose guard must not cover these.
+		"javascript: location=name",
+		"javascript:\tlocation=name",
+		"javascript:\nlocation=name",
+		"javascript: a=1;alert(1)",
+		"javascript: top=1;alert(1)",
+		"javascript: x=alert,x(1)",
 	}
 	scriptURLNegatives = []string{
 		"JavaScript: The Good Parts",
@@ -101,6 +108,7 @@ var (
 		"Learn javascript:alert(1) is a famous payload",
 		"javascript:",
 		"JavaScript: version=ES6",
+		"JavaScript: Name=Ali",
 	}
 )
 

@@ -249,7 +249,9 @@ func isScriptURL(s string) bool {
 	if i < len(s) && s[i] == '/' {
 		return true
 	}
-	spaced := i > 0 && (s[i-1] == ' ' || s[i-1] == '\t' || s[i-1] == '\n' || s[i-1] == '\r')
+	// Only a literal space counts: browsers strip tab, CR and LF inside a
+	// URL, so "javascript:\tlocation=name" is not prose.
+	spaced := i > 0 && s[i-1] == ' '
 	start := i
 	dotted := false
 	for i < len(s) && (isIdentByte(s[i]) || s[i] == '$' || s[i] == '.') {
@@ -265,8 +267,21 @@ func isScriptURL(s string) bool {
 	case '=':
 		// "javascript:location=..." and "javascript: document.cookie=..."
 		// run code; "JavaScript: version=ES6" after a space, assigning a
-		// bare name, is how prose writes a key and value.
-		return !spaced || dotted
+		// bare name, is how prose writes a key and value, unless the name
+		// is a browser global (assigning it navigates) or the rest holds
+		// a call, template or statement ("a=1;alert(1)", "x=alert,x(1)").
+		return !spaced || dotted || isBrowserGlobal(s[start:i]) || strings.ContainsAny(s[i+1:], "(`;")
+	}
+	return false
+}
+
+// isBrowserGlobal reports whether name is a window property whose
+// assignment navigates or replaces the page. JavaScript names are case
+// sensitive, so "Name=Ali" in prose is not one.
+func isBrowserGlobal(name string) bool {
+	switch name {
+	case "location", "top", "self", "parent", "window", "document", "opener", "name":
+		return true
 	}
 	return false
 }

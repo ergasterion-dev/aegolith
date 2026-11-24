@@ -328,7 +328,10 @@ func unixArgsAt(s string, j int, w cmdWord, afterNewline bool, ctx opContext) bo
 			atLineEnd := j >= len(s) || s[j] == '\n' || s[j] == '\r'
 			return !afterNewline || flags > 0 || !atLineEnd
 		}
-		if unixOperandAt(s, j, w.url, ctx == opProseAmp) {
+		// After a prose "&" the operand rules tighten only while nothing
+		// shell-like came first: a real flag (and no English word as a
+		// flag value) restores them ("x & curl -s http://...").
+		if unixOperandAt(s, j, w.url, ctx == opProseAmp && (flags == 0 || wordValue), w.netcat) {
 			return true
 		}
 		if t == 0 && w.name == "chmod" && chmodModeAt(s, j) {
@@ -480,10 +483,13 @@ func isShellOperator(c byte) bool {
 // looks like one given to a Unix command rather than an English word: a
 // path, a home or relative path, a variable, a redirection into a path or
 // descriptor, an IPv4 address, or (for curl and wget) a URL. "$5", "/2",
-// "-- both" and "food" do not count. With prose set (after a lone "&"),
-// only a system path, a home or relative path, a variable or a redirection
-// counts: "dog & cat /dog-food", "Hair & curl https://..." are prose.
-func unixOperandAt(s string, i int, url, prose bool) bool {
+// "-- both" and "food" do not count. With prose set (after a lone "&" and
+// no real flag), a URL and a one-segment root path without a dot are prose
+// ("dog & cat /dog-food", "Hair & curl https://..."), and an IPv4 address
+// counts only for netcat ("x & nc 10.0.0.1 4444"); a system path, a deeper
+// or dotted path, a home or relative path, a variable and a redirection
+// still count.
+func unixOperandAt(s string, i int, url, prose, netcat bool) bool {
 	for i < len(s) && (s[i] == '\'' || s[i] == '"') {
 		i++
 	}
@@ -496,7 +502,8 @@ func unixOperandAt(s string, i int, url, prose bool) bool {
 	}
 	switch c := s[i]; {
 	case c == '/' && prose:
-		return absPathAt(s, i)
+		tok := s[i+1 : tokenEnd(s, i)]
+		return absPathAt(s, i) || strings.ContainsAny(tok, "/.")
 	case c == '/':
 		return isASCIILetter(next) || next == '.' || next == '_' || i+1 == len(s) || isShellOperator(next)
 	case c == '~':
@@ -512,7 +519,7 @@ func unixOperandAt(s string, i int, url, prose bool) bool {
 		}
 		return j < len(s) && (s[j] == '/' || s[j] == '&')
 	case c >= '0' && c <= '9':
-		return !prose && ipv4At(s, i)
+		return (!prose || netcat) && ipv4At(s, i)
 	}
 	return url && !prose && (hasPrefixFold(s[i:], "http://") || hasPrefixFold(s[i:], "https://") || hasPrefixFold(s[i:], "ftp://"))
 }
@@ -609,7 +616,7 @@ func wordThen(s, word, tail string) bool {
 }
 
 // hasPowerShellEncoded finds "powershell -e..." (any case) whose parameter
-// is one PowerShell resolves: -ec, or a prefix of -EncodedCommand or
+// is one PowerShell resolves: -ec, -ep, or a prefix of -EncodedCommand or
 // -ExecutionPolicy (-e, -enc, -exec, ...). PowerShell accepts unambiguous
 // parameter prefixes, which payloads use; "Powershell -experience
 // required" names a job requirement.
@@ -628,7 +635,7 @@ func hasPowerShellEncoded(s string) bool {
 			continue
 		}
 		p := strings.ToLower(s[start:end])
-		if p == "ec" || strings.HasPrefix("encodedcommand", p) || strings.HasPrefix("executionpolicy", p) {
+		if p == "ec" || p == "ep" || strings.HasPrefix("encodedcommand", p) || strings.HasPrefix("executionpolicy", p) {
 			return true
 		}
 	}
