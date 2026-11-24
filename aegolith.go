@@ -111,7 +111,9 @@ func DefaultLimits() Limits { return model.DefaultLimits() }
 
 // Firewall inspects requests. It is immutable and safe for concurrent use.
 type Firewall struct {
-	eng *engine.Engine
+	eng      *engine.Engine
+	limits   Limits
+	failOpen bool
 }
 
 // New validates cfg and builds a Firewall. Invalid routes, field types,
@@ -127,8 +129,22 @@ func New(cfg Config) (*Firewall, error) {
 	if err != nil {
 		return nil, fmt.Errorf("aegolith: %w", err)
 	}
-	return &Firewall{eng: eng}, nil
+	return &Firewall{eng: eng, limits: o.Limits, failOpen: o.FailOpen}, nil
 }
+
+// Limits returns the resolved inspection limits (defaults applied). Adapters
+// use MaxBodyBytes to bound how much of a request body they buffer. A nil
+// Firewall returns DefaultLimits.
+func (f *Firewall) Limits() Limits {
+	if f == nil {
+		return DefaultLimits()
+	}
+	return f.limits
+}
+
+// FailOpen reports whether an internal error allows the request (true, the
+// default) or blocks it. A nil Firewall fails open.
+func (f *Firewall) FailOpen() bool { return f == nil || f.failOpen }
 
 // Inspect returns the decision for r. It never panics: an internal error
 // yields Decision.Err set and Action allow (fail open, the default) or

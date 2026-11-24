@@ -1253,3 +1253,23 @@ func TestNewCopiesConfig(t *testing.T) {
 		t.Fatalf("firewall saw a later config change: %+v", d)
 	}
 }
+
+func TestFirewallLimitsAndFailOpen(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxBodyBytes: 4096}})
+	l := fw.Limits()
+	d := aegolith.DefaultLimits()
+	if l.MaxBodyBytes != 4096 || l.MaxDepth != d.MaxDepth || l.MaxFields != d.MaxFields || l.MaxValueLen != d.MaxValueLen {
+		t.Fatalf("limits %+v", l)
+	}
+	if !fw.FailOpen() {
+		t.Fatal("default must fail open")
+	}
+	closed := false
+	if mustNew(t, aegolith.Config{FailOpen: &closed}).FailOpen() {
+		t.Fatal("FailOpen=false not reflected")
+	}
+	var nilFW *aegolith.Firewall
+	if nilFW.Limits() != aegolith.DefaultLimits() || !nilFW.FailOpen() {
+		t.Fatal("nil Firewall accessors")
+	}
+}
