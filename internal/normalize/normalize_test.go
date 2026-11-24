@@ -171,6 +171,45 @@ func TestWalkJSONContainers(t *testing.T) {
 	}
 }
 
+func TestWalkJSONPathBounds(t *testing.T) {
+	lim := model.DefaultLimits()
+	long := strings.Repeat("k", 300)
+	got, err := collect(`{"`+long+`":{"b":1}}`, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := got[len(got)-1]
+	if want := strings.Repeat("k", 256) + ".b"; last.Path != want {
+		t.Fatalf("path %q... (%d bytes), want 256-byte segment + .b", last.Path[:10], len(last.Path))
+	}
+	if got[1].Key != long || got[1].Value != long || !got[1].IsKey {
+		t.Fatalf("full key not reported: %+v", got[1])
+	}
+	// 30 levels of 300-byte keys: the path stops growing at 4 KiB.
+	var b strings.Builder
+	for range 30 {
+		b.WriteString(`{"` + long + `":`)
+	}
+	b.WriteString("1" + strings.Repeat("}", 30))
+	got, err = collect(b.String(), lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range got {
+		if len(v.Path) > 4096 {
+			t.Fatalf("path %d bytes", len(v.Path))
+		}
+	}
+	// Leaving a capped level restores the parent path exactly.
+	got, err = collect(`{"`+long+`":{"x":1},"c":2}`, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := got[len(got)-1]; last.Path != "c" || last.Value != "2" {
+		t.Fatalf("after capped key: %+v", last)
+	}
+}
+
 func TestWalkJSONScalarAndEmpty(t *testing.T) {
 	got, err := collect(`"abc"`, model.DefaultLimits())
 	if err != nil || !reflect.DeepEqual(got, []JSONValue{{Value: "abc", IsString: true}}) {

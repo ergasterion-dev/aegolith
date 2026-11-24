@@ -51,10 +51,14 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 	dec.UseNumber()
 
 	var (
-		stack  []jsonFrame
-		path   []byte
-		count  int
-		topSet bool // a complete top-level value has been read
+		stack []jsonFrame
+		path  []byte
+		// pathStr caches string(path); it is rebuilt only after path
+		// changes, so a long array under one key costs O(1) per element.
+		pathStr   string
+		pathDirty bool
+		count     int
+		topSet    bool // a complete top-level value has been read
 	)
 
 	emitValue := func(v JSONValue) error {
@@ -64,7 +68,10 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 			}
 			count++
 		}
-		v.Path = string(path)
+		if pathDirty {
+			pathStr, pathDirty = string(path), false
+		}
+		v.Path = pathStr
 		fn(v)
 		return nil
 	}
@@ -109,12 +116,14 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 				}
 				stack = append(stack, jsonFrame{isObj: v == '{', expectKey: v == '{', base: len(path)})
 				if v == '[' {
-					path = append(path, "[]"...)
+					path = appendPath(path, "[]")
+					pathDirty = true
 				}
 			default: // '}' or ']'
 				f := stack[len(stack)-1]
 				stack = stack[:len(stack)-1]
 				path = path[:f.base]
+				pathDirty = true
 				valueDone()
 			}
 		case string:
@@ -123,9 +132,10 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 				top.key = v
 				path = path[:top.base]
 				if top.base > 0 {
-					path = append(path, '.')
+					path = appendPath(path, ".")
 				}
-				path = append(path, v...)
+				path = appendPath(path, v[:min(len(v), maxPathSegment)])
+				pathDirty = true
 				if err := emit(v, v, true, true); err != nil {
 					return err
 				}
@@ -153,6 +163,21 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 			valueDone()
 		}
 	}
+}
+
+// Path bounds: a key contributes at most maxPathSegment bytes to Path and
+// the whole Path is at most maxPath bytes, so building it costs a bounded
+// amount per emission whatever the keys. The full key is still reported in
+// Key (and Value, for the key emission). A key cut here will not match a
+// declared field of the same long name.
+const (
+	maxPathSegment = 256
+	maxPath        = 4096
+)
+
+// appendPath appends as much of s to path as fits within maxPath.
+func appendPath(path []byte, s string) []byte {
+	return append(path, s[:min(len(s), max(maxPath-len(path), 0))]...)
 }
 
 func curKey(f *jsonFrame) string {
