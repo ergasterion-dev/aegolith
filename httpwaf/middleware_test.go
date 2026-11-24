@@ -381,11 +381,12 @@ func TestSlogHook(t *testing.T) {
 	hook := SlogHook(slog.New(rh))
 
 	run := func(mode aegolith.Mode, target string) {
-		h := Middleware(newFW(t, aegolith.Config{Mode: mode}), Options{OnDecision: hook})(
+		cfg := aegolith.Config{Mode: mode, Routes: []aegolith.Route{{Method: "GET", Path: "/items"}}}
+		h := Middleware(newFW(t, cfg), Options{OnDecision: hook})(
 			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", target, nil))
 	}
-	run(aegolith.ModeEnforce, "/clean?page=1")
+	run(aegolith.ModeEnforce, "/items?page=1")
 	if len(rh.recs) != 0 {
 		t.Fatalf("clean allow logged: %d", len(rh.recs))
 	}
@@ -398,24 +399,73 @@ func TestSlogHook(t *testing.T) {
 		t.Fatalf("levels %v %v", rh.recs[0].Level, rh.recs[1].Level)
 	}
 	a := attrs(rh.recs[0])
-	for _, k := range []string{"method", "path", "rules", "categories", "fields", "snippets"} {
+	for _, k := range []string{"method", "path", "route", "rules", "categories", "locations", "fields", "snippets", "latency"} {
 		if _, ok := a[k]; !ok {
 			t.Fatalf("missing attr %q in %v", k, a)
 		}
 	}
-	if a["method"].String() != "GET" || a["path"].String() != "/items" {
+	if a["method"].String() != "GET" || a["path"].String() != "/items" || a["route"].String() != "GET /items" {
 		t.Fatalf("attrs %v", a)
+	}
+	if a["latency"].Kind() != slog.KindDuration || a["latency"].Duration() <= 0 {
+		t.Fatalf("latency %v", a["latency"])
+	}
+	if locs := a["locations"].Any().([]string); len(locs) == 0 || locs[0] != string(aegolith.LocQuery) {
+		t.Fatalf("locations %v", locs)
 	}
 	if !strings.Contains(a["rules"].String(), "AEG-SQLI") {
 		t.Fatalf("rules %v", a["rules"])
 	}
 	fields, snips := a["fields"].Any().([]string), a["snippets"].Any().([]string)
-	if len(fields) == 0 || len(fields) != len(snips) || len(a["categories"].Any().([]string)) != len(fields) {
+	if len(fields) == 0 || len(fields) != len(snips) || len(a["categories"].Any().([]string)) != len(fields) || len(a["locations"].Any().([]string)) != len(fields) {
 		t.Fatalf("attr shapes %v", a)
 	}
 	for i := range fields {
 		if !strings.HasPrefix(fields[i], "query.") || snips[i] == "" || len(snips[i]) > 64 {
 			t.Fatalf("field %q snippet %q", fields[i], snips[i])
+		}
+	}
+}
+
+// TestSlogHookCleansEveryAttr: every string attribute goes through clean,
+// so control and non-ASCII bytes never reach the log, whatever a custom
+// engine or caller puts in the decision.
+func TestSlogHookCleansEveryAttr(t *testing.T) {
+	rh := &recHandler{}
+	bad := "x\n\r\x1b\u00e9\u202e"
+	SlogHook(slog.New(rh))(&aegolith.Request{Method: "G" + bad, RawPath: "/p" + bad}, aegolith.Decision{
+		Action: aegolith.ActionBlock,
+		Route:  "GET /r" + bad,
+		Matches: []aegolith.Match{{
+			RuleID: "AEG-X" + bad, Category: aegolith.Category("c" + bad), Location: aegolith.Location("l" + bad),
+			Field: "f" + bad, Snippet: "s" + bad,
+		}},
+	})
+	if len(rh.recs) != 1 {
+		t.Fatalf("recs %d", len(rh.recs))
+	}
+	var vals []string
+	for k, v := range attrs(rh.recs[0]) {
+		switch x := v.Any().(type) {
+		case string:
+			vals = append(vals, k+"="+x)
+		case []string:
+			for _, e := range x {
+				vals = append(vals, k+"="+e)
+			}
+		}
+	}
+	if len(vals) != 8 {
+		t.Fatalf("string attrs %v", vals)
+	}
+	for _, v := range vals {
+		for i := 0; i < len(v); i++ {
+			if v[i] < 0x20 || v[i] > 0x7e {
+				t.Fatalf("unclean attr %q", v)
+			}
+		}
+		if !strings.Contains(v, "x??") {
+			t.Fatalf("attr %q not cleaned as expected", v)
 		}
 	}
 }

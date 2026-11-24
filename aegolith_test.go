@@ -1175,6 +1175,7 @@ func TestInspectConcurrent(t *testing.T) {
 	want := make([]aegolith.Decision, len(reqs))
 	for i, r := range reqs {
 		want[i] = fw.Inspect(r)
+		want[i].Duration = 0
 	}
 	const workers, iters = 64, 1000
 	var wg sync.WaitGroup
@@ -1183,7 +1184,9 @@ func TestInspectConcurrent(t *testing.T) {
 		wg.Go(func() {
 			for i := range iters {
 				k := (w + i) % len(reqs)
-				if got := fw.Inspect(reqs[k]); !reflect.DeepEqual(got, want[k]) {
+				got := fw.Inspect(reqs[k])
+				got.Duration = 0 // the only field allowed to vary
+				if !reflect.DeepEqual(got, want[k]) {
 					errs <- fmt.Sprintf("request %d: got %+v want %+v", k, got, want[k])
 					return
 				}
@@ -1511,5 +1514,22 @@ func TestQueryKeyCurrencyNotOperator(t *testing.T) {
 	mustHave(t, d, "AEG-NOSQL-002", "")
 	if d.Action != aegolith.ActionBlock {
 		t.Fatalf("operator key: %v", ruleIDs(d))
+	}
+}
+
+// Decision.Route names the matched route (empty for an unknown route) and
+// Decision.Duration is measured by Inspect.
+func TestDecisionRouteAndDuration(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Routes: []aegolith.Route{{Method: "GET", Path: "/api/v1/orders/:id"}}})
+	d := fw.Inspect(get("/api/v1/orders/42"))
+	if d.Route != "GET /api/v1/orders/:id" || d.Duration <= 0 {
+		t.Fatalf("routed: route=%q duration=%v", d.Route, d.Duration)
+	}
+	d = fw.Inspect(get("/elsewhere"))
+	if d.Route != "" || d.Duration <= 0 {
+		t.Fatalf("unknown route: route=%q duration=%v", d.Route, d.Duration)
+	}
+	if d := fw.Inspect(nil); d.Err == nil || d.Duration < 0 {
+		t.Fatalf("nil request: %+v", d)
 	}
 }

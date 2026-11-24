@@ -11,6 +11,10 @@ const (
 	maxPathLen  = 256
 	maxFieldLen = 128
 	maxErrLen   = 128
+	// maxSnippetLen matches model.Redact's cap; maxTokenLen bounds short
+	// identifiers (method, rule ID, category, location).
+	maxSnippetLen = 64
+	maxTokenLen   = 64
 )
 
 func clip(s string, n int) string {
@@ -34,9 +38,15 @@ func clean(s string, n int) string {
 // SlogHook returns an Options.OnDecision hook that logs to l (slog.Default
 // when nil): Warn for a blocked request, Info for a monitored one, nothing
 // for a clean allow, and Error for a decision that only carries an internal
-// error (fail-open fault). The path is the escaped path without the query,
-// clipped to 256 bytes; fields are clipped to 128. Snippets are the engine's already-redacted values
-// (at most 64 bytes); no raw request data is added.
+// error (fail-open fault).
+//
+// Attributes (spec 5.6): method, path (the escaped path without the query,
+// clipped to 256 bytes), route (the matched route key, empty for an unknown
+// route), rules, categories, locations, fields (clipped to 128 bytes),
+// snippets (the engine's already-redacted values, at most 64 bytes),
+// latency (Decision.Duration) and, when set, error. Every string goes
+// through clean, so control and non-ASCII bytes are logged as '?'. No raw
+// request data beyond the path is added.
 func SlogHook(l *slog.Logger) func(*aegolith.Request, aegolith.Decision) {
 	return func(r *aegolith.Request, d aegolith.Decision) {
 		l := l
@@ -57,21 +67,26 @@ func SlogHook(l *slog.Logger) func(*aegolith.Request, aegolith.Decision) {
 		}
 		rules := make([]string, 0, len(d.Matches))
 		cats := make([]string, 0, len(d.Matches))
+		locs := make([]string, 0, len(d.Matches))
 		fields := make([]string, 0, len(d.Matches))
 		snips := make([]string, 0, len(d.Matches))
 		for _, m := range d.Matches {
-			rules = append(rules, m.RuleID)
-			cats = append(cats, string(m.Category))
-			fields = append(fields, clip(m.Field, maxFieldLen))
-			snips = append(snips, m.Snippet)
+			rules = append(rules, clean(m.RuleID, maxTokenLen))
+			cats = append(cats, clean(string(m.Category), maxTokenLen))
+			locs = append(locs, clean(string(m.Location), maxTokenLen))
+			fields = append(fields, clean(m.Field, maxFieldLen))
+			snips = append(snips, clean(m.Snippet, maxSnippetLen))
 		}
 		attrs := []slog.Attr{
-			slog.String("method", r.Method),
-			slog.String("path", clip(r.RawPath, maxPathLen)),
+			slog.String("method", clean(r.Method, maxTokenLen)),
+			slog.String("path", clean(r.RawPath, maxPathLen)),
+			slog.String("route", clean(d.Route, maxPathLen)),
 			slog.Any("rules", rules),
 			slog.Any("categories", cats),
+			slog.Any("locations", locs),
 			slog.Any("fields", fields),
 			slog.Any("snippets", snips),
+			slog.Duration("latency", d.Duration),
 		}
 		if d.Err != nil {
 			attrs = append(attrs, slog.String("error", clean(d.Err.Error(), maxErrLen)))

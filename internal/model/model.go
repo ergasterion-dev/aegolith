@@ -6,6 +6,7 @@ package model
 import (
 	"fmt"
 	"net/http"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -178,11 +179,18 @@ type Match struct {
 // ActionBlock. Monitored is true when matches were found but not enforced.
 // Err records an internal error that was resolved by the fail-open or
 // fail-closed setting.
+//
+// Route is the matched route's key ("METHOD /template", e.g.
+// "GET /api/v1/orders/:id"), empty when no declared route matched. Duration
+// is how long the inspection took; it is the only field that differs
+// between two inspections of the same request under the same config.
 type Decision struct {
 	Action    Action
 	Monitored bool
 	Matches   []Match
 	Err       error
+	Route     string
+	Duration  time.Duration
 }
 
 // Request is the transport-independent view of an HTTP request. RawPath is

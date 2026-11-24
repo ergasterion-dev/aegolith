@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ergasterion-dev/aegolith/internal/detect"
 	"github.com/ergasterion-dev/aegolith/internal/model"
@@ -28,11 +29,15 @@ const (
 // Inspect runs the pipeline on r. It never panics: a panic (or a nil
 // request) yields a decision with Err set and Action from the fail-open
 // setting (allow when open, block when closed). The error text is redacted.
+//
+// Decision.Duration is measured here, around the whole pipeline.
 func (e *Engine) Inspect(r *model.Request) (d model.Decision) {
+	start := time.Now()
 	defer func() {
 		if p := recover(); p != nil {
 			d = e.fail(fmt.Errorf("aegolith: internal error: %s", model.Redact(fmt.Sprint(p))))
 		}
+		d.Duration = time.Since(start)
 	}()
 	if r == nil {
 		return e.fail(errors.New("aegolith: nil request"))
@@ -261,6 +266,9 @@ func joinField(prefix, name string) string { return prefix + "." + model.SafeNam
 // the request is allowed and Monitored says whether anything matched.
 func (s *state) decide() model.Decision {
 	d := model.Decision{Action: model.ActionAllow, Matches: s.matches}
+	if s.routed {
+		d.Route = s.route.Key
+	}
 	if s.e.mode == model.ModeEnforce && slices.ContainsFunc(s.matches, func(m model.Match) bool { return m.Action == model.ActionBlock }) {
 		d.Action = model.ActionBlock
 		return d

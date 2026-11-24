@@ -73,7 +73,8 @@ func main() {
 	})
 
 	// httpwaf.SlogHook logs Warn for blocks and Info for monitored requests,
-	// with rule IDs, fields and redacted snippets (never full values).
+	// with route, rule IDs, locations, fields, redacted snippets and latency
+	// (never full values).
 	handler := httpwaf.Middleware(fw, httpwaf.Options{
 		OnDecision: httpwaf.SlogHook(slog.Default()),
 	})(mux)
@@ -155,7 +156,7 @@ flowchart LR
 | **Normalize** | Percent-decodes once and notes double encoding, walks JSON without building a tree, parses query strings, forms, cookies and multipart parts. Bounded in depth, field count and value length. |
 | **Typed validation** | Declared fields are checked against their type. `uuid`, `int`, `number`, `bool`, `enum` and `phone` values that pass are not scanned: they cannot carry an injection. |
 | **Detectors** | libinjection for SQLi and XSS, curated rules for command, code, LDAP, template, JNDI and CRLF injection, file and URL abuse, NoSQL and prototype-pollution keys, scanner paths and user agents. Linear in the value's length. |
-| **Decision** | Applies rule-action overrides, then exclusions, then the mode. Deterministic for a given config and request. |
+| **Decision** | Applies rule-action overrides, then exclusions, then the mode. Deterministic for a given config and request (apart from `Decision.Duration`, the time the inspection took). |
 
 Design notes, the scan budget and why there is no CRS are in [docs/architecture.md](docs/architecture.md).
 
