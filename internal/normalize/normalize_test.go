@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"reflect"
 	"strings"
 	"testing"
@@ -105,8 +106,11 @@ func TestWalkJSONPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []JSONValue{
+		{IsContainer: true},
 		{Path: "a", Key: "a", Value: "a", IsString: true, IsKey: true},
+		{Path: "a", Key: "a", IsContainer: true},
 		{Path: "a.b", Key: "b", Value: "b", IsString: true, IsKey: true},
+		{Path: "a.b", Key: "b", IsContainer: true},
 		{Path: "a.b[]", Key: "", Value: "x", IsString: true},
 		{Path: "a.b[]", Key: "", Value: "1"},
 		{Path: "a.b[]", Key: "", Value: "true"},
@@ -125,7 +129,7 @@ func TestWalkJSONNestedArrayOfObjects(t *testing.T) {
 	}
 	var paths []string
 	for _, v := range got {
-		if !v.IsKey {
+		if !v.IsKey && !v.IsContainer {
 			paths = append(paths, v.Path+"="+v.Value)
 		}
 	}
@@ -141,11 +145,29 @@ func TestWalkJSONKeyEqualsValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []JSONValue{
+		{IsContainer: true},
 		{Path: "a", Key: "a", Value: "a", IsString: true, IsKey: true},
 		{Path: "a", Key: "a", Value: "a", IsString: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+func TestWalkJSONContainers(t *testing.T) {
+	got, err := collect(`{"q":[],"o":{},"n":null,"l":[[1]]}`, model.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var containers []string
+	for _, v := range got {
+		if v.IsContainer {
+			containers = append(containers, v.Path)
+		}
+	}
+	want := []string{"", "q", "o", "l", "l[]"}
+	if !reflect.DeepEqual(containers, want) {
+		t.Fatalf("containers at %q want %q", containers, want)
 	}
 }
 
@@ -246,6 +268,29 @@ func TestParseMultipartSkipsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Part{{Name: "title", Value: "hello"}, {Name: "upload", IsFile: true}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+func TestParseMultipartQuotedPrintable(t *testing.T) {
+	body, ct := buildMultipart(t, func(w *multipart.Writer) {
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", `form-data; name="title"`)
+		h.Set("Content-Transfer-Encoding", "quoted-printable")
+		pw, _ := w.CreatePart(h)
+		_, _ = pw.Write([]byte("=3Cscript=3Ealert(1)=3C/script=3E"))
+		h = textproto.MIMEHeader{}
+		h.Set("Content-Disposition", `form-data; name="up"; filename="a.html"`)
+		h.Set("Content-Transfer-Encoding", "quoted-printable")
+		pw, _ = w.CreatePart(h)
+		_, _ = pw.Write([]byte("=3Cscript=3E"))
+	})
+	got, err := ParseMultipart(body, ct, model.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Part{{Name: "title", Value: "<script>alert(1)</script>"}, {Name: "up", IsFile: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v want %+v", got, want)
 	}

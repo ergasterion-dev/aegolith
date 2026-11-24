@@ -19,10 +19,14 @@ var ErrMalformed = errors.New("normalize: malformed JSON")
 // in a JSON document. Path is dotted with arrays as "[]" (for example
 // "items[].sku"); Key is the last object key, empty for array elements. For
 // an object key, IsKey is true, Value is the key itself and IsString is true.
+// When an object or array starts, IsContainer is true, Path is the path of
+// that value (before any "[]") and Value is empty; this lets a caller see a
+// container where it expects a scalar, including an empty one.
 type JSONValue struct {
 	Path, Key, Value string
 	IsString         bool
 	IsKey            bool
+	IsContainer      bool
 }
 
 type jsonFrame struct {
@@ -33,7 +37,8 @@ type jsonFrame struct {
 }
 
 // WalkJSON streams body through a token decoder and calls fn for every
-// string, number and boolean value and once per object key. Nesting beyond
+// string, number and boolean value, once per object key and once at the
+// start of every object or array. Nesting beyond
 // lim.MaxDepth or more than lim.MaxFields emitted items yields ErrLimit; a
 // syntax error yields ErrMalformed. Values emitted before an error stay
 // emitted. It uses an explicit stack, so depth cannot exhaust the call stack.
@@ -51,13 +56,17 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 		topSet bool // a complete top-level value has been read
 	)
 
-	emit := func(key, val string, isString, isKey bool) error {
+	emitValue := func(v JSONValue) error {
 		if count >= lim.MaxFields {
 			return ErrLimit
 		}
 		count++
-		fn(JSONValue{Path: string(path), Key: key, Value: val, IsString: isString, IsKey: isKey})
+		v.Path = string(path)
+		fn(v)
 		return nil
+	}
+	emit := func(key, val string, isString, isKey bool) error {
+		return emitValue(JSONValue{Key: key, Value: val, IsString: isString, IsKey: isKey})
 	}
 	// valueDone marks the current value complete in its parent frame.
 	valueDone := func() {
@@ -91,6 +100,9 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 			case '{', '[':
 				if len(stack)+1 > lim.MaxDepth {
 					return ErrLimit
+				}
+				if err := emitValue(JSONValue{Key: curKey(top), IsContainer: true}); err != nil {
+					return err
 				}
 				stack = append(stack, jsonFrame{isObj: v == '{', expectKey: v == '{', base: len(path)})
 				if v == '[' {

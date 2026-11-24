@@ -22,7 +22,9 @@ type Part struct {
 	Truncated bool
 }
 
-// ParseMultipart parses a multipart/* body. Each non-file part's value is
+// ParseMultipart parses a multipart/* body. Parts are read the way
+// net/http's ReadForm reads them (NextPart), so a quoted-printable
+// Content-Transfer-Encoding is decoded before inspection. Each non-file part's value is
 // capped at lim.MaxValueLen bytes; more than lim.MaxFields parts yields
 // ErrLimit. Other failures are returned as wrapped errors.
 func ParseMultipart(body []byte, contentType string, lim model.Limits) ([]Part, error) {
@@ -41,7 +43,7 @@ func ParseMultipart(body []byte, contentType string, lim model.Limits) ([]Part, 
 	r := multipart.NewReader(bytes.NewReader(body), boundary)
 	var parts []Part
 	for {
-		p, err := r.NextRawPart()
+		p, err := r.NextPart()
 		if err == io.EOF {
 			return parts, nil
 		}
