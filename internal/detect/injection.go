@@ -87,14 +87,22 @@ func CRLF(v string) (Hit, bool) {
 // cmdWord is a command name the CmdI scan looks for after a shell operator.
 type cmdWord struct {
 	name string
-	// bare: the command alone is an attack (id, whoami), so it matches at the
-	// end of the value or before another operator. Commands that need an
-	// argument to do harm (cat, curl, rm) match only with a shell-like one.
+	// bare: the command alone is an attack (id, whoami), so it matches with
+	// only flags after it, at the end of the value or before another
+	// operator. Other commands need an operand that looks like a shell one.
 	bare bool
-	// fold: Windows command names are case-insensitive. Unix ones must be
-	// lower case as the shell needs, which keeps "ID" and "Cat" in prose
-	// clear.
-	fold bool
+	// windows: a case-insensitive Windows command. It matches only with a
+	// Windows-shaped argument (C:\, a backslash path, a /x switch), never
+	// bare, so "Timergara; Dir" (a district) and "Order & type -C cable"
+	// stay clear. Unix names must be lower case as the shell needs, which
+	// keeps "ID" and "Cat" in prose clear.
+	windows bool
+	// url: a URL operand counts (curl, wget). "dog & cat https://..." does
+	// not match.
+	url bool
+	// interp: an interpreter, where -c or -e followed by a quoted string is
+	// code.
+	interp bool
 }
 
 // cmdWords is read-only after init.
@@ -103,23 +111,23 @@ var cmdWords = [...]cmdWord{
 	{name: "whoami", bare: true},
 	{name: "uname", bare: true},
 	{name: "ls", bare: true},
-	{name: "sh", bare: true},
+	{name: "sh", bare: true, interp: true},
+	{name: "bash", interp: true},
+	{name: "python", interp: true},
+	{name: "perl", interp: true},
 	{name: "cat"},
-	{name: "wget"},
-	{name: "curl"},
+	{name: "wget", url: true},
+	{name: "curl", url: true},
 	{name: "nc"},
-	{name: "bash"},
-	{name: "python"},
-	{name: "perl"},
 	{name: "ping"},
 	{name: "rm"},
 	{name: "chmod"},
-	{name: "dir", bare: true, fold: true},
-	{name: "powershell", bare: true, fold: true},
-	{name: "powershell.exe", bare: true, fold: true},
-	{name: "type", fold: true},
-	{name: "cmd", fold: true},
-	{name: "cmd.exe", fold: true},
+	{name: "dir", windows: true},
+	{name: "type", windows: true},
+	{name: "cmd", windows: true},
+	{name: "cmd.exe", windows: true},
+	{name: "powershell", windows: true},
+	{name: "powershell.exe", windows: true},
 }
 
 func isCmdI(s string) bool {
@@ -127,8 +135,11 @@ func isCmdI(s string) bool {
 		return true
 	}
 	for i := 0; i < len(s); i++ {
+		afterNewline := false
 		switch s[i] {
-		case ';', '|', '&', '`', '\n', '\r':
+		case ';', '|', '&', '`':
+		case '\n', '\r':
+			afterNewline = true
 		case '$':
 			if i+1 >= len(s) || s[i+1] != '(' {
 				continue
@@ -141,7 +152,7 @@ func isCmdI(s string) bool {
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '|' || s[j] == '&') {
 			j++
 		}
-		if commandAt(s, j) {
+		if commandAt(s, j, afterNewline) {
 			return true
 		}
 		// The skipped bytes all lead to the same j: do not rescan them.
@@ -152,7 +163,9 @@ func isCmdI(s string) bool {
 
 // commandAt reports whether a command invocation starts at s[i]: a known
 // command used as a shell would use it, or an absolute system path.
-func commandAt(s string, i int) bool {
+// afterNewline is set when the operator before it is only a line break,
+// where a bare command at the end of a line ("Notes:\nls") is prose.
+func commandAt(s string, i int, afterNewline bool) bool {
 	if i >= len(s) {
 		return false
 	}
@@ -166,50 +179,136 @@ func commandAt(s string, i int) bool {
 	lower := first | 0x20
 	for _, w := range cmdWords {
 		end := i + len(w.name)
-		if end > len(s) || w.name[0] != lower || !w.fold && first != lower {
+		if end > len(s) || w.name[0] != lower || !w.windows && first != lower {
 			continue
 		}
-		if w.fold {
+		if w.windows {
 			if !hasPrefixFold(s[i:], w.name) {
 				continue
 			}
 		} else if s[i:end] != w.name {
 			continue
 		}
-		if end == len(s) || isShellOperator(s[end]) {
-			if w.bare {
-				return true
-			}
-			continue
-		}
-		if s[end] != ' ' && s[end] != '\t' {
+		if end < len(s) && !isShellOperator(s[end]) && s[end] != ' ' && s[end] != '\t' {
 			continue // part of a longer word: "cats", "identity", "sh."
 		}
-		for end < len(s) && (s[end] == ' ' || s[end] == '\t') {
-			end++
-		}
-		if end == len(s) || isShellOperator(s[end]) {
-			if w.bare {
+		if w.windows {
+			if windowsArgAt(s, skipBlanks(s, end), w.name[0] == 'p') {
 				return true
 			}
 			continue
 		}
-		if shellArgAt(s, end) {
+		if unixArgsAt(s, skipBlanks(s, end), w, afterNewline) {
 			return true
 		}
 	}
 	return false
 }
 
+// unixArgsAt reports whether the arguments starting at s[j] make the
+// command w a shell invocation: optional flags (each possibly followed by a
+// numeric value, as in "-c 3"), then an operand that looks like a shell one
+// (see unixOperandAt). A bare command also matches with only flags after it
+// at the end of the value or before an operator, except after a line break,
+// where it needs a flag or a following non-newline operator.
+func unixArgsAt(s string, j int, w cmdWord, afterNewline bool) bool {
+	flags := 0
+	lastFlag := ""
+	for t := 0; t < 6; t++ {
+		if j >= len(s) || isShellOperator(s[j]) {
+			if !w.bare {
+				return false
+			}
+			atLineEnd := j >= len(s) || s[j] == '\n' || s[j] == '\r'
+			return !afterNewline || flags > 0 || !atLineEnd
+		}
+		if unixOperandAt(s, j, w.url) {
+			return true
+		}
+		if w.interp && (lastFlag == "-c" || lastFlag == "-e") && (s[j] == '\'' || s[j] == '"') {
+			return true
+		}
+		if k := flagEnd(s, j); k > j {
+			flags++
+			lastFlag = s[j:k]
+			j = skipBlanks(s, k)
+			continue
+		}
+		if k := digitsEnd(s, j); flags > 0 && k > j {
+			lastFlag = ""
+			j = skipBlanks(s, k) // a flag's numeric value: ping -c 3
+			continue
+		}
+		return false
+	}
+	return false
+}
+
+// flagEnd returns the end of a command-line flag token at s[j] ("-la",
+// "-O", "--output", "+x"), or j when there is none. "--" alone, "-" alone
+// and "-ing," are not flags.
+func flagEnd(s string, j int) int {
+	k := j
+	switch {
+	case strings.HasPrefix(s[j:], "--"):
+		k += 2
+		if k >= len(s) || !isASCIILetter(s[k]) {
+			return j
+		}
+	case s[j] == '-':
+		k++
+		if k >= len(s) || !isASCIILetter(s[k]) && !(s[k] >= '0' && s[k] <= '9') {
+			return j
+		}
+	case s[j] == '+':
+		k++
+		if k >= len(s) || !isASCIILetter(s[k]) {
+			return j
+		}
+	default:
+		return j
+	}
+	for k < len(s) && (isIdentByte(s[k]) || s[k] == '-') {
+		k++
+	}
+	if k < len(s) && !isShellOperator(s[k]) && s[k] != ' ' && s[k] != '\t' {
+		return j
+	}
+	return k
+}
+
+// digitsEnd returns the end of an all-digit token at s[j], or j.
+func digitsEnd(s string, j int) int {
+	k := j
+	for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+		k++
+	}
+	if k < len(s) && !isShellOperator(s[k]) && s[k] != ' ' && s[k] != '\t' {
+		return j
+	}
+	return k
+}
+
+func skipBlanks(s string, j int) int {
+	for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+		j++
+	}
+	return j
+}
+
 func isShellOperator(c byte) bool {
 	return c == ';' || c == '|' || c == '&' || c == '`' || c == ')' || c == '\n' || c == '\r'
 }
 
-// shellArgAt reports whether the argument at s[i] looks like one given to a
-// shell command rather than an English word: a flag, a path, a variable, a
-// redirection, a URL or an IPv4 address. "$5", "/2" and "-" alone do not
-// count.
-func shellArgAt(s string, i int) bool {
+// unixOperandAt reports whether the operand at s[i] (optionally quoted)
+// looks like one given to a Unix command rather than an English word: a
+// path, a home or relative path, a variable, a redirection into a path or
+// descriptor, an IPv4 address, or (for curl and wget) a URL. "$5", "/2",
+// "-- both" and "food" do not count.
+func unixOperandAt(s string, i int, url bool) bool {
+	for i < len(s) && (s[i] == '\'' || s[i] == '"') {
+		i++
+	}
 	if i >= len(s) {
 		return false
 	}
@@ -218,14 +317,8 @@ func shellArgAt(s string, i int) bool {
 		next = s[i+1]
 	}
 	switch c := s[i]; {
-	case c == '-':
-		return isASCIILetter(next) || next == '-'
-	case c == '+':
-		return isASCIILetter(next)
 	case c == '/':
-		return isASCIILetter(next) || next == '.' || next == '_'
-	case c == '\\':
-		return true
+		return isASCIILetter(next) || next == '.' || next == '_' || i+1 == len(s) || isShellOperator(next)
 	case c == '~':
 		return next == '/' || isASCIILetter(next)
 	case c == '$':
@@ -238,14 +331,37 @@ func shellArgAt(s string, i int) bool {
 			j++
 		}
 		return j < len(s) && (s[j] == '/' || s[j] == '&')
-	case c == '\'' || c == '"':
-		return shellArgAt(s, i+1)
-	case isASCIILetter(c) && next == ':' && i+2 < len(s) && (s[i+2] == '\\' || s[i+2] == '/'):
-		return true // Windows drive path, C:\
 	case c >= '0' && c <= '9':
 		return ipv4At(s, i)
 	}
-	return hasPrefixFold(s[i:], "http://") || hasPrefixFold(s[i:], "https://") || hasPrefixFold(s[i:], "ftp://")
+	return url && (hasPrefixFold(s[i:], "http://") || hasPrefixFold(s[i:], "https://") || hasPrefixFold(s[i:], "ftp://"))
+}
+
+// windowsArgAt reports whether s[i] starts a Windows-shaped argument: a
+// drive path (C:\ or C:/), a backslash path, or a one-letter /x switch or
+// /?. With flags set (PowerShell), a -Name parameter also counts.
+func windowsArgAt(s string, i int, flags bool) bool {
+	for i < len(s) && (s[i] == '\'' || s[i] == '"') {
+		i++
+	}
+	if i >= len(s) {
+		return false
+	}
+	c := s[i]
+	switch {
+	case isASCIILetter(c) && i+2 < len(s) && s[i+1] == ':' && (s[i+2] == '\\' || s[i+2] == '/'):
+		return true
+	case c == '\\':
+		return i+1 < len(s) && (isASCIILetter(s[i+1]) || s[i+1] == '\\')
+	case c == '/':
+		if i+1 >= len(s) || !isASCIILetter(s[i+1]) && s[i+1] != '?' {
+			return false
+		}
+		return i+2 == len(s) || s[i+2] == ' ' || s[i+2] == '\t' || isShellOperator(s[i+2])
+	case c == '-' && flags:
+		return flagEnd(s, i) > i
+	}
+	return false
 }
 
 // ipv4At reports whether a dotted quad (four dot-separated groups of one to
@@ -583,18 +699,31 @@ func hasERBOutput(s string) bool {
 // lookups stay as written. A lookup whose resolved content starts with
 // "jndi:" is a hit, and so is an unclosed "${jndi:" left at the end.
 //
-// Each frame remembers where its first ":-" is as bytes arrive, so closing a
-// lookup never rescans its content and deep nesting stays linear.
+// Each frame remembers where its first ":-" is as bytes arrive. Closing a
+// lookup still moves its resolved text into the parent, so the work is
+// depth x length; nesting is therefore capped at maxLookupDepth. Real
+// obfuscation nests two to four deep and no customer text nests "${" at
+// all, so a value that goes deeper is reported (fail closed) rather than
+// resolved, which also stops an attacker hiding ${jndi: below the cap.
 func isJNDI(s string) bool {
 	if !strings.Contains(s, "${") {
 		return false
 	}
-	l := strings.ToLower(s)
-	buf := make([]byte, 0, len(l))
-	var frames []lookupFrame
-	for i := 0; i < len(l); i++ {
-		switch c := l[i]; {
-		case c == '$' && i+1 < len(l) && l[i+1] == '{':
+	// Lower-case ASCII as bytes are copied: the letters that matter
+	// (j, n, d, i, lower, upper) are ASCII, and this avoids a second copy.
+	buf := make([]byte, 0, len(s))
+	var frameArr [maxLookupDepth]lookupFrame
+	frames := frameArr[:0]
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		switch {
+		case c == '$' && i+1 < len(s) && s[i+1] == '{':
+			if len(frames) == maxLookupDepth {
+				return true
+			}
 			buf = append(buf, '$', '{')
 			frames = append(frames, lookupFrame{start: len(buf), sep: -1})
 			i++
@@ -621,14 +750,19 @@ func isJNDI(s string) bool {
 				frames[len(frames)-1].noteSep(buf, at)
 			}
 		default:
-			buf = append(buf, c)
-			if len(frames) > 0 {
-				frames[len(frames)-1].noteSep(buf, len(buf)-1)
+			if c == '-' && len(frames) > 0 {
+				if f := &frames[len(frames)-1]; f.sep < 0 && len(buf) > f.start && buf[len(buf)-1] == ':' {
+					f.sep = len(buf) - 1
+				}
 			}
+			buf = append(buf, c)
 		}
 	}
 	return bytes.Contains(buf, []byte("${jndi:"))
 }
+
+// maxLookupDepth is the deepest "${" nesting isJNDI resolves.
+const maxLookupDepth = 8
 
 // lookupFrame is one open "${" in isJNDI: where its content starts in the
 // buffer and where its first ":-" default separator is (-1 if none yet).

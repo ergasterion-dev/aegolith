@@ -74,7 +74,13 @@ func TestCmdIPositives(t *testing.T) {
 		"x;id",
 		"$(id)",
 		"|| ls -la",
-		"1\nid",
+		"1\nid -u",
+		"%0Aid%3B",
+		"x\n/bin/sh -i",
+		"& type \\\\host\\share\\x",
+		"& cmd /c whoami",
+		"& dir /s",
+		"; powershell -nop -c iex",
 		"a; /usr/bin/id",
 		"& DIR C:\\",
 		"; uname -a",
@@ -113,6 +119,20 @@ func TestCmdINegatives(t *testing.T) {
 		"Fresh & ls brand",
 		"Leave with guard & sh. Ali",
 		"Nice shop | nice people",
+		"House 12, Main Bazar\nTimergara\nDir",
+		"Timergara; Dir",
+		"Order & type -C cable",
+		"Gift wrap\nType -Large",
+		"Rice; type -- basmati",
+		"Dog food & cat -- both great",
+		"bring id\nid -- card",
+		"Pack & curl -ing iron",
+		"mobile: 0300-1234567 | ping -me",
+		"Pet shop: dog & cat https://example.com/cat-food",
+		"Notes:\nls",
+		"Notes:\nid\nThanks",
+		"Upper Dir / Lower Dir",
+		"Sizes & type -- S, M, L",
 	})
 }
 
@@ -283,19 +303,20 @@ func TestCRLFNegatives(t *testing.T) {
 // repetitions of their own trigger sequences.
 func TestInjectionAdversarialTime(t *testing.T) {
 	inputs := map[string]string{
-		"cmdi":  strings.Repeat("; id x", 1400),
-		"ldap":  strings.Repeat(")(", 4096),
-		"ssti":  strings.Repeat("{{", 4096),
-		"ssti2": strings.Repeat("{{ a ", 1600) + "}}",
-		"ssti3": strings.Repeat("{%", 4096),
-		"ssti4": strings.Repeat("#{", 4096),
-		"jndi":  strings.Repeat("${::-", 1600) + strings.Repeat("a", 512) + strings.Repeat("}", 1600),
-		"jndi2": strings.Repeat("${", 4096),
-		"jndi3": strings.Repeat("${a", 1365) + strings.Repeat("}", 1365),
-		"cmdi2": strings.Repeat("|", 8192),
-		"shock": strings.Repeat("() {", 2048),
-		"crlf":  strings.Repeat("\r\n", 4096),
-		"codei": strings.Repeat("<?eval(", 1170),
+		"cmdi":   strings.Repeat("; id x", 1400),
+		"ldap":   strings.Repeat(")(", 4096),
+		"ssti":   strings.Repeat("{{", 4096),
+		"ssti2":  strings.Repeat("{{ a ", 1600) + "}}",
+		"ssti3":  strings.Repeat("{%", 4096),
+		"ssti4":  strings.Repeat("#{", 4096),
+		"jndi":   strings.Repeat("${::-", 1600) + strings.Repeat("a", 512) + strings.Repeat("}", 1600),
+		"jndi2":  strings.Repeat("${", 4096),
+		"jndi3":  strings.Repeat("${a", 1365) + strings.Repeat("}", 1365),
+		"quotes": "; cat " + strings.Repeat("'", 8192),
+		"cmdi2":  strings.Repeat("|", 8192),
+		"shock":  strings.Repeat("() {", 2048),
+		"crlf":   strings.Repeat("\r\n", 4096),
+		"codei":  strings.Repeat("<?eval(", 1170),
 	}
 	fns := []func(string) (Hit, bool){CmdI, CodeI, LDAP, SSTI, JNDI, CRLF}
 	for name, in := range inputs {
@@ -304,6 +325,31 @@ func TestInjectionAdversarialTime(t *testing.T) {
 				t.Errorf("%s: %v on %d bytes, want under 2ms", name, d, len(in))
 			}
 		}
+	}
+}
+
+// TestJNDILargePayloadTime checks nested lookups around a large payload:
+// resolving moves the payload up one level per close, so the cost is
+// bounded by the depth cap times the length.
+func TestJNDILargePayloadTime(t *testing.T) {
+	for _, size := range []int{64 << 10, 1 << 20} {
+		payload := strings.Repeat("a", size)
+		for _, depth := range []int{maxLookupDepth, 1000} {
+			for _, open := range []string{"${lower:", "${x:-"} {
+				in := strings.Repeat(open, depth) + payload + strings.Repeat("}", depth)
+				if d := bestOf(3, func() { JNDI(in) }); d > raceSlowdown*5*time.Millisecond {
+					t.Errorf("JNDI(%q x %d around %d bytes): %v, want under %v", open, depth, size, d, raceSlowdown*5*time.Millisecond)
+				}
+			}
+		}
+	}
+	// One level past the cap is reported, not resolved.
+	deep := strings.Repeat("${x:-", maxLookupDepth+1) + "a" + strings.Repeat("}", maxLookupDepth+1)
+	if _, ok := JNDI(deep); !ok {
+		t.Errorf("JNDI on %d nested lookups = no hit, want hit", maxLookupDepth+1)
+	}
+	if _, ok := JNDI(strings.Repeat("${x:-", maxLookupDepth) + "a" + strings.Repeat("}", maxLookupDepth)); ok {
+		t.Errorf("JNDI on %d nested lookups without jndi = hit, want none", maxLookupDepth)
 	}
 }
 
