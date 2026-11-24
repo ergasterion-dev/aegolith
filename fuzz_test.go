@@ -3,6 +3,8 @@ package aegolith_test
 import (
 	"net/http"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -22,7 +24,9 @@ var fuzzInspectBound = wallLimit(100*time.Millisecond, 2*time.Second)
 // bodies, cookies and User-Agents through a generic enforce firewall, a
 // generic monitor firewall and the API-aware corpus policy. Inspect must
 // not panic (a recovered panic surfaces as Decision.Err), must return a
-// valid action (never block in monitor mode) and must return within
+// valid action (never block in monitor mode), must be deterministic (a
+// second inspection of an identical, independently built request gives the
+// same decision apart from Duration) and must return within
 // fuzzInspectBound (the fastest of up to three runs, so a scheduler
 // stall is not reported as a hang). It is seeded with every corpus line.
 func FuzzInspect(f *testing.F) {
@@ -76,6 +80,8 @@ func FuzzInspect(f *testing.F) {
 		}
 		for _, w := range fws {
 			r := &aegolith.Request{Method: method, RawPath: path, RawQuery: query, RemoteAddr: "192.0.2.1:1", Header: h, Body: body}
+			// An independent copy, built before the first inspection.
+			r2 := &aegolith.Request{Method: method, RawPath: path, RawQuery: query, RemoteAddr: "192.0.2.1:1", Header: h.Clone(), Body: slices.Clone(body)}
 			d, el := timedInspect(w.fw, r)
 			// A real pathology is deterministic; a scheduler or GC stall
 			// among parallel fuzz workers is not. Fail only when the
@@ -94,6 +100,14 @@ func FuzzInspect(f *testing.F) {
 			case aegolith.ActionAllow, aegolith.ActionBlock:
 			default:
 				t.Fatalf("%s: invalid action %q", w.name, d.Action)
+			}
+			// Determinism: same config, same request, same decision. The
+			// second request shares nothing with the first, so a decision
+			// that depended on map order or on mutating its input shows.
+			d2 := w.fw.Inspect(r2)
+			d.Duration, d2.Duration = 0, 0
+			if !reflect.DeepEqual(d, d2) {
+				t.Fatalf("%s: nondeterministic decision:\n first %+v\nsecond %+v", w.name, d, d2)
 			}
 			if w.monitor && d.Action == aegolith.ActionBlock {
 				t.Fatalf("%s: blocked in monitor mode: %v", w.name, d.Matches)
