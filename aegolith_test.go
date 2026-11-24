@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -274,6 +275,9 @@ func hugeJSON(n int) string {
 	return b.String()
 }
 
+// TestInspectHugeBody: 100k JSON fields stop the walk at MaxFields
+// (AEG-PROTO-010) and the raw body is scanned under the per-request scan
+// budget, so the time stays bounded and the legit-shaped body is allowed.
 func TestInspectHugeBody(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{})
 	r := postJSON("/api/v1/import", hugeJSON(100000))
@@ -285,16 +289,21 @@ func TestInspectHugeBody(t *testing.T) {
 	d := fw.Inspect(r)
 	el := time.Since(start)
 	t.Logf("inspect took %v", el)
-	if el > 200*time.Millisecond {
+	if el > 500*time.Millisecond*raceSlowdown {
 		t.Fatalf("took %v", el)
 	}
 	m := mustHave(t, d, "AEG-PROTO-010", "body")
 	if m.Action != aegolith.ActionMonitor || d.Action != aegolith.ActionAllow || !d.Monitored {
 		t.Fatalf("decision %+v", d)
 	}
-	// Deep nesting is a limit hit too.
+	// Deep nesting is a limit hit too, and what follows it is still scanned.
 	d = fw.Inspect(postJSON("/x", strings.Repeat("[", 5000)))
 	mustHave(t, d, "AEG-PROTO-010", "body")
+	d = fw.Inspect(postJSON("/x", `{"a":`+strings.Repeat("[", 40)+`1`+strings.Repeat("]", 40)+`,"q":"1' OR '1'='1"}`))
+	mustHave(t, d, "AEG-PROTO-010", "body")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("attack after a too-deep value: %+v", d)
+	}
 }
 
 func TestInspectMalformedJSON(t *testing.T) {
@@ -314,44 +323,54 @@ func TestInspectMalformedJSON(t *testing.T) {
 	}
 }
 
-// Ruling 1: the malformed-JSON raw body is capped at MaxValueLen.
-func TestInspectMalformedJSONRawBodyCapped(t *testing.T) {
-	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+// Ruling 4: the malformed-JSON raw body is scanned in overlapping windows,
+// so padding cannot push an attack past the first window.
+func TestInspectMalformedJSONRawBodyWindowed(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
 	body := `{"pad":"` + strings.Repeat("a", 9000) + `", "q": "1' OR '1'='1' --`
 	d := fw.Inspect(postJSON("/x", body))
 	mustHave(t, d, "AEG-PROTO-020", "body")
-	if m := mustHave(t, d, "AEG-PROTO-011", "body"); m.Action != aegolith.ActionMonitor {
+	if m := mustHave(t, d, "AEG-PROTO-011", "body.pad"); m.Action != aegolith.ActionMonitor {
 		t.Fatalf("%+v", m)
 	}
-	mustNotHave(t, d, "AEG-SQLI-001")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("decision %+v", d)
+	}
+	mustHave(t, d, "AEG-SQLI-001", "body")
 }
 
-// Rulings 1 and 2: every value is capped, JSON strings included.
-func TestInspectLongValuesCapped(t *testing.T) {
+// Rulings 1, 2 and fix-round ruling 4: a value longer than MaxValueLen is
+// reported (AEG-PROTO-011, monitor) and scanned in overlapping windows.
+func TestInspectLongValuesWindowed(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
 	long := strings.Repeat("a", 8192) + "1' OR '1'='1"
 	d := fw.Inspect(get("/s?q=" + long))
 	mustHave(t, d, "AEG-PROTO-011", "query.q")
-	mustNotHave(t, d, "AEG-SQLI-001")
+	mustHave(t, d, "AEG-SQLI-001", "query.q")
 
 	d = fw.Inspect(postJSON("/s", `{"note":"`+long+`"}`))
 	mustHave(t, d, "AEG-PROTO-011", "body.note")
-	mustNotHave(t, d, "AEG-SQLI-001")
-
-	// Within the prefix an attack is still found.
-	d = fw.Inspect(postJSON("/s", `{"note":"1' OR '1'='1`+strings.Repeat(" ", 9000)+`"}`))
-	mustHave(t, d, "AEG-PROTO-011", "body.note")
 	mustHave(t, d, "AEG-SQLI-001", "body.note")
 
-	// XML bodies are capped too.
+	// An attack straddling a window edge is inside the overlapping window.
+	edge := strings.Repeat("a", 8192-5) + " 1' OR '1'='1 " + strings.Repeat("a", 8192)
+	mustHave(t, fw.Inspect(postJSON("/s", `{"note":"`+edge+`"}`)), "AEG-SQLI-001", "body.note")
+
+	// A long clean value is only reported.
+	d = fw.Inspect(postJSON("/s", `{"note":"`+strings.Repeat("lorem ipsum ", 3000)+`"}`))
+	if len(d.Matches) != 1 || d.Matches[0].RuleID != "AEG-PROTO-011" {
+		t.Fatalf("long clean value: %v", ruleIDs(d))
+	}
+
 	fw = mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, AllowXML: true})
 	d = fw.Inspect(withBody("POST", "/x", "application/xml", "<a>"+strings.Repeat("b", 9000)+"</a>"))
 	mustHave(t, d, "AEG-PROTO-011", "body")
 }
 
-// Ruling 3: query and form pairs stop at MaxFields.
+// Ruling 3 and fix-round ruling 4: pairs beyond MaxFields raise
+// AEG-PROTO-010 and are still scanned.
 func TestInspectQueryAndFormFieldLimit(t *testing.T) {
-	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: aegolith.Limits{MaxFields: 10}})
+	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxFields: 10}})
 	var q []string
 	for i := range 20 {
 		q = append(q, fmt.Sprintf("k%d=v", i))
@@ -359,15 +378,130 @@ func TestInspectQueryAndFormFieldLimit(t *testing.T) {
 	q = append(q, "z=1%27%20OR%20%271%27%3D%271")
 	d := fw.Inspect(get("/s?" + strings.Join(q, "&")))
 	mustHave(t, d, "AEG-PROTO-010", "query")
-	mustNotHave(t, d, "AEG-SQLI-001")
+	mustHave(t, d, "AEG-SQLI-001", "query.z")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("%+v", d)
+	}
 
 	d = fw.Inspect(withBody("POST", "/s", "application/x-www-form-urlencoded", strings.Join(q, "&")))
 	mustHave(t, d, "AEG-PROTO-010", "form")
-	mustNotHave(t, d, "AEG-SQLI-001")
+	mustHave(t, d, "AEG-SQLI-001", "form.z")
 
 	// Exactly MaxFields pairs (empty segments ignored) is fine.
 	d = fw.Inspect(get("/s?" + strings.Join(q[:10], "&") + "&&&"))
-	mustNotHave(t, d, "AEG-PROTO-010")
+	if len(d.Matches) != 0 {
+		t.Fatalf("at the limit: %v", ruleIDs(d))
+	}
+
+	// Cookies beyond MaxFields are scanned too.
+	r := get("/s")
+	r.Header.Set("Cookie", strings.Repeat("a=b; ", 20)+"z=<script>alert(1)</script>")
+	d = fw.Inspect(r)
+	mustHave(t, d, "AEG-PROTO-010", "cookie")
+	mustHave(t, d, "AEG-XSS-001", "cookie.z")
+}
+
+// Fix-round ruling 4: the reviewer's padding probes block in enforce mode
+// with the default limits.
+func TestInspectPaddingDoesNotBypassEnforce(t *testing.T) {
+	g := mustNew(t, aegolith.Config{})
+	d := g.Inspect(get("/s?q=" + strings.Repeat("a", 8192) + "1%27%20OR%20%271%27%3D%271"))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("padded value: %v", ruleIDs(d))
+	}
+	var q []string
+	for i := range 1000 {
+		q = append(q, fmt.Sprintf("k%d=v", i))
+	}
+	d = g.Inspect(get("/s?" + strings.Join(q, "&") + "&z=1%27%20OR%20%271%27%3D%271"))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("1000 fields then sqli: %v", ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-PROTO-010", "query")
+	big := `{"pad":"` + strings.Repeat("a", 1<<20) + `","q":"1' OR '1'='1"}`
+	d = g.Inspect(postJSON("/s", big))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf(">1MiB json: %v", ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-SQLI-001", "body.q")
+	xxe := withBody("POST", "/s", "application/xml", `<?xml version="1.0"?><!--`+strings.Repeat("a", 8200)+`--><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><x>&e;</x>`)
+	if d := mustNew(t, aegolith.Config{AllowXML: true}).Inspect(xxe); d.Action != aegolith.ActionBlock {
+		t.Fatalf("padded xxe: %v", ruleIDs(d))
+	}
+	// In monitor mode (no early stop) the XXE rule itself is seen in the
+	// window past the padding.
+	mustHave(t, mustNew(t, aegolith.Config{AllowXML: true, Mode: aegolith.ModeMonitor}).Inspect(xxe), "AEG-XXE-001", "body")
+}
+
+// Fix-round ruling 4: when the per-request scan budget (2 x MaxBodyBytes
+// bytes handed to detectors) runs out, AEG-PROTO-011 is raised once as a
+// monitor match and scanning stops: a documented known gap, not a block.
+func TestInspectScanBudgetExhausted(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxBodyBytes: 64 << 10, MaxValueLen: 1024}})
+	body := `{"pad":"` + strings.Repeat("a", 100<<10) + `","q":"1' OR '1'='1"}`
+	d := fw.Inspect(postJSON("/s", body))
+	if d.Err != nil || d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("decision %+v", d)
+	}
+	m := mustHave(t, d, "AEG-PROTO-011", "body.pad")
+	if m.Action != aegolith.ActionMonitor {
+		t.Fatalf("%+v", m)
+	}
+	mustNotHave(t, d, "AEG-SQLI-001")
+	n := 0
+	for _, m := range d.Matches {
+		if m.RuleID == "AEG-PROTO-011" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("PROTO-011 reported %d times: %v", n, ruleIDs(d))
+	}
+}
+
+// TestInspectScanBudgetBoundsTime: worst-case inputs for the default limits
+// (a 2 MiB string value, a 1 MiB query of pairs, a 2 MiB malformed body)
+// stay within a fixed time bound because the scan budget caps detector work.
+func TestInspectScanBudgetBoundsTime(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	fw.Inspect(get("/warm"))
+	pairs := strings.Repeat("k=a'b&", (1<<20)/6)
+	for name, r := range map[string]*aegolith.Request{
+		"long value": postJSON("/s", `{"pad":"`+strings.Repeat("a'", 2<<20)+`"}`),
+		"many pairs": get("/s?" + pairs),
+		"malformed":  postJSON("/s", `{"pad":"`+strings.Repeat("a'", 2<<20)),
+		"form pairs": withBody("POST", "/s", "application/x-www-form-urlencoded", pairs+pairs),
+	} {
+		start := time.Now()
+		d := fw.Inspect(r)
+		el := time.Since(start)
+		t.Logf("%s: %v", name, el)
+		if el > time.Second*raceSlowdown {
+			t.Fatalf("%s took %v", name, el)
+		}
+		if d.Err != nil {
+			t.Fatalf("%s: %v", name, d.Err)
+		}
+	}
+}
+
+// Legit traffic over MaxFields is raw-scanned without false positives.
+func TestInspectLegitLargeJSONAllowed(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"items":[`)
+	for i := range 600 {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"sku":"SKU-%04d","qty":%d,"price":12.50,"note":"Gate code 1234 & leave at door; thanks!","url":"https://cdn.example.com/p/%d.png"}`, i, i%5+1, i)
+	}
+	b.WriteString(`]}`)
+	fw := mustNew(t, aegolith.Config{})
+	d := fw.Inspect(postJSON("/api/v1/orders/import", b.String()))
+	mustHave(t, d, "AEG-PROTO-010", "body")
+	if d.Action != aegolith.ActionAllow {
+		t.Fatalf("legit large body blocked: %v", ruleIDs(d))
+	}
 }
 
 func multipartBody(t *testing.T, fn func(w *multipart.Writer)) (string, string) {
@@ -400,15 +534,61 @@ func TestInspectMultipartFileNotScanned(t *testing.T) {
 	mustHave(t, d, "AEG-XSS-001", "form.title")
 }
 
-// Ruling 4: a truncated multipart value raises AEG-PROTO-011.
+// Ruling 4: a long multipart value raises AEG-PROTO-011 and is scanned in
+// windows like any other value.
 func TestInspectMultipartTruncated(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
 	body, ct := multipartBody(t, func(w *multipart.Writer) {
-		_ = w.WriteField("bio", strings.Repeat("a", 9000))
+		_ = w.WriteField("bio", strings.Repeat("a", 9000)+"<script>alert(1)</script>")
 	})
 	d := fw.Inspect(withBody("POST", "/u", ct, body))
 	if m := mustHave(t, d, "AEG-PROTO-011", "form.bio"); m.Action != aegolith.ActionMonitor {
 		t.Fatalf("%+v", m)
+	}
+	mustHave(t, d, "AEG-XSS-001", "form.bio")
+}
+
+func qpMultipart(t *testing.T, name, filename, encoded string) (string, string) {
+	t.Helper()
+	return multipartBody(t, func(w *multipart.Writer) {
+		h := textproto.MIMEHeader{}
+		disp := `form-data; name="` + name + `"`
+		if filename != "" {
+			disp += `; filename="` + filename + `"`
+		}
+		h.Set("Content-Disposition", disp)
+		h.Set("Content-Transfer-Encoding", "quoted-printable")
+		pw, err := w.CreatePart(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = pw.Write([]byte(encoded))
+	})
+}
+
+// Fix-round ruling 1: quoted-printable parts are decoded like net/http's
+// ReadForm decodes them before they are scanned; file parts stay unscanned.
+func TestInspectMultipartQuotedPrintable(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	body, ct := qpMultipart(t, "title", "", "=3Cscript=3Ealert(1)=3C/script=3E")
+	mustHave(t, fw.Inspect(withBody("POST", "/s", ct, body)), "AEG-XSS-001", "form.title")
+	body, ct = qpMultipart(t, "q", "", "1=27 OR =271=27=3D=271")
+	mustHave(t, fw.Inspect(withBody("POST", "/s", ct, body)), "AEG-SQLI-001", "form.q")
+	body, ct = qpMultipart(t, "up", "a.html", "=3Cscript=3Ealert(1)=3C/script=3E")
+	if d := fw.Inspect(withBody("POST", "/s", ct, body)); d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
+		t.Fatalf("QP file part scanned: %v", ruleIDs(d))
+	}
+}
+
+// Fix-round ruling 2: multipart field names get the NoSQL operator-key rule
+// like url-encoded form keys.
+func TestInspectMultipartOperatorKey(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	body, ct := multipartBody(t, func(w *multipart.Writer) { _ = w.WriteField("email[$ne]", "x") })
+	d := fw.Inspect(withBody("POST", "/s", ct, body))
+	mustHave(t, d, "AEG-NOSQL-002", "form.email[$ne]")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("%+v", d)
 	}
 }
 
@@ -505,7 +685,9 @@ func TestInspectStringLikeTypesStillScanned(t *testing.T) {
 	}
 }
 
-// Ruling 14: JSON non-strings for string-like types are schema mismatches.
+// Ruling 14 (as amended): JSON non-strings for string-like types are
+// schema mismatches; JSON null on a declared field is allowed, because
+// optional fields are commonly sent as null.
 func TestInspectJSONNonStringForStringType(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}})
 	d := fw.Inspect(postJSON("/api/v1/cart/items", `{"note":5}`))
@@ -515,9 +697,35 @@ func TestInspectJSONNonStringForStringType(t *testing.T) {
 	}
 	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"product_id":true}`))
 	mustHave(t, d, "AEG-SCHEMA-001", "body.product_id")
-	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":3,"note":null}`))
+	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":3,"note":null,"product_id":null}`))
 	if d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
-		t.Fatalf("null and int: %v", ruleIDs(d))
+		t.Fatalf("null on declared fields must be allowed: %v", ruleIDs(d))
+	}
+}
+
+// Fix-round ruling 3: an object or array (empty ones included) where a
+// declared field expects a scalar is AEG-SCHEMA-001 (block).
+func TestInspectContainerOnDeclaredField(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}})
+	for body, field := range map[string]string{
+		`{"qty":[5]}`:          "body.qty",
+		`{"qty":[]}`:           "body.qty",
+		`{"qty":{}}`:           "body.qty",
+		`{"qty":{"a":1}}`:      "body.qty",
+		`{"product_id":["x"]}`: "body.product_id",
+		`{"note":{"x":"y"}}`:   "body.note",
+	} {
+		d := fw.Inspect(postJSON("/api/v1/cart/items", body))
+		if m := mustHave(t, d, "AEG-SCHEMA-001", field); m.Action != aegolith.ActionBlock || d.Action != aegolith.ActionBlock {
+			t.Fatalf("%s: %+v", body, d)
+		}
+	}
+	if d := fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":null}`)); len(d.Matches) != 0 {
+		t.Fatalf("null: %v", ruleIDs(d))
+	}
+	// Undeclared containers are not schema mismatches.
+	if d := fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":1,"meta":{}}`)); d.Action != aegolith.ActionAllow {
+		t.Fatalf("undeclared container: %v", ruleIDs(d))
 	}
 }
 

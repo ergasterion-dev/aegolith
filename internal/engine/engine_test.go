@@ -67,28 +67,6 @@ func TestPattern(t *testing.T) {
 	}
 }
 
-func TestLimitPairs(t *testing.T) {
-	for _, tc := range []struct {
-		raw  string
-		n    int
-		want string
-		over bool
-	}{
-		{"", 3, "", false},
-		{"a=1&b=2&c=3", 3, "a=1&b=2&c=3", false},
-		{"a=1&b=2&c=3&d=4", 3, "a=1&b=2&c=3", true},
-		{"a=1&&b=2&&&c=3&&", 3, "a=1&&b=2&&&c=3&&", false},
-		{"a=1&&b=2&&c=3&&d", 3, "a=1&&b=2&&c=3", true},
-		{"&&&a", 1, "&&&a", false},
-		{"a&b", 0, "", true},
-	} {
-		got, over := limitPairs(tc.raw, tc.n)
-		if got != tc.want || over != tc.over {
-			t.Errorf("limitPairs(%q,%d) = %q,%v want %q,%v", tc.raw, tc.n, got, over, tc.want, tc.over)
-		}
-	}
-}
-
 func TestCanonicalHeaderDeterministic(t *testing.T) {
 	h := http.Header{"x-a": {"1"}, "X-A": {"2"}, "X-a": {"3"}}
 	want := canonicalHeader(h)

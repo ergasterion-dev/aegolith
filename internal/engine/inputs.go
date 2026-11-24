@@ -68,10 +68,7 @@ func (s *state) typed(loc model.Location, field string, spec policy.FieldSpec, v
 	}
 	switch spec.Type {
 	case policy.TypeURL:
-		if h, ok := detect.SSRF(s.capped(v)); ok {
-			s.hit(h, loc, field, v)
-		}
-		s.scan(loc, field, v)
+		s.scanWindows(loc, field, v, detect.SSRF, "")
 	case policy.TypeString, policy.TypeText, policy.TypeEmail:
 		s.scan(loc, field, v)
 	}
@@ -113,43 +110,33 @@ func (s *state) declares(loc model.Location) bool {
 	return false
 }
 
-// limitPairs returns the prefix of an &-separated string holding at most n
-// non-empty segments, and whether a non-empty segment was cut off.
-func limitPairs(raw string, n int) (string, bool) {
+// pairs inspects the &-separated pairs of a query string or form body: key
+// rules (NoSQL operator keys, session identifiers) and the value, typed
+// against the route's specLoc map (query specs for the query string, body
+// specs for a form body). Pairs beyond MaxFields raise AEG-PROTO-010 once
+// (limitField) and are still inspected; the scan budget bounds the work.
+// Segments are decoded one at a time, so no slice of every pair is built.
+func (s *state) pairs(loc, specLoc model.Location, prefix, raw, limitField string) {
 	count := 0
-	for i := 0; i < len(raw); {
-		j := strings.IndexByte(raw[i:], '&')
-		end := len(raw)
-		if j >= 0 {
-			end = i + j
+	for raw != "" && !s.stop {
+		var seg string
+		seg, raw, _ = strings.Cut(raw, "&")
+		if seg == "" {
+			continue
 		}
-		if end > i {
-			if count == n {
-				return strings.TrimRight(raw[:i], "&"), true
+		if count++; count == s.e.lim.MaxFields+1 {
+			s.protoMatch(ruleLimit, loc, limitField, "")
+		}
+		for _, kv := range normalize.ParseQuery(seg) {
+			field := joinField(prefix, kv.Key)
+			if h, ok := detect.QueryKey(s.capped(kv.Key)); ok {
+				s.hit(h, loc, field, kv.Key)
 			}
-			count++
+			if h, ok := detect.Session(s.capped(kv.Key), s.capped(kv.Value)); ok {
+				s.hit(h, loc, field, kv.Key+"="+kv.Value)
+			}
+			s.value(loc, specLoc, field, kv.Key, kv.Value, true)
 		}
-		i = end + 1
-	}
-	return raw, false
-}
-
-// pairs inspects query or form pairs: key rules (NoSQL operator keys,
-// session identifiers) and the value, typed against the route's specLoc
-// map (query specs for the query string, body specs for a form body).
-func (s *state) pairs(loc, specLoc model.Location, prefix string, kvs []normalize.KV) {
-	for _, kv := range kvs {
-		if s.stop {
-			return
-		}
-		field := joinField(prefix, kv.Key)
-		if h, ok := detect.QueryKey(s.capped(kv.Key)); ok {
-			s.hit(h, loc, field, kv.Key)
-		}
-		if h, ok := detect.Session(s.capped(kv.Key), s.capped(kv.Value)); ok {
-			s.hit(h, loc, field, kv.Key+"="+kv.Value)
-		}
-		s.value(loc, specLoc, field, kv.Key, kv.Value, true)
 	}
 }
 
@@ -157,11 +144,7 @@ func (s *state) checkQuery() {
 	if s.stop || s.req.RawQuery == "" {
 		return
 	}
-	raw, over := limitPairs(s.req.RawQuery, s.e.lim.MaxFields)
-	if over {
-		s.protoMatch(ruleLimit, model.LocQuery, "query", "")
-	}
-	s.pairs(model.LocQuery, model.LocQuery, "query", normalize.ParseQuery(raw))
+	s.pairs(model.LocQuery, model.LocQuery, "query", s.req.RawQuery, "query")
 }
 
 func mediaType(ct string) string {
@@ -172,44 +155,41 @@ func mediaType(ct string) string {
 	return strings.ToLower(strings.TrimSpace(mt))
 }
 
-// checkBody inspects at most MaxBodyBytes of the body (protocol reports a
-// larger body) according to its media type. Bodies of other media types
-// are scanned raw only when textual (text/*); binary bodies are not.
+// checkBody inspects the body according to its media type. Protocol
+// reports a body over MaxBodyBytes (AEG-PROTO-003, monitor); up to the scan
+// budget (2 x MaxBodyBytes) of it is still inspected so an attack placed
+// after padding is seen. Bodies of other media types are scanned raw only
+// when textual (text/*); binary bodies are not.
 func (s *state) checkBody() {
 	body := s.req.Body
 	if s.stop || len(body) == 0 {
 		return
 	}
-	if int64(len(body)) > s.e.lim.MaxBodyBytes {
-		body = body[:s.e.lim.MaxBodyBytes]
+	if n := s.e.scanBudget(); int64(len(body)) > n {
+		body = body[:n]
 	}
 	ct := s.req.Header.Get("Content-Type")
 	switch mt := mediaType(ct); {
 	case mt == "application/json" || strings.HasSuffix(mt, "+json"):
 		s.checkJSON(body)
 	case mt == "application/x-www-form-urlencoded":
-		raw, over := limitPairs(string(body), s.e.lim.MaxFields)
-		if over {
-			s.protoMatch(ruleLimit, model.LocBody, "form", "")
-		}
-		s.pairs(model.LocBody, model.LocBody, "form", normalize.ParseForm([]byte(raw)))
+		s.pairs(model.LocBody, model.LocBody, "form", string(body), "form")
 	case strings.HasPrefix(mt, "multipart/"):
 		s.checkMultipart(body, ct)
 	case s.e.proto.AllowXML && (mt == "application/xml" || mt == "text/xml"):
-		v := s.capValue(model.LocBody, "body", string(body))
-		if h, ok := detect.XXE(v); ok {
-			s.hit(h, model.LocBody, "body", v)
-		}
-		s.scan(model.LocBody, "body", v)
+		s.scanWindows(model.LocBody, "body", string(body), detect.XXE, "")
 	case strings.HasPrefix(mt, "text/"):
 		s.scan(model.LocBody, "body", string(body))
 	}
 }
 
 // checkJSON walks the body: keys go to the NoSQL and prototype-pollution
-// rules, values to value(). Too many fields or too deep nesting is
-// AEG-PROTO-010; a syntax error is AEG-PROTO-020 and the raw body prefix is
-// scanned, so an attack in the unparsable part is still seen.
+// rules, values to value(), and an object or array where a declared field
+// expects a scalar is AEG-SCHEMA-001 (null is allowed: optional fields are
+// often sent as null). Too many fields or too deep nesting stops the walk
+// with AEG-PROTO-010 and a syntax error with AEG-PROTO-020; in both cases
+// the raw body is then scanned (in windows, under the budget), so nothing
+// placed after the point where the walk stopped goes unseen.
 func (s *state) checkJSON(body []byte) {
 	err := normalize.WalkJSON(body, s.e.lim, func(v normalize.JSONValue) {
 		if s.stop {
@@ -218,6 +198,14 @@ func (s *state) checkJSON(body []byte) {
 		field := "body"
 		if v.Path != "" {
 			field = joinField("body", v.Path)
+		}
+		if v.IsContainer {
+			if s.routed && s.declares(model.LocBody) {
+				if _, ok := s.route.Field(model.LocBody, v.Path); ok {
+					s.engineMatch(ruleSchemaType, model.CatSchema, model.SeverityMedium, model.ActionBlock, model.LocBody, field, "")
+				}
+			}
+			return
 		}
 		if v.IsKey {
 			if h, ok := detect.JSONKey(v.Key); ok {
@@ -237,16 +225,23 @@ func (s *state) checkJSON(body []byte) {
 		s.protoMatch(ruleLimit, model.LocBody, "body", "")
 	case errors.Is(err, normalize.ErrMalformed):
 		s.protoMatch(ruleMalformed, model.LocBody, "body", "")
-		s.scan(model.LocBody, "body", string(body))
+	default:
+		return
 	}
+	s.scan(model.LocBody, "body", string(body))
 }
 
-// checkMultipart inspects non-file parts like form fields; file parts are
-// never read or scanned. A value cut at MaxValueLen is AEG-PROTO-011, too
-// many parts AEG-PROTO-010, and a parse failure AEG-PROTO-020 (the parts
-// read before it are still inspected).
+// checkMultipart inspects non-file parts like form fields (quoted-printable
+// parts arrive decoded); file parts are never read or scanned. Parsing is
+// bounded by the body itself, not by MaxFields or MaxValueLen, so a long
+// value is scanned in windows (AEG-PROTO-011) and parts beyond MaxFields
+// raise AEG-PROTO-010 and are still inspected, under the scan budget. A
+// parse failure is AEG-PROTO-020; the parts read before it are inspected.
 func (s *state) checkMultipart(body []byte, ct string) {
-	parts, err := normalize.ParseMultipart(body, ct, s.e.lim)
+	lim := s.e.lim
+	lim.MaxFields, lim.MaxValueLen = len(body)+1, len(body)+1
+	parts, err := normalize.ParseMultipart(body, ct, lim)
+	count := 0
 	for _, p := range parts {
 		if s.stop {
 			return
@@ -254,11 +249,17 @@ func (s *state) checkMultipart(body []byte, ct string) {
 		if p.IsFile {
 			continue
 		}
+		if count++; count == s.e.lim.MaxFields+1 {
+			s.protoMatch(ruleLimit, model.LocBody, "form", "")
+		}
 		field := joinField("form", p.Name)
 		if p.Truncated {
 			s.protoMatch(ruleValueTooLong, model.LocBody, field, p.Value)
 		}
-		if h, ok := detect.Session(s.capped(p.Name), p.Value); ok {
+		if h, ok := detect.QueryKey(s.capped(p.Name)); ok {
+			s.hit(h, model.LocBody, field, p.Name)
+		}
+		if h, ok := detect.Session(s.capped(p.Name), s.capped(p.Value)); ok {
 			s.hit(h, model.LocBody, field, p.Name+"="+p.Value)
 		}
 		s.value(model.LocBody, model.LocBody, field, p.Name, p.Value, true)
@@ -272,16 +273,16 @@ func (s *state) checkMultipart(body []byte, ct string) {
 	}
 }
 
+// checkCookies scans every cookie value; cookies beyond MaxFields raise
+// AEG-PROTO-010 and are still scanned, under the scan budget.
 func (s *state) checkCookies() {
-	if s.stop {
-		return
-	}
-	kvs := normalize.ParseCookies(s.req.Header)
-	if len(kvs) > s.e.lim.MaxFields {
-		s.protoMatch(ruleLimit, model.LocCookie, "cookie", "")
-		kvs = kvs[:s.e.lim.MaxFields]
-	}
-	for _, kv := range kvs {
+	for i, kv := range normalize.ParseCookies(s.req.Header) {
+		if s.stop {
+			return
+		}
+		if i == s.e.lim.MaxFields {
+			s.protoMatch(ruleLimit, model.LocCookie, "cookie", "")
+		}
 		s.scan(model.LocCookie, joinField("cookie", kv.Key), kv.Value)
 	}
 }
@@ -297,12 +298,7 @@ func (s *state) checkHeaders() {
 		if s.stop {
 			return
 		}
-		v = s.capValue(model.LocHeader, "header.referer", v)
-		for _, h := range detect.ScanText(v) {
-			if h.Category != model.CatSSRF {
-				s.hit(h, model.LocHeader, "header.referer", v)
-			}
-		}
+		s.scanWindows(model.LocHeader, "header.referer", v, nil, model.CatSSRF)
 	}
 	for _, name := range s.e.inspectHeaders {
 		field := "header." + strings.ToLower(name)
