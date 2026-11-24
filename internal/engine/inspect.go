@@ -175,15 +175,18 @@ func (s *state) capped(v string) string {
 	return v
 }
 
-// minWindowCharge is the least a window costs against the scan budget. A
-// ScanText call has a fixed cost (about 7 µs, the price of roughly 100
-// scanned bytes), so without it a flood of tiny values would be nearly
-// free against a byte budget and unbounded in time.
-const minWindowCharge = 128
-
 // scanBudget is the per-request limit on bytes handed to the text
-// detectors, and also how much of a body is inspected: 2 x MaxBodyBytes.
-func (e *Engine) scanBudget() int64 { return 2 * e.lim.MaxBodyBytes }
+// detectors: 2 x MaxBodyBytes + 64 KiB. A value is charged its length once
+// per window it occupies (at most twice per byte), so a request within the
+// configured limits (body up to MaxBodyBytes, plus a query string, cookies
+// and headers of ordinary size) cannot exhaust it; only a request already
+// over MaxBodyBytes can, and that stays a monitor match.
+func (e *Engine) scanBudget() int64 { return 2*e.lim.MaxBodyBytes + 64<<10 }
+
+// bodyInspectLimit is how much of a body is inspected: 2 x MaxBodyBytes.
+// Protocol reports a body over MaxBodyBytes (AEG-PROTO-003); inspecting
+// past that point means padding cannot hide a payload just beyond it.
+func (e *Engine) bodyInspectLimit() int64 { return 2 * e.lim.MaxBodyBytes }
 
 // scan runs every text detector on v.
 func (s *state) scan(loc model.Location, field, v string) {
@@ -196,14 +199,14 @@ func (s *state) scan(loc model.Location, field, v string) {
 // (AEG-PROTO-011, monitor) and scanned in windows of MaxValueLen bytes
 // that start every MaxValueLen/2 bytes: every byte is scanned at most
 // twice, and an attack shorter than half a window always lies wholly
-// inside one window, so padding cannot push it out of sight. Every window
-// is charged to the per-request budget (at least minWindowCharge); the
-// first window that does not
+// inside one window, so padding cannot push it out of sight. An empty
+// value is not scanned and costs nothing. Every window is charged its
+// length against the per-request budget; the first window that does not
 // fit raises AEG-PROTO-011 once and stops all further scanning in the
 // request (a documented gap: it stays a monitor match). Hits whose
 // category is skip are dropped.
 func (s *state) scanWindows(loc model.Location, field, v string, extra func(string) (detect.Hit, bool), skip model.Category) {
-	if s.stop || s.exhausted {
+	if s.stop || s.exhausted || v == "" {
 		return
 	}
 	size := s.e.lim.MaxValueLen
@@ -214,13 +217,12 @@ func (s *state) scanWindows(loc model.Location, field, v string, extra func(stri
 	for start := 0; ; start += step {
 		end := min(start+size, len(v))
 		win := v[start:end]
-		charge := int64(max(len(win), minWindowCharge))
-		if charge > s.budget {
+		if int64(len(win)) > s.budget {
 			s.exhausted = true
 			s.protoMatch(ruleValueTooLong, loc, field, win)
 			return
 		}
-		s.budget -= charge
+		s.budget -= int64(len(win))
 		if extra != nil {
 			if h, ok := extra(win); ok {
 				s.hit(h, loc, field, win)

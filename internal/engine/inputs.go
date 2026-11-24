@@ -156,16 +156,16 @@ func mediaType(ct string) string {
 }
 
 // checkBody inspects the body according to its media type. Protocol
-// reports a body over MaxBodyBytes (AEG-PROTO-003, monitor); up to the scan
-// budget (2 x MaxBodyBytes) of it is still inspected so an attack placed
-// after padding is seen. Bodies of other media types are scanned raw only
+// reports a body over MaxBodyBytes (AEG-PROTO-003, monitor); up to
+// bodyInspectLimit (2 x MaxBodyBytes) of it is still inspected so an attack
+// placed after padding is seen. Bodies of other media types are scanned raw only
 // when textual (text/*); binary bodies are not.
 func (s *state) checkBody() {
 	body := s.req.Body
 	if s.stop || len(body) == 0 {
 		return
 	}
-	if n := s.e.scanBudget(); int64(len(body)) > n {
+	if n := s.e.bodyInspectLimit(); int64(len(body)) > n {
 		body = body[:n]
 	}
 	ct := s.req.Header.Get("Content-Type")
@@ -186,12 +186,23 @@ func (s *state) checkBody() {
 // checkJSON walks the body: keys go to the NoSQL and prototype-pollution
 // rules, values to value(), and an object or array where a declared field
 // expects a scalar is AEG-SCHEMA-001 (null is allowed: optional fields are
-// often sent as null). Too many fields or too deep nesting stops the walk
-// with AEG-PROTO-010 and a syntax error with AEG-PROTO-020; in both cases
-// the raw body is then scanned (in windows, under the budget), so nothing
-// placed after the point where the walk stopped goes unseen.
+// often sent as null).
+//
+// The walk is not stopped at MaxFields: keys and values beyond it raise
+// AEG-PROTO-010 once and are still inspected field by field, so
+// field-scoped exclusions keep applying. WalkJSON gets a field limit just
+// above anything the body could hold, so the body size (at most
+// bodyInspectLimit) bounds the walk and the scan budget bounds detector
+// work. Nesting deeper than MaxDepth (AEG-PROTO-010) and a syntax error
+// (AEG-PROTO-020) stop the walk; the raw body is then scanned in windows so
+// nothing after that point goes unseen. Known limitation: that raw scan
+// reports hits on the field "body", so field-scoped exclusions do not
+// apply to it (only to the fields walked before the stop).
 func (s *state) checkJSON(body []byte) {
-	err := normalize.WalkJSON(body, s.e.lim, func(v normalize.JSONValue) {
+	lim := s.e.lim
+	lim.MaxFields = len(body) + 1 // every counted item takes at least one byte
+	fields := 0
+	err := normalize.WalkJSON(body, lim, func(v normalize.JSONValue) {
 		if s.stop {
 			return
 		}
@@ -207,6 +218,9 @@ func (s *state) checkJSON(body []byte) {
 			}
 			return
 		}
+		if fields++; fields == s.e.lim.MaxFields+1 {
+			s.protoMatch(ruleLimit, model.LocBody, "body", "")
+		}
 		if v.IsKey {
 			if h, ok := detect.JSONKey(v.Key); ok {
 				s.hit(h, model.LocBody, field, v.Key)
@@ -221,7 +235,7 @@ func (s *state) checkJSON(body []byte) {
 		s.value(model.LocBody, model.LocBody, field, v.Path, v.Value, v.IsString)
 	})
 	switch {
-	case errors.Is(err, normalize.ErrLimit):
+	case errors.Is(err, normalize.ErrLimit): // only depth can trip it here
 		s.protoMatch(ruleLimit, model.LocBody, "body", "")
 	case errors.Is(err, normalize.ErrMalformed):
 		s.protoMatch(ruleMalformed, model.LocBody, "body", "")
@@ -237,6 +251,8 @@ func (s *state) checkJSON(body []byte) {
 // value is scanned in windows (AEG-PROTO-011) and parts beyond MaxFields
 // raise AEG-PROTO-010 and are still inspected, under the scan budget. A
 // parse failure is AEG-PROTO-020; the parts read before it are inspected.
+// With these bounds ParseMultipart can neither truncate a value nor hit its
+// part limit, so neither case is handled here.
 func (s *state) checkMultipart(body []byte, ct string) {
 	lim := s.e.lim
 	lim.MaxFields, lim.MaxValueLen = len(body)+1, len(body)+1
@@ -253,9 +269,6 @@ func (s *state) checkMultipart(body []byte, ct string) {
 			s.protoMatch(ruleLimit, model.LocBody, "form", "")
 		}
 		field := joinField("form", p.Name)
-		if p.Truncated {
-			s.protoMatch(ruleValueTooLong, model.LocBody, field, p.Value)
-		}
 		if h, ok := detect.QueryKey(s.capped(p.Name)); ok {
 			s.hit(h, model.LocBody, field, p.Name)
 		}
@@ -264,11 +277,7 @@ func (s *state) checkMultipart(body []byte, ct string) {
 		}
 		s.value(model.LocBody, model.LocBody, field, p.Name, p.Value, true)
 	}
-	switch {
-	case err == nil:
-	case errors.Is(err, normalize.ErrLimit):
-		s.protoMatch(ruleLimit, model.LocBody, "form", "")
-	default:
+	if err != nil {
 		s.protoMatch(ruleMalformed, model.LocBody, "body", "")
 	}
 }

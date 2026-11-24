@@ -433,6 +433,85 @@ func TestInspectPaddingDoesNotBypassEnforce(t *testing.T) {
 	mustHave(t, mustNew(t, aegolith.Config{AllowXML: true, Mode: aegolith.ModeMonitor}).Inspect(xxe), "AEG-XXE-001", "body")
 }
 
+// Fix round 2, ruling A: floods of empty or tiny values cannot exhaust the
+// scan budget of a request within the configured limits.
+func TestInspectTinyValueFloodsBlock(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	d := fw.Inspect(withBody("POST", "/s", "application/x-www-form-urlencoded", strings.Repeat("a=&", 16384)+"q=1'+OR+'1'='1"))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("form flood: %v", ruleIDs(d))
+	}
+	d = fw.Inspect(get("/s?" + strings.Repeat("a&", 16384) + "q=1%27%20OR%20%271%27%3D%271"))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("query flood: %v", ruleIDs(d))
+	}
+	r := get("/s")
+	r.Header.Set("Cookie", strings.Repeat("a=; ", 16384)+"z=<script>alert(1)</script>")
+	if d := fw.Inspect(r); d.Action != aegolith.ActionBlock {
+		t.Fatalf("cookie flood: %v", ruleIDs(d))
+	}
+	mustNotHave(t, d, "AEG-PROTO-011")
+}
+
+// Fix round 2, ruling A: 100k tiny non-empty pairs in a body under 1 MiB
+// stay bounded in time and a trailing payload still blocks.
+func TestInspectTinyPairsBoundedAndBlock(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	fw.Inspect(get("/warm"))
+	body := strings.Repeat("a=b&", 100000) + "q=1'+OR+'1'='1"
+	if len(body) >= 1<<20 {
+		t.Fatalf("body %d bytes", len(body))
+	}
+	start := time.Now()
+	d := fw.Inspect(withBody("POST", "/s", "application/x-www-form-urlencoded", body))
+	el := time.Since(start)
+	t.Logf("100k pairs: %v", el)
+	if el > time.Second*raceSlowdown {
+		t.Fatalf("took %v", el)
+	}
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("decision %v", ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-SQLI-001", "form.q")
+	mustNotHave(t, d, "AEG-PROTO-011")
+}
+
+// Fix round 2, ruling B: JSON past MaxFields is walked field by field, so
+// field-scoped exclusions keep applying and a late payload still blocks.
+func TestInspectJSONPastMaxFieldsKeepsFields(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Exclusions: []aegolith.Exclusion{{Rule: "xss", Route: "*", Field: "body.posts[].html"}}})
+	item := `{"id":%d,"html":"<p onclick=\"track()\">hi</p>"}`
+	small := fw.Inspect(postJSON("/cms", `{"posts":[`+fmt.Sprintf(item, 1)+`]}`))
+	if small.Action != aegolith.ActionAllow {
+		t.Fatalf("1 item: %v", ruleIDs(small))
+	}
+	var parts []string
+	for i := range 400 {
+		parts = append(parts, fmt.Sprintf(item, i))
+	}
+	large := fw.Inspect(postJSON("/cms", `{"posts":[`+strings.Join(parts, ",")+`]}`))
+	if large.Action != aegolith.ActionAllow {
+		t.Fatalf("400 items: %v", ruleIDs(large))
+	}
+	mustHave(t, large, "AEG-PROTO-010", "body")
+	mustNotHave(t, large, "AEG-XSS-001")
+
+	late := `{"posts":[` + strings.Join(parts, ",") + `],"title":"1' OR '1'='1"}`
+	d := fw.Inspect(postJSON("/cms", late))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("late payload: %v", ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-SQLI-001", "body.title")
+}
+
+// Fix round 2, ruling C: containers do not count toward MaxFields.
+func TestInspectContainersDoNotCountTowardMaxFields(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxFields: 10}})
+	// 5 keys + 5 values = 10 fields, plus 6 containers.
+	d := fw.Inspect(postJSON("/s", `{"a":{"b":{"c":[{"d":[1]}]}}}`))
+	mustNotHave(t, d, "AEG-PROTO-010")
+}
+
 // Fix-round ruling 4: when the per-request scan budget (2 x MaxBodyBytes
 // bytes handed to detectors) runs out, AEG-PROTO-011 is raised once as a
 // monitor match and scanning stops: a documented known gap, not a block.
