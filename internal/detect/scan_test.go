@@ -186,13 +186,23 @@ func TestScanTextLinear(t *testing.T) {
 		s := strings.Repeat(unit, small/len(unit))
 		m := strings.Repeat(unit, medium/len(unit))
 		l := strings.Repeat(unit, large/len(unit))
-		ds := bestOf(3, func() { ScanText(s) })
-		dm := bestOf(3, func() { ScanText(m) })
-		if ds > 500*time.Microsecond && dm > 8*ds {
-			t.Errorf("%s: ScanText %v on %d bytes vs %v on %d bytes: super-linear", name, dm, len(m), ds, len(s))
+		// The race detector's instrumentation and GC pauses make ratios
+		// noisy, so the growth check runs only without -race, and a ratio
+		// over the limit is measured once more before it counts.
+		if raceSlowdown == 1 && superLinear(s, m) && superLinear(s, m) {
+			t.Errorf("%s: ScanText on %d bytes took over 8x its time on %d bytes: super-linear", name, len(m), len(s))
 		}
 		if dl := bestOf(3, func() { ScanText(l) }); dl > limit {
 			t.Errorf("%s: ScanText on %d bytes took %v, want under %v", name, len(l), dl, limit)
 		}
 	}
+}
+
+// superLinear reports whether ScanText on m (four times the length of s)
+// took more than eight times as long as on s, best of five runs each.
+// Runs on s under 500µs are too fast to time reliably and never count.
+func superLinear(s, m string) bool {
+	ds := bestOf(5, func() { ScanText(s) })
+	dm := bestOf(5, func() { ScanText(m) })
+	return ds > 500*time.Microsecond && dm > 8*ds
 }
