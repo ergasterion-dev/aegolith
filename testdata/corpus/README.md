@@ -44,3 +44,17 @@ Both gates pass with these attacks still allowed. They are reported, not hidden:
 | nosqli / operator in query | missed | missed | The suite sends `q=[$ne]=1`, so `[$ne]` arrives inside the value of `q`, not as a query key. As a value it is inert text; the query-key rule catches the real shape (`q[$ne]=1`). |
 | misc / xpath injection | missed | missed | `' or name()='username' or 'x'='y`: libinjection does not flag it and there is no XPath detector in v0.1. |
 | log4shell / obfuscated jndi | missed | blocked | The lookup is in `X-Api-Version`, which is scanned only when listed in `inspect_headers` (the API-aware policy lists it; the generic configuration scans `User-Agent` and `Referer` only). |
+
+### Accepted recall trade-offs (not in the corpus)
+
+The command-injection detector reads some operators as prose, so that real customer text is never blocked (anti-goal 1). These attack shapes are therefore not caught. Each has a unit-test negative next to it:
+
+| Shape | Example still allowed | The prose it protects |
+|---|---|---|
+| Two-letter command (`id`, `ls`) with no flag after a lone ` & ` | `x & id`, `x & ls` | `Bring passport & id` |
+| One-segment root path with no flag after a lone ` & ` | `x & cat /flag` | `dog & cat /dog-food` |
+| Two-letter command (`id`, `ls`, `sh`) with no flag after `"; "` that ends a sentence of two or more words | `see you; id` | the same, as a sign-off |
+| `chmod` with a mode and no file | `; chmod +x`, `; chmod 755` | `Notes; chmod 755` |
+| `type` with a `/x` switch (cmd.exe's `type` takes no switches) | `\| type /a` | `Pack of 2 \| type /a` |
+
+A real flag after the ` & ` restores the full rules (`x & id -u`, `x & ping -c 3 10.0.0.1`, `x & curl -s http://...`, `x & ls -la /tmp`). So do shell-only operators (`&&`, `\|`, a backtick, `$(`, and `;` after anything that is not a prose sentence). netcat with an IPv4 address is always caught.

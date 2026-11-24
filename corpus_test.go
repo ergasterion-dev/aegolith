@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,7 +26,7 @@ type corpusCase struct {
 	Kind        string            `json:"kind"`
 	Method      string            `json:"method"`
 	Path        string            `json:"path"`
-	Query       [][2]string       `json:"query"`
+	Query       [][]string        `json:"query"`
 	Headers     map[string]string `json:"headers"`
 	ContentType string            `json:"content_type"`
 	Body        string            `json:"body"`
@@ -50,14 +52,9 @@ func loadCorpus(t *testing.T, file, kind string) []corpusCase {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for n := 1; sc.Scan(); n++ {
-		var c corpusCase
-		dec := json.NewDecoder(strings.NewReader(sc.Text()))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&c); err != nil {
+		c, err := parseCorpusLine(sc.Text(), kind)
+		if err != nil {
 			t.Fatalf("%s:%d: %v", file, n, err)
-		}
-		if c.Kind != kind || c.Name == "" || c.Category == "" || c.Method == "" || !strings.HasPrefix(c.Path, "/") {
-			t.Fatalf("%s:%d: bad case %+v", file, n, c)
 		}
 		out = append(out, c)
 	}
@@ -65,6 +62,38 @@ func loadCorpus(t *testing.T, file, kind string) []corpusCase {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// parseCorpusLine decodes and validates one corpus line of the given kind:
+// no unknown keys or trailing data, every query entry a [key, value] pair,
+// and at most one of body and body_base64 (which must decode).
+func parseCorpusLine(line, kind string) (corpusCase, error) {
+	var c corpusCase
+	dec := json.NewDecoder(strings.NewReader(line))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
+		return c, err
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return c, errors.New("trailing data after the JSON object")
+	}
+	if c.Kind != kind || c.Name == "" || c.Category == "" || c.Method == "" || !strings.HasPrefix(c.Path, "/") {
+		return c, fmt.Errorf("bad case %+v", c)
+	}
+	for _, kv := range c.Query {
+		if len(kv) != 2 {
+			return c, fmt.Errorf("%q: query entry %q is not a [key, value] pair", c.Name, kv)
+		}
+	}
+	if c.BodyBase64 != "" {
+		if c.Body != "" {
+			return c, fmt.Errorf("%q: both body and body_base64 are set", c.Name)
+		}
+		if _, err := base64.StdEncoding.DecodeString(c.BodyBase64); err != nil {
+			return c, fmt.Errorf("%q: body_base64: %v", c.Name, err)
+		}
+	}
+	return c, nil
 }
 
 // curlEscape percent-encodes s the way curl --data-urlencode does: every
@@ -231,12 +260,38 @@ func TestCorpusAPIAware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Mode != aegolith.ModeEnforce || len(cfg.Exclusions) != 0 {
-		t.Fatalf("the gate policy must be enforce mode with no exclusions (mode %q, %d exclusions)", cfg.Mode, len(cfg.Exclusions))
+	if cfg.Mode != aegolith.ModeEnforce || len(cfg.Exclusions) != 0 || len(cfg.RuleActions) != 0 {
+		t.Fatalf("the gate policy must be enforce mode with no exclusions and no rule-action overrides (mode %q, %d exclusions, %d rule actions)",
+			cfg.Mode, len(cfg.Exclusions), len(cfg.RuleActions))
 	}
 	fw, err := aegolith.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runCorpus(t, fw, gateAPIBlocked, true)
+}
+
+// TestCorpusLineValidation: malformed corpus lines are rejected rather than
+// silently read with missing or truncated parts.
+func TestCorpusLineValidation(t *testing.T) {
+	const ok = `{"name":"n","category":"c","kind":"legit","method":"GET","path":"/a","query":[["q","v"]],"headers":{},"content_type":"","body":""}`
+	if _, err := parseCorpusLine(ok, "legit"); err != nil {
+		t.Fatalf("valid line rejected: %v", err)
+	}
+	bad := map[string]string{
+		"body and body_base64": `{"name":"n","category":"c","kind":"legit","method":"POST","path":"/a","query":[],"headers":{},"content_type":"text/plain","body":"x","body_base64":"eA=="}`,
+		"query pair of 3":      `{"name":"n","category":"c","kind":"legit","method":"GET","path":"/a","query":[["q","v","w"]],"headers":{},"content_type":"","body":""}`,
+		"query pair of 1":      `{"name":"n","category":"c","kind":"legit","method":"GET","path":"/a","query":[["q"]],"headers":{},"content_type":"","body":""}`,
+		"bad base64":           `{"name":"n","category":"c","kind":"legit","method":"POST","path":"/a","query":[],"headers":{},"content_type":"text/plain","body":"","body_base64":"!!"}`,
+		"wrong kind":           `{"name":"n","category":"c","kind":"attack","method":"GET","path":"/a","query":[],"headers":{},"content_type":"","body":""}`,
+		"unknown key":          `{"name":"n","category":"c","kind":"legit","method":"GET","path":"/a","query":[],"headers":{},"content_type":"","body":"","extra":1}`,
+		"relative path":        `{"name":"n","category":"c","kind":"legit","method":"GET","path":"a","query":[],"headers":{},"content_type":"","body":""}`,
+		"trailing data":        ok + ` {}`,
+		"trailing brace":       ok + `}`,
+	}
+	for name, line := range bad {
+		if _, err := parseCorpusLine(line, "legit"); err == nil {
+			t.Errorf("%s: accepted, want an error", name)
+		}
+	}
 }
