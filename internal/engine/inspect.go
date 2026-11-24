@@ -105,8 +105,10 @@ func canonicalHeader(h http.Header) http.Header {
 // parameter afterwards. Matching on the decoded path would let "%2F" split
 // a segment or forge one ("/files/a%2F..%2Fb" must stay one parameter). A
 // literal segment sent percent-encoded therefore does not match its route
-// and the request is treated as an unknown route (every input untyped),
-// which only adds inspection.
+// and the request is treated as an unknown route: every input is untyped
+// and still gets every detector, but the route's typed fields and its
+// unknown-fields action do not apply. Literal segments fold ASCII case
+// when the table or the request asks for it (see policy.Table.MatchFold).
 func (s *state) matchRoute() {
 	if s.e.table != nil {
 		if m, ok := s.e.table.MatchFold(s.req.Method, s.req.RawPath, s.req.CaseInsensitiveRoutes); ok {

