@@ -376,6 +376,17 @@ Aegolith v0.1 is **alpha**. What that means:
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 
+### Known gaps
+
+The full list, with the reasons, is in the [threat model](docs/threat-model.md#known-gaps-and-trade-offs). The ones most likely to surprise you:
+
+- **Body over the limit.** Only the first `max_body_bytes` of a body are inspected. `AEG-PROTO-003` blocks a longer body by default; if you set it to `monitor`, an attack after the padding is not seen.
+- **Data after a JSON value.** A body with data after its first JSON value is malformed, so it gets a raw rescan that quote-parity padding can evade (`{"a":"x"}'{"q":"1' OR '1'='1"}` is allowed). No standard-library Go decoder reads that trailing value.
+- **Non-UTF-8 JSON charsets** (`charset=utf-16`, `iso-8859-1`) are accepted by the content-type check. This fails safe: the body is inspected as UTF-8 bytes, and UTF-16 is blocked for its NUL bytes.
+- **Worst-case cost.** A hostile 1 MiB body can cost up to about 0.8 s of CPU and 128 MB of allocation (see [Performance](#performance)). The scan budget is kept at 8x the body limit on purpose.
+- **Recall traded for fewer false positives:** `x & cat /flag.txt` (no flag, after a prose `&`) and `Location:evil.com` in a value are allowed.
+- **Known false positive:** prose such as `javascript: yes=no; maybe (later)` is blocked as XSS.
+
 Roadmap:
 
 - [x] Engine: protocol checks, route policies with typed fields, detectors, exclusions, monitor and enforce modes
