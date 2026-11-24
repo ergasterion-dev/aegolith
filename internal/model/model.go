@@ -1,4 +1,4 @@
-// Package model holds the types shared by every Pylolith component: the
+// Package model holds the types shared by every Aegolith component: the
 // normalized request, rule matches, decisions and the limits that bound
 // request inspection.
 package model

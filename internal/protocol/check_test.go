@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/model"
 )
 
 func ids(ms []model.Match) map[string]model.Match {
@@ -24,22 +24,22 @@ func TestCheck(t *testing.T) {
 		cfg  Config
 		want []string
 	}{
-		{"trace method", model.Request{Method: "TRACE", RawPath: "/a"}, Config{}, []string{"PYL-PROTO-001"}},
-		{"xml body", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {"application/xml"}}, Body: []byte("<a/>")}, Config{}, []string{"PYL-PROTO-002"}},
+		{"trace method", model.Request{Method: "TRACE", RawPath: "/a"}, Config{}, []string{"AEG-PROTO-001"}},
+		{"xml body", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {"application/xml"}}, Body: []byte("<a/>")}, Config{}, []string{"AEG-PROTO-002"}},
 		{"xml allowed", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {"text/xml"}}, Body: []byte("<a/>")}, Config{AllowXML: true}, nil},
-		{"missing content type with body", model.Request{Method: "POST", RawPath: "/a", Body: []byte("x")}, Config{}, []string{"PYL-PROTO-002"}},
-		{"oversize body", model.Request{Method: "POST", RawPath: "/a", Header: json, Body: []byte("12345")}, Config{Limits: model.Limits{MaxBodyBytes: 4}}, []string{"PYL-PROTO-003"}},
-		{"te chunked identity", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Transfer-Encoding": {"chunked, identity"}}}, Config{}, []string{"PYL-PROTO-006"}},
-		{"te with cl", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Transfer-Encoding": {"chunked"}, "Content-Length": {"3"}}}, Config{}, []string{"PYL-PROTO-006"}},
+		{"missing content type with body", model.Request{Method: "POST", RawPath: "/a", Body: []byte("x")}, Config{}, []string{"AEG-PROTO-002"}},
+		{"oversize body", model.Request{Method: "POST", RawPath: "/a", Header: json, Body: []byte("12345")}, Config{Limits: model.Limits{MaxBodyBytes: 4}}, []string{"AEG-PROTO-003"}},
+		{"te chunked identity", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Transfer-Encoding": {"chunked, identity"}}}, Config{}, []string{"AEG-PROTO-006"}},
+		{"te with cl", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Transfer-Encoding": {"chunked"}, "Content-Length": {"3"}}}, Config{}, []string{"AEG-PROTO-006"}},
 		{"te chunked alone", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Transfer-Encoding": {"chunked"}}}, Config{}, nil},
-		{"traversal", model.Request{Method: "GET", RawPath: "/api/v1/files/../../etc/passwd"}, Config{}, []string{"PYL-PROTO-005"}},
-		{"traversal backslash", model.Request{Method: "GET", RawPath: "/a/..\\b"}, Config{}, []string{"PYL-PROTO-005"}},
-		{"traversal ..%5c", model.Request{Method: "GET", RawPath: "/a/..%5Cb"}, Config{}, []string{"PYL-PROTO-005"}},
-		{"traversal %2e%2e/", model.Request{Method: "GET", RawPath: "/a/%2E%2E/b"}, Config{}, []string{"PYL-PROTO-005"}},
-		{"crlf path", model.Request{Method: "GET", RawPath: "/x%0d%0aX-Injected:%201"}, Config{}, []string{"PYL-PROTO-004"}},
-		{"nul raw path", model.Request{Method: "GET", RawPath: "/x\x00"}, Config{}, []string{"PYL-PROTO-004"}},
-		{"crlf header", model.Request{Method: "GET", RawPath: "/a", Header: http.Header{"X-Foo": {"a\r\nB: c"}}}, Config{}, []string{"PYL-PROTO-004"}},
-		{"double encoded", model.Request{Method: "GET", RawPath: "/a/%252e%252e%252fetc"}, Config{}, []string{"PYL-PROTO-007", "PYL-PROTO-005"}},
+		{"traversal", model.Request{Method: "GET", RawPath: "/api/v1/files/../../etc/passwd"}, Config{}, []string{"AEG-PROTO-005"}},
+		{"traversal backslash", model.Request{Method: "GET", RawPath: "/a/..\\b"}, Config{}, []string{"AEG-PROTO-005"}},
+		{"traversal ..%5c", model.Request{Method: "GET", RawPath: "/a/..%5Cb"}, Config{}, []string{"AEG-PROTO-005"}},
+		{"traversal %2e%2e/", model.Request{Method: "GET", RawPath: "/a/%2E%2E/b"}, Config{}, []string{"AEG-PROTO-005"}},
+		{"crlf path", model.Request{Method: "GET", RawPath: "/x%0d%0aX-Injected:%201"}, Config{}, []string{"AEG-PROTO-004"}},
+		{"nul raw path", model.Request{Method: "GET", RawPath: "/x\x00"}, Config{}, []string{"AEG-PROTO-004"}},
+		{"crlf header", model.Request{Method: "GET", RawPath: "/a", Header: http.Header{"X-Foo": {"a\r\nB: c"}}}, Config{}, []string{"AEG-PROTO-004"}},
+		{"double encoded", model.Request{Method: "GET", RawPath: "/a/%252e%252e%252fetc"}, Config{}, []string{"AEG-PROTO-007", "AEG-PROTO-005"}},
 		{"get plain", model.Request{Method: "GET", RawPath: "/a"}, Config{}, nil},
 		{"patch json", model.Request{Method: "PATCH", RawPath: "/a", Header: json, Body: []byte("{}")}, Config{}, nil},
 		{"json charset", model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {"Application/JSON; charset=utf-8"}}, Body: []byte("{}")}, Config{}, nil},

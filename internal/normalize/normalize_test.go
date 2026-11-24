@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/model"
 )
 
 func TestDecodeValue(t *testing.T) {

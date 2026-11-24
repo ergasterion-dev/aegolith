@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/model"
 )
 
 // legitNegatives is realistic customer input that must never be flagged by
@@ -44,7 +44,7 @@ func TestSQLiPositives(t *testing.T) {
 			t.Errorf("SQLi(%q) = no hit, want hit", v)
 			continue
 		}
-		want := Hit{RuleID: "PYL-SQLI-001", Category: model.CatSQLi, Severity: model.SeverityCritical}
+		want := Hit{RuleID: "AEG-SQLI-001", Category: model.CatSQLi, Severity: model.SeverityCritical}
 		if hit != want {
 			t.Errorf("SQLi(%q) = %+v, want %+v", v, hit, want)
 		}
@@ -74,7 +74,7 @@ func TestXSSPositives(t *testing.T) {
 			t.Errorf("XSS(%q) = no hit, want hit", v)
 			continue
 		}
-		want := Hit{RuleID: "PYL-XSS-001", Category: model.CatXSS, Severity: model.SeverityHigh}
+		want := Hit{RuleID: "AEG-XSS-001", Category: model.CatXSS, Severity: model.SeverityHigh}
 		if hit != want {
 			t.Errorf("XSS(%q) = %+v, want %+v", v, hit, want)
 		}

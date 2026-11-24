@@ -1,9 +1,9 @@
-# CLAUDE.md — Pylolith
+# CLAUDE.md — Aegolith
 
-Pylolith is an open-source, API-aware web application firewall library for Go. It does protocol checks, route-typed request validation and targeted attack detectors in microseconds, shipped as `net/http` and Fiber v2 middleware.
+Aegolith is an open-source, API-aware web application firewall library for Go. It does protocol checks, route-typed request validation and targeted attack detectors in microseconds, shipped as `net/http` and Fiber v2 middleware.
 
-- Module: `github.com/ergasterion-dev/pylolith` (Apache-2.0)
-- Spec (binding): `docs/superpowers/specs/2026-11-24-pylolith-v0.1-design.md`
+- Module: `github.com/ergasterion-dev/aegolith` (Apache-2.0)
+- Spec (binding): `docs/superpowers/specs/2026-11-24-aegolith-v0.1-design.md`
 - Core dependencies: stdlib + `github.com/corazawaf/libinjection-go` only. Fiber lives in `adapters/fiberv2` (own module).
 
 ## Anti-goals (failure even if it technically works)
@@ -18,7 +18,7 @@ Also: never log full request values (PII); use `model.Redact`. Never copy code f
 ## Layout
 
 ```
-pylolith.go, config.go        Firewall, New, Inspect, LoadConfig, Config
+aegolith.go, config.go        Firewall, New, Inspect, LoadConfig, Config
 internal/model/               Action, Mode, Severity, Location, Category, Match, Decision, Request, Limits
 internal/normalize/           decode, JSON walk, query/form/cookie parsing, multipart
 internal/protocol/            protocol checks

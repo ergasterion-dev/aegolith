@@ -6,7 +6,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/model"
 )
 
 // ErrLimit means a configured inspection limit was exceeded.

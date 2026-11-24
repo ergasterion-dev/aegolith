@@ -7,8 +7,8 @@ import (
 	"mime"
 	"strings"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
-	"github.com/ergasterion-dev/pylolith/internal/normalize"
+	"github.com/ergasterion-dev/aegolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/normalize"
 )
 
 // DefaultMethods are used when Config.AllowedMethods is empty.
@@ -42,13 +42,13 @@ func Check(r *model.Request, cfg Config) []model.Match {
 		methods = DefaultMethods
 	}
 	if !contains(methods, r.Method) {
-		add("PYL-PROTO-001", model.SeverityMedium, model.ActionBlock, model.LocMethod, "method", r.Method)
+		add("AEG-PROTO-001", model.SeverityMedium, model.ActionBlock, model.LocMethod, "method", r.Method)
 	}
 
 	if len(r.Body) > 0 {
 		ct := r.Header.Get("Content-Type")
 		if !contentTypeAllowed(ct, cfg) {
-			add("PYL-PROTO-002", model.SeverityMedium, model.ActionBlock, model.LocHeader, "header.content-type", ct)
+			add("AEG-PROTO-002", model.SeverityMedium, model.ActionBlock, model.LocHeader, "header.content-type", ct)
 		}
 	}
 
@@ -57,23 +57,23 @@ func Check(r *model.Request, cfg Config) []model.Match {
 		max = model.DefaultLimits().MaxBodyBytes
 	}
 	if int64(len(r.Body)) > max {
-		add("PYL-PROTO-003", model.SeverityLow, model.ActionMonitor, model.LocBody, "body", "")
+		add("AEG-PROTO-003", model.SeverityLow, model.ActionMonitor, model.LocBody, "body", "")
 	}
 
 	decoded, double := normalize.DecodeValue(r.RawPath)
 	if hasCtl(r.RawPath) || hasCtl(decoded) {
-		add("PYL-PROTO-004", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
+		add("AEG-PROTO-004", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
 	} else {
 		for name, vals := range r.Header {
 			if anyCtl(vals) {
-				add("PYL-PROTO-004", model.SeverityHigh, model.ActionBlock, model.LocHeader, "header."+strings.ToLower(name), strings.Join(vals, ","))
+				add("AEG-PROTO-004", model.SeverityHigh, model.ActionBlock, model.LocHeader, "header."+strings.ToLower(name), strings.Join(vals, ","))
 				break
 			}
 		}
 	}
 
 	if hasTraversal(r.RawPath) {
-		add("PYL-PROTO-005", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
+		add("AEG-PROTO-005", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
 	}
 
 	if te := r.Header.Values("Transfer-Encoding"); len(te) > 0 {
@@ -84,12 +84,12 @@ func Check(r *model.Request, cfg Config) []model.Match {
 			}
 		}
 		if bad {
-			add("PYL-PROTO-006", model.SeverityHigh, model.ActionBlock, model.LocHeader, "header.transfer-encoding", strings.Join(te, ","))
+			add("AEG-PROTO-006", model.SeverityHigh, model.ActionBlock, model.LocHeader, "header.transfer-encoding", strings.Join(te, ","))
 		}
 	}
 
 	if double {
-		add("PYL-PROTO-007", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
+		add("AEG-PROTO-007", model.SeverityHigh, model.ActionBlock, model.LocPath, "path", r.RawPath)
 	}
 	return out
 }

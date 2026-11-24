@@ -5,14 +5,14 @@ import (
 
 	libinjection "github.com/corazawaf/libinjection-go"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/model"
 )
 
 // SQLi reports whether v looks like SQL injection. It checks v and, when one
 // percent-decoding pass changes it, the decoded value too.
 func SQLi(v string) (Hit, bool) {
 	if valueOrDecoded(v, isSQLi) {
-		return Hit{RuleID: "PYL-SQLI-001", Category: model.CatSQLi, Severity: model.SeverityCritical}, true
+		return Hit{RuleID: "AEG-SQLI-001", Category: model.CatSQLi, Severity: model.SeverityCritical}, true
 	}
 	return Hit{}, false
 }
@@ -21,7 +21,7 @@ func SQLi(v string) (Hit, bool) {
 // when one percent-decoding pass changes it, the decoded value too.
 func XSS(v string) (Hit, bool) {
 	if valueOrDecoded(v, isXSS) {
-		return Hit{RuleID: "PYL-XSS-001", Category: model.CatXSS, Severity: model.SeverityHigh}, true
+		return Hit{RuleID: "AEG-XSS-001", Category: model.CatXSS, Severity: model.SeverityHigh}, true
 	}
 	return Hit{}, false
 }

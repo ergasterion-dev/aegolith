@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/ergasterion-dev/pylolith/internal/model"
-	"github.com/ergasterion-dev/pylolith/internal/normalize"
+	"github.com/ergasterion-dev/aegolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/normalize"
 )
 
 // The injection-family detectors share one shape: a hand-written scan over
@@ -32,7 +32,7 @@ func CmdI(v string) (Hit, bool) {
 		}
 	}
 	if hit {
-		return Hit{RuleID: "PYL-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}, true
+		return Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}, true
 	}
 	return Hit{}, false
 }
@@ -54,7 +54,7 @@ func hasEncodedLineBreak(s string) bool {
 
 // CodeI reports whether v carries code for an interpreter: PHP open tags,
 // eval/assert of base64_decode, Node child_process access
-// (PYL-CODEI-001), or a Java serialized object (PYL-CODEI-002).
+// (AEG-CODEI-001), or a Java serialized object (AEG-CODEI-002).
 func CodeI(v string) (Hit, bool) {
 	id := codeIRule(v)
 	if id == "" {
@@ -72,7 +72,7 @@ func CodeI(v string) (Hit, bool) {
 // parenthesis directly followed by a new |, & or ! filter.
 func LDAP(v string) (Hit, bool) {
 	if valueOrDecoded(v, isLDAP) {
-		return Hit{RuleID: "PYL-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}, true
+		return Hit{RuleID: "AEG-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}, true
 	}
 	return Hit{}, false
 }
@@ -83,7 +83,7 @@ func LDAP(v string) (Hit, bool) {
 // Plain placeholders such as {{name}} do not match.
 func SSTI(v string) (Hit, bool) {
 	if valueOrDecoded(v, isSSTI) {
-		return Hit{RuleID: "PYL-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}, true
+		return Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}, true
 	}
 	return Hit{}, false
 }
@@ -93,7 +93,7 @@ func SSTI(v string) (Hit, bool) {
 // ${upper:n}, ${::-d}, ${env:X:-i}).
 func JNDI(v string) (Hit, bool) {
 	if valueOrDecoded(v, isJNDI) {
-		return Hit{RuleID: "PYL-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}, true
+		return Hit{RuleID: "AEG-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}, true
 	}
 	return Hit{}, false
 }
@@ -103,7 +103,7 @@ func JNDI(v string) (Hit, bool) {
 // Multi-line notes such as "Note: ring bell" on a new line do not match.
 func CRLF(v string) (Hit, bool) {
 	if valueOrDecoded(v, isCRLF) {
-		return Hit{RuleID: "PYL-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}, true
+		return Hit{RuleID: "AEG-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}, true
 	}
 	return Hit{}, false
 }
@@ -575,10 +575,10 @@ func hasShellshock(s string) bool {
 
 func codeIRule(s string) string {
 	if hasPHPOpenTag(s) || hasEvalBase64(s) || hasNodeExec(s) {
-		return "PYL-CODEI-001"
+		return "AEG-CODEI-001"
 	}
 	if hasJavaSerialized(s) {
-		return "PYL-CODEI-002"
+		return "AEG-CODEI-002"
 	}
 	return ""
 }

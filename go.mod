@@ -1,4 +1,4 @@
-module github.com/ergasterion-dev/pylolith
+module github.com/ergasterion-dev/aegolith
 
 go 1.25
 
