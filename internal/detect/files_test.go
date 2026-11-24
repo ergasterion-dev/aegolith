@@ -23,6 +23,7 @@ var (
 		"report.pdf%00",
 		"a\x00.png",
 		"/static/..",
+		"दूध/../../etc/passwd",
 	}
 	lfiFilePositives = []string{
 		"/etc/passwd",
@@ -44,6 +45,7 @@ var (
 		"see etc/passwords policy",
 		"windows win.ini guide",
 		"100% cotton",
+		"दूध../ब्रेड",
 	}
 	rfiPositives = []string{
 		"http://evil.example/shell.txt?",

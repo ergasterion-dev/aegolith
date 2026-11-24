@@ -113,8 +113,11 @@ func isTraversal(s string) bool {
 }
 
 // isTraversalBoundary reports whether a dot after c may start a traversal.
+// A byte of a multi-byte UTF-8 character (>= 0x80) is a letter of another
+// script, like an ASCII letter: "दूध../ब्रेड" is a word followed by an
+// ellipsis, not a traversal.
 func isTraversalBoundary(c byte) bool {
-	return c != '.' && !isIdentByte(c) || c == '_'
+	return c != '.' && c < 0x80 && !isIdentByte(c) || c == '_'
 }
 
 // dotAt returns the length of a dot token at s[i] ('.' or %2e in any case),

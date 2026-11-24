@@ -25,6 +25,9 @@ var legitNegatives = []string{
 	"Please ring the bell, don't knock. Gate code 1234 & leave at door",
 	"دودھ اور روٹی",
 	"दूध और ब्रेड",
+	// Task 9 corpus: a number, prose, then a comment token (fingerprint 1c).
+	"10% off -- limited",
+	"Pack of 2 -- fresh",
 }
 
 // The positive and negative tables are package-level so that ScanText's
@@ -40,6 +43,11 @@ var (
 		"1' uNiOn SeLeCt 1,2--",
 		"'; COPY (SELECT '') TO PROGRAM 'id'--",
 		"1%27%20OR%20%271%27=%271",
+		// Task 9: the 1c guard needs a letter before the comment.
+		"1--",
+		"5-- ",
+		"10 -- limited",
+		"100 /* see note */",
 	}
 	xssPositives = []string{
 		"<script>alert(1)</script>",
@@ -84,12 +92,15 @@ var (
 		"javascript:alert`1`",
 		"vbscript:msgbox(1)",
 		"javascript%3Aalert(1)",
+		"javascript:location=name",
+		"javascript: document.cookie=1",
 	}
 	scriptURLNegatives = []string{
 		"JavaScript: The Good Parts",
 		"javascript: is it hard to learn?",
 		"Learn javascript:alert(1) is a famous payload",
 		"javascript:",
+		"JavaScript: version=ES6",
 	}
 )
 

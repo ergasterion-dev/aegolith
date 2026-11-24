@@ -161,6 +161,55 @@ var cmdWords = [...]cmdWord{
 	{name: "powershell.exe", windows: true},
 }
 
+// opContext says how much the operator before a command proves on its own.
+type opContext uint8
+
+const (
+	// opShell: an operator only a shell gives meaning to (";id", "&&",
+	// "|", a backtick, "$(", or ";" after anything but a prose sentence).
+	opShell opContext = iota
+	// opProseSemi: "; " ending a prose sentence of at least two words
+	// ("see you; id"). A two-letter bare command (id, ls, sh) with no flag
+	// is then a word, not a command; "see you; id -u" still matches.
+	opProseSemi
+	// opProseAmp: a lone "&" after a blank, which is how people write
+	// "and" ("dog & cat /dog-food", "Bring CNIC & id -card"). A command
+	// after it needs an operand only a shell user writes: a system path, a
+	// variable, a home or relative path or a redirection; a URL, an IPv4
+	// address or another absolute path is prose there. A two-letter
+	// command needs a short flag (-u, -la, -lah).
+	opProseAmp
+)
+
+// operatorContext classifies the operator at s[i] (see opContext).
+func operatorContext(s string, i int) opContext {
+	switch s[i] {
+	case '&':
+		if i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') && (i+1 == len(s) || s[i+1] != '&') {
+			return opProseAmp
+		}
+	case ';':
+		if i+1 < len(s) && s[i+1] == ' ' && endsProseSentence(s[:i]) {
+			return opProseSemi
+		}
+	}
+	return opShell
+}
+
+// endsProseSentence reports whether s ends with a word of letters (ASCII or
+// any non-ASCII character) and has a blank before that word: at least two
+// words of prose, as in "see you".
+func endsProseSentence(s string) bool {
+	j := len(s)
+	for j > 0 && (isASCIILetter(s[j-1]) || s[j-1] >= 0x80) {
+		j--
+	}
+	if j == len(s) {
+		return false
+	}
+	return strings.ContainsAny(s[:j], " \t")
+}
+
 // isCmdI scans s for an operator followed by a command. strictNewline
 // applies the stricter bare-command rule after a line break.
 func isCmdI(s string, strictNewline bool) bool {
@@ -169,8 +218,10 @@ func isCmdI(s string, strictNewline bool) bool {
 	}
 	for i := 0; i < len(s); i++ {
 		afterNewline := false
+		ctx := opShell
 		switch s[i] {
 		case ';', '|', '&', '`':
+			ctx = operatorContext(s, i)
 		case '\n', '\r':
 			afterNewline = true
 		case '$':
@@ -185,7 +236,7 @@ func isCmdI(s string, strictNewline bool) bool {
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '|' || s[j] == '&') {
 			j++
 		}
-		if commandAt(s, j, afterNewline && strictNewline) {
+		if commandAt(s, j, afterNewline && strictNewline, ctx) {
 			return true
 		}
 		// The skipped bytes all lead to the same j: do not rescan them.
@@ -197,8 +248,9 @@ func isCmdI(s string, strictNewline bool) bool {
 // commandAt reports whether a command invocation starts at s[i]: a known
 // command used as a shell would use it, or an absolute system path.
 // afterNewline is set when the operator before it is only a line break,
-// where a bare command at the end of a line ("Notes:\nls") is prose.
-func commandAt(s string, i int, afterNewline bool) bool {
+// where a bare command at the end of a line ("Notes:\nls") is prose. ctx
+// is what the operator itself proves (see opContext).
+func commandAt(s string, i int, afterNewline bool, ctx opContext) bool {
 	if i >= len(s) {
 		return false
 	}
@@ -226,12 +278,12 @@ func commandAt(s string, i int, afterNewline bool) bool {
 			continue // part of a longer word: "cats", "identity", "sh."
 		}
 		if w.windows {
-			if windowsArgAt(s, skipBlanks(s, end), w.name[0] == 'p') {
+			if windowsArgAt(s, skipBlanks(s, end), w.name[0] == 'p', w.name != "type") {
 				return true
 			}
 			continue
 		}
-		if unixArgsAt(s, skipBlanks(s, end), w, afterNewline) {
+		if unixArgsAt(s, skipBlanks(s, end), w, afterNewline, ctx) {
 			return true
 		}
 	}
@@ -249,8 +301,10 @@ func commandAt(s string, i int, afterNewline bool) bool {
 // value or an operator; with afterNewline it then needs at least one flag
 // or a following non-newline operator. An English word that is neither a
 // flag's value nor an operand ends the scan with no hit: "ping -Ali at
-// gate", "cat -lovers mug".
-func unixArgsAt(s string, j int, w cmdWord, afterNewline bool) bool {
+// gate", "cat -lovers mug". ctx tightens the rules after a prose-like
+// operator (see opContext). Netcat flags must start with a letter or be
+// -4/-6 ("nc -2 3" is a size list).
+func unixArgsAt(s string, j int, w cmdWord, afterNewline bool, ctx opContext) bool {
 	const maxArgTokens = 16
 	flags := 0
 	lastFlag := ""
@@ -265,10 +319,13 @@ func unixArgsAt(s string, j int, w cmdWord, afterNewline bool) bool {
 			if !w.bare || wordValue {
 				return false
 			}
+			if len(w.name) <= 2 && ctx != opShell && flags == 0 {
+				return false // "see you; id", "Bring passport & id"
+			}
 			atLineEnd := j >= len(s) || s[j] == '\n' || s[j] == '\r'
 			return !afterNewline || flags > 0 || !atLineEnd
 		}
-		if unixOperandAt(s, j, w.url) {
+		if unixOperandAt(s, j, w.url, ctx == opProseAmp) {
 			return true
 		}
 		if t == 0 && w.name == "chmod" && chmodModeAt(s, j) {
@@ -286,6 +343,12 @@ func unixArgsAt(s string, j int, w cmdWord, afterNewline bool) bool {
 			continue
 		}
 		if f := flagEnd(s, j); f > j {
+			if w.netcat && s[j+1] >= '0' && s[j+1] <= '9' && s[j:f] != "-4" && s[j:f] != "-6" {
+				return false // "Size: M | nc -2 3"
+			}
+			if ctx == opProseAmp && len(w.name) <= 2 && s[j+1] != '-' && f-j > 4 {
+				return false // a hyphenated word: "Bring CNIC & id -card"
+			}
 			flags++
 			lastFlag, afterFlag = s[j:f], true
 			j = skipBlanks(s, f)
@@ -314,11 +377,15 @@ func tokenEnd(s string, j int) int {
 	return j
 }
 
-// chmodModeAt reports whether s[j] starts a chmod mode followed by a blank,
-// the end or an operator: three or four octal digits (755, 4777) or a
-// symbolic mode such as +x, u+s or go-w.
+// chmodModeAt reports whether s[j] starts a chmod mode followed by a file
+// operand: three or four octal digits (755, 4777) or a symbolic mode such as
+// +x, u+s or go-w, then a blank and another token. A mode alone at the end
+// ("Notes; chmod 755") changes nothing and reads as a note.
 func chmodModeAt(s string, j int) bool {
 	k := tokenEnd(s, j)
+	if o := skipBlanks(s, k); o == k || o >= len(s) || isShellOperator(s[o]) {
+		return false
+	}
 	tok := s[j:k]
 	if n := len(tok); n == 3 || n == 4 {
 		octal := true
@@ -410,8 +477,10 @@ func isShellOperator(c byte) bool {
 // looks like one given to a Unix command rather than an English word: a
 // path, a home or relative path, a variable, a redirection into a path or
 // descriptor, an IPv4 address, or (for curl and wget) a URL. "$5", "/2",
-// "-- both" and "food" do not count.
-func unixOperandAt(s string, i int, url bool) bool {
+// "-- both" and "food" do not count. With prose set (after a lone "&"),
+// only a system path, a home or relative path, a variable or a redirection
+// counts: "dog & cat /dog-food", "Hair & curl https://..." are prose.
+func unixOperandAt(s string, i int, url, prose bool) bool {
 	for i < len(s) && (s[i] == '\'' || s[i] == '"') {
 		i++
 	}
@@ -423,6 +492,8 @@ func unixOperandAt(s string, i int, url bool) bool {
 		next = s[i+1]
 	}
 	switch c := s[i]; {
+	case c == '/' && prose:
+		return absPathAt(s, i)
 	case c == '/':
 		return isASCIILetter(next) || next == '.' || next == '_' || i+1 == len(s) || isShellOperator(next)
 	case c == '~':
@@ -438,15 +509,16 @@ func unixOperandAt(s string, i int, url bool) bool {
 		}
 		return j < len(s) && (s[j] == '/' || s[j] == '&')
 	case c >= '0' && c <= '9':
-		return ipv4At(s, i)
+		return !prose && ipv4At(s, i)
 	}
-	return url && (hasPrefixFold(s[i:], "http://") || hasPrefixFold(s[i:], "https://") || hasPrefixFold(s[i:], "ftp://"))
+	return url && !prose && (hasPrefixFold(s[i:], "http://") || hasPrefixFold(s[i:], "https://") || hasPrefixFold(s[i:], "ftp://"))
 }
 
 // windowsArgAt reports whether s[i] starts a Windows-shaped argument: a
 // drive path (C:\ or C:/), a backslash path, or a one-letter /x switch or
-// /?. With flags set (PowerShell), a -Name parameter also counts.
-func windowsArgAt(s string, i int, flags bool) bool {
+// /? (only with switches set: type takes none, so "Pack of 2 | type /a" is
+// not one). With flags set (PowerShell), a -Name parameter also counts.
+func windowsArgAt(s string, i int, flags, switches bool) bool {
 	for i < len(s) && (s[i] == '\'' || s[i] == '"') {
 		i++
 	}
@@ -459,7 +531,7 @@ func windowsArgAt(s string, i int, flags bool) bool {
 		return true
 	case c == '\\':
 		return i+1 < len(s) && (isASCIILetter(s[i+1]) || s[i+1] == '\\')
-	case c == '/':
+	case c == '/' && switches:
 		if i+1 >= len(s) || !isASCIILetter(s[i+1]) && s[i+1] != '?' {
 			return false
 		}
@@ -509,7 +581,7 @@ func hasCmdMarker(s string) bool {
 	if strings.Contains(s, "/dev/tcp/") || strings.Contains(s, "/dev/udp/") {
 		return true
 	}
-	if wordThen(s, "bash", " -i") || wordThen(s, "nc", " -e") || wordThenFold(s, "powershell", " -e") {
+	if wordThen(s, "bash", " -i") || wordThen(s, "nc", " -e") || hasPowerShellEncoded(s) {
 		return true
 	}
 	return hasShellshock(s)
@@ -533,12 +605,27 @@ func wordThen(s, word, tail string) bool {
 	}
 }
 
-// wordThenFold is wordThen for a case-insensitive word and tail prefix (the
-// tail may continue, as in -enc or -EncodedCommand).
-func wordThenFold(s, word, tail string) bool {
-	pat := word + tail
+// hasPowerShellEncoded finds "powershell -e..." (any case) whose parameter
+// is one PowerShell resolves: -ec, or a prefix of -EncodedCommand or
+// -ExecutionPolicy (-e, -enc, -exec, ...). PowerShell accepts unambiguous
+// parameter prefixes, which payloads use; "Powershell -experience
+// required" names a job requirement.
+func hasPowerShellEncoded(s string) bool {
+	const pat = "powershell -e"
 	for i := 0; i+len(pat) <= len(s); i++ {
-		if (i == 0 || !isIdentByte(s[i-1])) && hasPrefixFold(s[i:], pat) {
+		if i > 0 && isIdentByte(s[i-1]) || !hasPrefixFold(s[i:], pat) {
+			continue
+		}
+		start := i + len(pat) - 1 // the 'e' after '-'
+		end := start
+		for end < len(s) && isASCIILetter(s[end]) {
+			end++
+		}
+		if end < len(s) && isIdentByte(s[end]) {
+			continue
+		}
+		p := strings.ToLower(s[start:end])
+		if p == "ec" || strings.HasPrefix("encodedcommand", p) || strings.HasPrefix("executionpolicy", p) {
 			return true
 		}
 	}

@@ -27,10 +27,35 @@ func XSS(v string) (Hit, bool) {
 }
 
 func isSQLi(s string) bool {
-	if ok, _ := libinjection.IsSQLi(s); ok {
+	if ok, fp := libinjection.IsSQLi(s); ok && !isProseNumberComment(s, fp) {
 		return true
 	}
 	return hasStackedCopyProgram(s)
+}
+
+// isProseNumberComment reports whether a libinjection hit with fingerprint
+// "1c" (a number followed by a comment) is prose such as "10% off --
+// limited": a letter appears before the comment token. libinjection folds
+// the words in between away, so "10% off --" and "5--" share the
+// fingerprint, but only the bare form ("5--", "1 /* x */") is an injection
+// that comments out the rest of a query; those keep matching. A typed
+// integer field still rejects "10% off --" through its schema.
+func isProseNumberComment(s, fp string) bool {
+	if fp != "1c" {
+		return false
+	}
+	end := len(s)
+	for _, tok := range [...]string{"--", "/*", "#"} {
+		if n := strings.Index(s, tok); n >= 0 && n < end {
+			end = n
+		}
+	}
+	for i := 0; i < end; i++ {
+		if c := s[i] | 0x20; c >= 'a' && c <= 'z' {
+			return true
+		}
+	}
+	return false
 }
 
 func isXSS(s string) bool {
@@ -224,11 +249,26 @@ func isScriptURL(s string) bool {
 	if i < len(s) && s[i] == '/' {
 		return true
 	}
+	spaced := i > 0 && (s[i-1] == ' ' || s[i-1] == '\t' || s[i-1] == '\n' || s[i-1] == '\r')
 	start := i
+	dotted := false
 	for i < len(s) && (isIdentByte(s[i]) || s[i] == '$' || s[i] == '.') {
+		dotted = dotted || s[i] == '.'
 		i++
 	}
-	return i > start && i < len(s) && (s[i] == '(' || s[i] == '`' || s[i] == '=')
+	if i == start || i >= len(s) {
+		return false
+	}
+	switch s[i] {
+	case '(', '`':
+		return true
+	case '=':
+		// "javascript:location=..." and "javascript: document.cookie=..."
+		// run code; "JavaScript: version=ES6" after a space, assigning a
+		// bare name, is how prose writes a key and value.
+		return !spaced || dotted
+	}
+	return false
 }
 
 // schemeAt matches the lower-case scheme at s[i] case-insensitively,
