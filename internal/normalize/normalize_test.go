@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/ergasterion-dev/aegolith/internal/model"
 )
@@ -185,7 +186,7 @@ func TestWalkJSONPathBounds(t *testing.T) {
 	if got[1].Key != long || got[1].Value != long || !got[1].IsKey {
 		t.Fatalf("full key not reported: %+v", got[1])
 	}
-	// 30 levels of 300-byte keys: the path stops growing at 4 KiB.
+	// 30 levels of 300-byte keys: the path stops growing at 1 KiB.
 	var b strings.Builder
 	for range 30 {
 		b.WriteString(`{"` + long + `":`)
@@ -196,8 +197,49 @@ func TestWalkJSONPathBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, v := range got {
-		if len(v.Path) > 4096 {
+		if len(v.Path) > 1024 {
 			t.Fatalf("path %d bytes", len(v.Path))
+		}
+	}
+	// Once the path is full, containers, closes and keys that leave its
+	// bytes unchanged reuse the same string instead of copying it; so do
+	// siblings that rebuild an identical path.
+	prefix := strings.Repeat(`{"`+long+`":`, 5)
+	for name, inner := range map[string]string{
+		"arrays":  `[[],[],[[]],[]]`,
+		"objects": `[{"a":1},{"a":2},{"a":3}]`,
+		"keys":    `{"a":1,"a":2,"a":3}`,
+	} {
+		var data []*byte
+		err := WalkJSON([]byte(prefix+inner+strings.Repeat("}", 5)), lim, func(v JSONValue) {
+			if len(v.Path) == 1024 {
+				data = append(data, unsafe.StringData(v.Path))
+			}
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(data) < 4 {
+			t.Fatalf("%s: %d full-path emissions", name, len(data))
+		}
+		for _, p := range data[1:] {
+			if p != data[0] {
+				t.Fatalf("%s: full path copied again", name)
+			}
+		}
+	}
+	// Below the cap, a sibling with an identical path also reuses it.
+	var data []*byte
+	if err := WalkJSON([]byte(`{"x":[{"a":1},{"a":2},{"a":3}]}`), lim, func(v JSONValue) {
+		if v.Path == "x[].a" {
+			data = append(data, unsafe.StringData(v.Path))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range data[1:] {
+		if p != data[0] {
+			t.Fatal("identical sibling path copied again")
 		}
 	}
 	// Leaving a capped level restores the parent path exactly.

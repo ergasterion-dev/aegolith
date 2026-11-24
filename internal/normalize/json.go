@@ -53,10 +53,15 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 	var (
 		stack []jsonFrame
 		path  []byte
-		// pathStr caches string(path); it is rebuilt only after path
-		// changes, so a long array under one key costs O(1) per element.
+		// pathStr is string(path) whenever pathDirty is false. pathDirty
+		// is set only when the path bytes actually change (a capped append
+		// or a restore to the same length is a no-op), and a rebuilt path
+		// equal to the last one built at the same depth reuses that string
+		// (siblings such as [{"a":1},{"a":1}]). So containers and keys that
+		// leave the path as it was never copy it.
 		pathStr   string
 		pathDirty bool
+		byDepth   []string
 		count     int
 		topSet    bool // a complete top-level value has been read
 	)
@@ -69,7 +74,14 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 			count++
 		}
 		if pathDirty {
-			pathStr, pathDirty = string(path), false
+			d := len(stack)
+			if d >= len(byDepth) {
+				byDepth = append(byDepth, make([]string, d+1-len(byDepth))...)
+			}
+			if byDepth[d] != string(path) { // compared without allocating
+				byDepth[d] = string(path)
+			}
+			pathStr, pathDirty = byDepth[d], false
 		}
 		v.Path = pathStr
 		fn(v)
@@ -77,6 +89,12 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 	}
 	emit := func(key, val string, isString, isKey bool) error {
 		return emitValue(JSONValue{Key: key, Value: val, IsString: isString, IsKey: isKey})
+	}
+	// changed records whether the last edit to path changed its bytes.
+	changed := func() {
+		if !pathDirty && string(path) != pathStr {
+			pathDirty = true
+		}
 	}
 	// valueDone marks the current value complete in its parent frame.
 	valueDone := func() {
@@ -117,13 +135,13 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 				stack = append(stack, jsonFrame{isObj: v == '{', expectKey: v == '{', base: len(path)})
 				if v == '[' {
 					path = appendPath(path, "[]")
-					pathDirty = true
+					changed()
 				}
 			default: // '}' or ']'
 				f := stack[len(stack)-1]
 				stack = stack[:len(stack)-1]
 				path = path[:f.base]
-				pathDirty = true
+				changed()
 				valueDone()
 			}
 		case string:
@@ -135,7 +153,7 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 					path = appendPath(path, ".")
 				}
 				path = appendPath(path, v[:min(len(v), maxPathSegment)])
-				pathDirty = true
+				changed()
 				if err := emit(v, v, true, true); err != nil {
 					return err
 				}
@@ -172,7 +190,7 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 // declared field of the same long name.
 const (
 	maxPathSegment = 256
-	maxPath        = 4096
+	maxPath        = 1024
 )
 
 // appendPath appends as much of s to path as fits within maxPath.

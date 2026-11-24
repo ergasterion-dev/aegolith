@@ -549,6 +549,45 @@ func TestInspectRawRescanWithinBudget(t *testing.T) {
 	mustHave(t, d, "AEG-SQLI-001", "body")
 }
 
+// Fix round 4, ruling N1: under a long (capped) path, containers and keys
+// that leave the path bytes unchanged do not copy it, so filler under a
+// 17 x 256-byte-key prefix costs about what it costs under a short path.
+func TestInspectLongJSONPathFillerBounded(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	fw.Inspect(get("/warm"))
+	const sqli = `"1' OR '1'='1"`
+	k := strings.Repeat("k", 256)
+	open, end := strings.Repeat(`{"`+k+`":`, 17), strings.Repeat("}", 17)
+	room := (1 << 20) - len(open) - len(end) - 200
+	for name, inner := range map[string]string{
+		"[[],...]":      "[" + strings.Repeat("[],", room/3) + sqli + "]",
+		"[{a:1},...]":   "[" + strings.Repeat(`{"a":1},`, room/8) + sqli + "]",
+		"{a:1,a:1,...}": "{" + strings.Repeat(`"a":1,`, room/6) + `"z":` + sqli + "}",
+	} {
+		body := open + inner + end
+		if len(body) > 1<<20 {
+			t.Fatalf("%s: body %d bytes", name, len(body))
+		}
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		start := time.Now()
+		d := fw.Inspect(postJSON("/s", body))
+		el := time.Since(start)
+		runtime.ReadMemStats(&after)
+		alloc := after.TotalAlloc - before.TotalAlloc
+		t.Logf("%s: %v, %d MiB allocated", name, el, alloc>>20)
+		if el > 250*time.Millisecond*raceSlowdown {
+			t.Fatalf("%s took %v", name, el)
+		}
+		if alloc > 64<<20 {
+			t.Fatalf("%s allocated %d MiB", name, alloc>>20)
+		}
+		if d.Action != aegolith.ActionBlock {
+			t.Fatalf("%s: payload after filler: %v", name, ruleIDs(d))
+		}
+	}
+}
+
 // Fix round 3, ruling A: a long padded body value (scanned ~2x) plus more
 // than 64 KiB of query or cookie data does not exhaust the budget.
 func TestInspectPaddedBodyPlusOtherInputs(t *testing.T) {
@@ -573,7 +612,7 @@ func TestInspectPaddedBodyPlusOtherInputs(t *testing.T) {
 }
 
 // Fix round 3, ruling N1: JSON paths are bounded (256 bytes per key segment,
-// 4 KiB in total), so a huge key over many array items costs no more than
+// 1 KiB in total since round 4), so a huge key over many array items costs no more than
 // a short one, and a long key's value is still scanned.
 func TestInspectLongJSONKeyBounded(t *testing.T) {
 	fw := mustNew(t, aegolith.Config{})
