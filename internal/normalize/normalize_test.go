@@ -274,7 +274,7 @@ func TestWalkJSONLimits(t *testing.T) {
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("depth: got %v want ErrLimit", err)
 	}
-	if d := time.Since(start); d > 50*time.Millisecond {
+	if d := time.Since(start); !testing.Short() && d > 50*time.Millisecond {
 		t.Fatalf("depth rejection took %v", d)
 	}
 

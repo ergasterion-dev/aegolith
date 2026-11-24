@@ -41,7 +41,7 @@ const (
 	corpusMinLegit     = 32 + 20
 )
 
-func loadCorpus(t *testing.T, file, kind string) []corpusCase {
+func loadCorpus(t testing.TB, file, kind string) []corpusCase {
 	t.Helper()
 	f, err := os.Open(filepath.Join("testdata", "corpus", file))
 	if err != nil {
@@ -114,7 +114,7 @@ func curlEscape(s string) string {
 	return b.String()
 }
 
-func (c corpusCase) request(t *testing.T) *aegolith.Request {
+func (c corpusCase) request(t testing.TB) *aegolith.Request {
 	t.Helper()
 	pairs := make([]string, 0, len(c.Query))
 	for _, kv := range c.Query {

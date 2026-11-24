@@ -290,7 +290,7 @@ func TestInspectHugeBody(t *testing.T) {
 	d := fw.Inspect(r)
 	el := time.Since(start)
 	t.Logf("inspect took %v", el)
-	if el > 500*time.Millisecond*raceSlowdown {
+	if !testing.Short() && el > 500*time.Millisecond*raceSlowdown {
 		t.Fatalf("took %v", el)
 	}
 	m := mustHave(t, d, "AEG-PROTO-010", "body")
@@ -467,7 +467,7 @@ func TestInspectTinyPairsBoundedAndBlock(t *testing.T) {
 	d := fw.Inspect(withBody("POST", "/s", "application/x-www-form-urlencoded", body))
 	el := time.Since(start)
 	t.Logf("100k pairs: %v", el)
-	if el > time.Second*raceSlowdown {
+	if !testing.Short() && el > time.Second*raceSlowdown {
 		t.Fatalf("took %v", el)
 	}
 	if d.Action != aegolith.ActionBlock {
@@ -633,7 +633,7 @@ func TestInspectLongJSONPathFillerBounded(t *testing.T) {
 		runtime.ReadMemStats(&after)
 		alloc := after.TotalAlloc - before.TotalAlloc
 		t.Logf("%s: %v, %d MiB allocated", name, el, alloc>>20)
-		if el > 250*time.Millisecond*raceSlowdown {
+		if !testing.Short() && el > 250*time.Millisecond*raceSlowdown {
 			t.Fatalf("%s took %v", name, el)
 		}
 		if alloc > 64<<20 {
@@ -688,7 +688,7 @@ func TestInspectLongJSONKeyBounded(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	alloc := after.TotalAlloc - before.TotalAlloc
 	t.Logf("256 KiB key x %d items: %v, %d MiB allocated", n, el, alloc>>20)
-	if el > time.Second*raceSlowdown {
+	if !testing.Short() && el > time.Second*raceSlowdown {
 		t.Fatalf("took %v", el)
 	}
 	if alloc > 256<<20 {
@@ -740,6 +740,9 @@ func TestInspectScanBudgetExhausted(t *testing.T) {
 // (a 2 MiB string value, a 1 MiB query of pairs, a 2 MiB malformed body)
 // stay within a fixed time bound because the scan budget caps detector work.
 func TestInspectScanBudgetBoundsTime(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wall-clock bound; skipped under -short")
+	}
 	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
 	fw.Inspect(get("/warm"))
 	pairs := strings.Repeat("k=a'b&", (1<<20)/6)
@@ -756,7 +759,7 @@ func TestInspectScanBudgetBoundsTime(t *testing.T) {
 		d := fw.Inspect(r)
 		el := time.Since(start)
 		t.Logf("%s: %v", name, el)
-		if el > time.Second*raceSlowdown {
+		if !testing.Short() && el > time.Second*raceSlowdown {
 			t.Fatalf("%s took %v", name, el)
 		}
 		if d.Err != nil {

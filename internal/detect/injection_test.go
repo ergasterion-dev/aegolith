@@ -420,6 +420,9 @@ func TestInjectionAdversarialTime(t *testing.T) {
 // not rescan the value from its start for every semicolon. A long
 // blank-free prefix followed by many "; a" was quadratic (1 MiB: 27 s).
 func TestCmdIProseSemicolonLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wall-clock bound; skipped under -short")
+	}
 	shape := func(n int) string { return strings.Repeat("x", n/2) + strings.Repeat("; a", n/6) }
 	s, m, l := shape(64<<10), shape(256<<10), shape(1<<20)
 	if raceSlowdown == 1 {
@@ -441,7 +444,11 @@ func TestCmdIProseSemicolonLinear(t *testing.T) {
 // resolving moves the payload up one level per close, so the cost is
 // bounded by the depth cap times the length.
 func TestJNDILargePayloadTime(t *testing.T) {
-	for _, size := range []int{64 << 10, 1 << 20} {
+	sizes := []int{64 << 10, 1 << 20}
+	if testing.Short() {
+		sizes = nil // wall-clock bound; skipped under -short
+	}
+	for _, size := range sizes {
 		payload := strings.Repeat("a", size)
 		for _, depth := range []int{maxLookupDepth, 1000} {
 			for _, open := range []string{"${lower:", "${upper:", "${x:-", "${::-"} {

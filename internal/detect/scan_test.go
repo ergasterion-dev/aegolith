@@ -156,6 +156,9 @@ func TestScanTextOrderAndDedup(t *testing.T) {
 // caches timings jump for reasons that have nothing to do with the
 // algorithm, so at 1 MiB only an absolute bound is checked.
 func TestScanTextLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wall-clock bound; skipped under -short")
+	}
 	units := map[string]string{
 		"traversal":   "../",
 		"enc-dots":    "%2e%2e",
