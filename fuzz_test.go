@@ -11,7 +11,9 @@ import (
 
 // fuzzInspectBound is the wall-clock limit for one Inspect on a fuzzed
 // request: 100 ms with AEGOLITH_PERF=1, otherwise 2 s (see wallLimit),
-// scaled for -race. Fuzz inputs are small (the mutator rarely grows them
+// scaled for -race. The brief's 100 ms is kept only for AEGOLITH_PERF=1:
+// make fuzz-quick runs 14 fuzz workers at once, and on a busy machine a
+// scheduler stall alone can pass 100 ms. Fuzz inputs are small (the mutator rarely grows them
 // past a few KiB), so a legit-sized request costs microseconds; the bound
 // only trips on a real pathology. Not checked under -short.
 var fuzzInspectBound = wallLimit(100*time.Millisecond, 2*time.Second)

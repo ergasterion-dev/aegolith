@@ -132,11 +132,9 @@ func BenchmarkInspectLegitCorpus(b *testing.B) {
 // 20,000 timed inspections after a warm-up and logs p50, p99 and max. The
 // corpus carries few headers, so the set is also measured with a browser's
 // User-Agent, Referer, Accept and Cookie headers added (headers a case sets
-// itself are kept). The budget is asserted on the corpus as recorded; the
-// browser-header run is logged for comparison (its slowest request costs
-// about 17 µs on an Apple M4 Pro, so a p99 over the budget there means
-// CPU contention, not inspection cost). It runs only with AEGOLITH_PERF=1
-// (make perf) and never under -race.
+// itself are kept); its slowest request costs about 17 µs on an Apple M4
+// Pro. The budget is asserted on both sets. It runs only with
+// AEGOLITH_PERF=1 (make perf, on a quiet machine) and never under -race.
 func TestLatencyBudget(t *testing.T) {
 	if os.Getenv("AEGOLITH_PERF") != "1" {
 		t.Skip("set AEGOLITH_PERF=1 to run the latency budget")
@@ -163,10 +161,9 @@ func TestLatencyBudget(t *testing.T) {
 	t.Logf("%s, GOMAXPROCS %d, %d legit requests", runtime.Version(), runtime.GOMAXPROCS(0), len(plain))
 	for _, f := range benchFirewalls(t) {
 		for _, set := range []struct {
-			name   string
-			reqs   []*aegolith.Request
-			assert bool
-		}{{"corpus", plain, true}, {"+browser headers", browser, false}} {
+			name string
+			reqs []*aegolith.Request
+		}{{"corpus", plain}, {"+browser headers", browser}} {
 			reqs := set.reqs
 			for i := range warmup {
 				f.fw.Inspect(reqs[i%len(reqs)])
@@ -184,7 +181,7 @@ func TestLatencyBudget(t *testing.T) {
 			slices.Sort(lat)
 			p50, p99, worst := lat[n/2], lat[n*99/100], lat[n-1]
 			t.Logf("%-9s %-17s p50 %8v  p99 %8v  max %9v  (budget p99 < %v)", f.name, set.name, p50, p99, worst, budget)
-			if set.assert && p99 >= budget {
+			if p99 >= budget {
 				t.Errorf("%s %s: p99 %v, budget %v", f.name, set.name, p99, budget)
 			}
 		}

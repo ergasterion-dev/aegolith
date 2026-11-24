@@ -3,6 +3,7 @@ package aegolith_test
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -1296,15 +1297,48 @@ func TestFirewallLimitsAndFailOpen(t *testing.T) {
 // value step MaxValueLen/2, and the scan budget's "each byte scanned at
 // most twice" derivation needs the step to be exactly half the window.
 func TestMaxValueLenClampedEven(t *testing.T) {
-	for in, want := range map[int]int{1: 2, 2: 2, 3: 2, 5: 4, 8191: 8190, 8192: 8192, 0: aegolith.DefaultLimits().MaxValueLen} {
+	for in, want := range map[int]int{
+		1: 2, 2: 2, 3: 2, 5: 4, 8191: 8190, 8192: 8192,
+		math.MaxInt: math.MaxInt - 1,
+		0:           aegolith.DefaultLimits().MaxValueLen,
+	} {
 		fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxValueLen: in}})
 		if got := fw.Limits().MaxValueLen; got != want {
 			t.Errorf("MaxValueLen %d resolved to %d, want %d", in, got, want)
 		}
 	}
-	// An odd value still finds an attack straddling a window edge.
+}
+
+// With MaxValueLen 33 (clamped to 32, step 16) a 96-byte value is scanned
+// in windows [0,32) [16,48) [32,64) [48,80) [64,96). The payload sits at
+// [26,38): it crosses the 32-byte edge, so only the window that starts at
+// 16 holds it whole.
+func TestMaxValueLenOddWindowsFindStraddlingPayload(t *testing.T) {
+	const payload = "1' OR '1'='1" // 12 bytes
+	v := strings.Repeat("a", 25) + " " + payload + " " + strings.Repeat("b", 96-38-1)
+	if len(v) != 96 || strings.Index(v, payload) != 26 {
+		t.Fatalf("value layout: len %d, payload at %d", len(v), strings.Index(v, payload))
+	}
 	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxValueLen: 33}})
-	if d := fw.Inspect(get("/s?q=" + strings.Repeat("a", 20) + "1%27+OR+%271%27%3D%271")); d.Action != aegolith.ActionBlock {
+	d := fw.Inspect(get("/s?q=" + curlEscape(v)))
+	mustHave(t, d, "AEG-PROTO-011", "query.q")
+	mustHave(t, d, "AEG-SQLI-001", "query.q")
+	if d.Action != aegolith.ActionBlock {
 		t.Fatalf("odd MaxValueLen: %v", ruleIDs(d))
+	}
+}
+
+// The clamp keeps the budget derivation true. MaxValueLen 9 unclamped would
+// step 4 with 9-byte windows, charging a long value about 2.25x its length;
+// clamped to 8 it is charged 2x. A 1,000,000-byte query value then leaves
+// room in the budget (8 x (1 + 256 KiB) + 64 KiB = 2,162,696 bytes) for a
+// later <script> only when the clamp holds; without it the budget runs out
+// first and the later value is never scanned.
+func TestMaxValueLenClampKeepsBudgetCharge(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Limits: aegolith.Limits{MaxBodyBytes: 1, MaxValueLen: 9}})
+	d := fw.Inspect(get("/s?q=" + strings.Repeat("a", 1_000_000) + "&z=%3Cscript%3E"))
+	mustHave(t, d, "AEG-XSS-001", "query.z")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("budget exhausted before query.z: %v", ruleIDs(d))
 	}
 }

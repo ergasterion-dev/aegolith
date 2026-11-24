@@ -1,8 +1,9 @@
 GO ?= go
 ADAPTERS := adapters/fiberv2
-# Packages (relative to the root module) that hold Fuzz targets.
-FUZZ_PKGS := . ./internal/normalize
 FUZZTIME ?= 10s
+# Go files gofmt covers: tracked plus untracked files git does not ignore
+# ("." would also walk scratch directories such as .superpowers/).
+GOFILES := git ls-files --cached --others --exclude-standard -z '*.go'
 
 .PHONY: build test test-quick vet fmt fmt-check bench fuzz-quick corpus perf ci
 
@@ -26,26 +27,24 @@ vet:
 	$(GO) vet ./...
 	@if [ -d $(ADAPTERS) ]; then cd $(ADAPTERS) && $(GO) vet ./...; fi
 
-# Only tracked Go files: "." would also walk scratch directories such as
-# .superpowers/.
 fmt:
-	git ls-files -z '*.go' | xargs -0 gofmt -w
+	$(GOFILES) | xargs -0 gofmt -w
 
 fmt-check:
-	@out=$$(git ls-files -z '*.go' | xargs -0 gofmt -l); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	@out=$$($(GOFILES) | xargs -0 gofmt -l); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 bench:
 	$(GO) test -run '^$$' -bench . -benchmem ./...
 	@if [ -d $(ADAPTERS) ]; then cd $(ADAPTERS) && $(GO) test -run '^$$' -bench . -benchmem ./...; fi
 
-# Runs every Fuzz target in FUZZ_PKGS for FUZZTIME each.
+# Runs every Fuzz target in every package that declares one (discovered by
+# scripts/fuzz-quick.sh) for FUZZTIME each, and fails if none is found or a
+# package's targets cannot be listed. FuzzInspect's per-request time bound
+# is 2 s here, not the brief's 100 ms: fuzz workers fill every core, and on
+# a busy machine a scheduler stall alone passes 100 ms. AEGOLITH_PERF=1
+# restores 100 ms.
 fuzz-quick:
-	@for p in $(FUZZ_PKGS); do \
-		for t in $$($(GO) test -list '^Fuzz' $$p | grep '^Fuzz'); do \
-			echo "== $$p $$t"; \
-			$(GO) test -run '^$$' -fuzz "^$$t$$" -fuzztime $(FUZZTIME) $$p || exit 1; \
-		done; \
-	done
+	GO=$(GO) FUZZTIME=$(FUZZTIME) ./scripts/fuzz-quick.sh
 
 corpus:
 	$(GO) test -run Corpus -v .
