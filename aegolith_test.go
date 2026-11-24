@@ -748,6 +748,9 @@ func TestInspectScanBudgetBoundsTime(t *testing.T) {
 		"many pairs": get("/s?" + pairs),
 		"malformed":  postJSON("/s", `{"pad":"`+strings.Repeat("a'", 2<<20)),
 		"form pairs": withBody("POST", "/s", "application/x-www-form-urlencoded", pairs+pairs),
+		// Every 8 KiB window: a blank-free half, then "; a" runs (the
+		// CmdI prose-sentence check must stay linear per window).
+		"prose semicolons": postJSON("/s", `{"pad":"`+strings.Repeat(strings.Repeat("x", 4096)+strings.Repeat("; a", 1365), 128)+`"}`),
 	} {
 		start := time.Now()
 		d := fw.Inspect(r)

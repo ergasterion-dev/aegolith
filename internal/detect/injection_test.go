@@ -405,6 +405,27 @@ func TestInjectionAdversarialTime(t *testing.T) {
 	}
 }
 
+// TestCmdIProseSemicolonLinear: the prose-sentence check before "; " must
+// not rescan the value from its start for every semicolon. A long
+// blank-free prefix followed by many "; a" was quadratic (1 MiB: 27 s).
+func TestCmdIProseSemicolonLinear(t *testing.T) {
+	shape := func(n int) string { return strings.Repeat("x", n/2) + strings.Repeat("; a", n/6) }
+	s, m, l := shape(64<<10), shape(256<<10), shape(1<<20)
+	if raceSlowdown == 1 {
+		ds := bestOf(3, func() { CmdI(s) })
+		dm := bestOf(3, func() { CmdI(m) })
+		if ds > 200*time.Microsecond && dm > 8*ds {
+			t.Errorf("CmdI on %d bytes took %v, over 8x its %v on %d bytes: super-linear", len(m), dm, ds, len(s))
+		}
+	}
+	if d := bestOf(3, func() { CmdI(l) }); d > raceSlowdown*100*time.Millisecond {
+		t.Errorf("CmdI on %d bytes took %v, want under %v", len(l), d, raceSlowdown*100*time.Millisecond)
+	}
+	if d := bestOf(3, func() { ScanText(l) }); d > raceSlowdown*500*time.Millisecond {
+		t.Errorf("ScanText on %d bytes took %v, want under %v", len(l), d, raceSlowdown*500*time.Millisecond)
+	}
+}
+
 // TestJNDILargePayloadTime checks nested lookups around a large payload:
 // resolving moves the payload up one level per close, so the cost is
 // bounded by the depth cap times the length.

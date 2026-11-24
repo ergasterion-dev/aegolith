@@ -182,32 +182,34 @@ const (
 )
 
 // operatorContext classifies the operator at s[i] (see opContext).
-func operatorContext(s string, i int) opContext {
+// firstBlank is the index of the first space or tab in s, or -1; isCmdI
+// computes it once so the check stays linear in len(s).
+func operatorContext(s string, i, firstBlank int) opContext {
 	switch s[i] {
 	case '&':
 		if i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') && (i+1 == len(s) || s[i+1] != '&') {
 			return opProseAmp
 		}
 	case ';':
-		if i+1 < len(s) && s[i+1] == ' ' && endsProseSentence(s[:i]) {
+		if i+1 < len(s) && s[i+1] == ' ' && endsProseSentence(s, i, firstBlank) {
 			return opProseSemi
 		}
 	}
 	return opShell
 }
 
-// endsProseSentence reports whether s ends with a word of letters (ASCII or
-// any non-ASCII character) and has a blank before that word: at least two
-// words of prose, as in "see you".
-func endsProseSentence(s string) bool {
-	j := len(s)
+// endsProseSentence reports whether s[:end] ends with a word of letters
+// (ASCII or any non-ASCII character) and has a blank before that word: at
+// least two words of prose, as in "see you". firstBlank is the index of the
+// first space or tab in s, or -1. The backward walk covers only the letter
+// run directly before s[end], which no other call walks, so all calls in
+// one isCmdI scan are linear together.
+func endsProseSentence(s string, end, firstBlank int) bool {
+	j := end
 	for j > 0 && (isASCIILetter(s[j-1]) || s[j-1] >= 0x80) {
 		j--
 	}
-	if j == len(s) {
-		return false
-	}
-	return strings.ContainsAny(s[:j], " \t")
+	return j < end && firstBlank >= 0 && firstBlank < j
 }
 
 // isCmdI scans s for an operator followed by a command. strictNewline
@@ -216,12 +218,13 @@ func isCmdI(s string, strictNewline bool) bool {
 	if hasCmdMarker(s) {
 		return true
 	}
+	firstBlank := strings.IndexAny(s, " \t")
 	for i := 0; i < len(s); i++ {
 		afterNewline := false
 		ctx := opShell
 		switch s[i] {
 		case ';', '|', '&', '`':
-			ctx = operatorContext(s, i)
+			ctx = operatorContext(s, i, firstBlank)
 		case '\n', '\r':
 			afterNewline = true
 		case '$':
