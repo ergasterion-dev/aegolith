@@ -194,7 +194,7 @@ func isRemoteInclude(s string) bool {
 		}
 		return j > 4 && j < len(s) && s[j] == ':'
 	case hasPrefixFold(s, "http://"), hasPrefixFold(s, "https://"):
-		return len(s) > len("http://") && s[len(s)-1] == '?' && strings.IndexAny(s, " \t\r\n") < 0
+		return len(s) > len("http://") && s[len(s)-1] == '?' && !strings.ContainsAny(s, " \t\r\n")
 	}
 	return false
 }

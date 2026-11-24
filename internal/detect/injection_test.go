@@ -492,7 +492,7 @@ func TestJNDILargePayloadTime(t *testing.T) {
 // timing assertions.
 func bestOf(n int, f func()) time.Duration {
 	best := time.Duration(1<<63 - 1)
-	for i := 0; i < n; i++ {
+	for range n {
 		start := time.Now()
 		f()
 		if d := time.Since(start); d < best {

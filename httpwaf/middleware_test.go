@@ -550,3 +550,41 @@ func TestSlogHookErrorLevelAndTruncation(t *testing.T) {
 		t.Fatalf("field len %d", len(f))
 	}
 }
+
+// TestMiddlewareOverLimitPaddingNeedsBodyCap pins the documented behaviour of
+// a body longer than MaxBodyBytes: only the first MaxBodyBytes+1 bytes are
+// inspected, and AEG-PROTO-003 defaults to monitor, so padding pushes an
+// attack past what the engine sees. RuleActions{"AEG-PROTO-003": block}
+// (or capping the body at the server) closes that gap.
+func TestMiddlewareOverLimitPaddingNeedsBodyCap(t *testing.T) {
+	body := `{"pad":"` + strings.Repeat("a", 1<<20) + `","q":"1' OR '1'='1"}`
+	run := func(cfg aegolith.Config) (int, bool) {
+		var called atomic.Bool
+		h := Middleware(newFW(t, cfg), Options{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called.Store(true)
+		}))
+		req := httptest.NewRequest("POST", "/search", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, called.Load()
+	}
+	// Default (documented gap): the attack after the padding is not seen.
+	if code, called := run(aegolith.Config{Mode: aegolith.ModeEnforce}); code != 200 || !called {
+		t.Fatalf("default: code=%d called=%v; the PROTO-003 default changed, update the docs", code, called)
+	}
+	// The documented override blocks it.
+	cfg := aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}}
+	if code, called := run(cfg); code != 403 || called {
+		t.Fatalf("PROTO-003 block: code=%d called=%v", code, called)
+	}
+	// A body within the limit is unaffected by the override.
+	h := Middleware(newFW(t, cfg), Options{})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	req := httptest.NewRequest("POST", "/search", strings.NewReader(`{"q":"red shoes"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("small body with PROTO-003 block: code=%d", rec.Code)
+	}
+}

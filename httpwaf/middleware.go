@@ -53,7 +53,7 @@ const maxRequestIDLen = 64
 // next handler are not touched.
 func Middleware(fw *aegolith.Firewall, opts Options) func(http.Handler) http.Handler {
 	maxBody := fw.Limits().MaxBodyBytes
-	if maxBody >= math.MaxInt64 {
+	if maxBody == math.MaxInt64 {
 		maxBody = math.MaxInt64 - 1 // keep maxBody+1 from overflowing
 	}
 	return func(next http.Handler) http.Handler {
