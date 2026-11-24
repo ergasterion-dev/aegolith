@@ -59,7 +59,10 @@ func Check(r *model.Request, cfg Config) []model.Match {
 		maxBody = model.DefaultLimits().MaxBodyBytes
 	}
 	if int64(len(r.Body)) > maxBody {
-		add("AEG-PROTO-003", model.SeverityLow, model.ActionMonitor, model.LocBody, "body", "")
+		// Block by default: the engine inspects only a prefix of an
+		// over-size body, so padding could otherwise push an attack out
+		// of sight. RuleActions can set it back to monitor.
+		add("AEG-PROTO-003", model.SeverityMedium, model.ActionBlock, model.LocBody, "body", "")
 	}
 
 	decoded, double := normalize.DecodeValue(r.RawPath)

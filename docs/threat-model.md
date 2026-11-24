@@ -64,7 +64,7 @@ A WAF library is itself a target for resource exhaustion. What is bounded, and w
 
 - **Per value:** a value longer than `MaxValueLen` (default 8 KiB, rounded down to an even number, minimum 2) is reported (`AEG-PROTO-011`, monitor) and scanned in overlapping windows that start every `MaxValueLen/2` bytes. Every byte is scanned at most twice, and an attack shorter than half a window always lies wholly inside one window, so padding cannot push it out of sight.
 - **Per request:** every window is charged against a scan budget of `8 * (MaxBodyBytes + 256 KiB) + 64 KiB` bytes. The factor covers the worst expansion of a body (each invalid UTF-8 byte in a JSON string becomes U+FFFD, one byte to three, doubled by window overlap, plus a raw rescan after malformed JSON). A request whose body is within `MaxBodyBytes` and whose other inputs total at most 256 KiB cannot exhaust it.
-- **Body:** at most `2 * MaxBodyBytes` of a body is inspected by the engine, and the adapters hand it `MaxBodyBytes + 1` bytes. A body over `MaxBodyBytes` raises `AEG-PROTO-003` (monitor). **Everything past the limit is not inspected**, so with the defaults an attacker can pad a body past 1 MiB and put the attack after the padding: in enforce mode that request is allowed. See [Body over the limit](#body-over-the-limit-padding) below; cap the body or set `AEG-PROTO-003` to block.
+- **Body:** at most `2 * MaxBodyBytes` of a body is inspected by the engine, and the adapters hand it `MaxBodyBytes + 1` bytes. A body over `MaxBodyBytes` raises `AEG-PROTO-003`, which blocks by default. **Everything past the limit is not inspected**, so if you set that rule to monitor, an attacker can pad a body past the limit and put the attack after the padding. See [Body over the limit](#body-over-the-limit-padding) below.
 - **Structure:** JSON depth (`MaxDepth`, default 32), field count (`MaxFields`, default 1,000: reported once as `AEG-PROTO-010`, the walk continues field by field under the budget), path length (key segments are capped at 256 bytes, whole paths at 1 KiB).
 - **Detectors** are linear in the length of the value; the route matcher and the validators are linear; user `pattern`s run on Go's RE2 engine, so they cannot backtrack catastrophically.
 
@@ -78,12 +78,9 @@ Each item says what is missed and why. Most are the price of the first ground ru
 
 ### Body over the limit (padding)
 
-Only the first `MaxBodyBytes + 1` bytes of a body reach the engine (default 1 MiB). `AEG-PROTO-003`, raised for a longer body, defaults to **monitor**. So with the default configuration, a body such as `{"pad":"<1 MiB of a>","q":"1' OR '1'='1"}` is allowed in enforce mode and the handler sees the attack. net/http has no body limit of its own, and Fiber's default `BodyLimit` (4 MiB) is above Aegolith's 1 MiB, so neither server closes this for you. Do one of these before you enforce:
+Only the first `MaxBodyBytes + 1` bytes of a body reach the engine (default 1 MiB). `AEG-PROTO-003`, raised for a longer body, defaults to **block**, so a body such as `{"pad":"<1 MiB of a>","q":"1' OR '1'='1"}` is refused in enforce mode. (In monitor mode it is only reported, like every other rule.)
 
-- cap the request body at or below `limits.max_body_bytes` in the server: `http.MaxBytesReader` (net/http), `fiber.Config{BodyLimit: ...}` (Fiber), or the reverse proxy; or
-- set `"rule_actions": {"AEG-PROTO-003": "block"}`, so a body over the limit is refused (raise `max_body_bytes` if you accept larger bodies).
-
-For multipart uploads, blocking over-size bodies also blocks large files; there, cap the body at the server and keep `max_body_bytes` at least as large. Whether the default should become block for parsed text bodies is an open owner decision for a later release.
+The gap reopens if you set `"rule_actions": {"AEG-PROTO-003": "monitor"}` (or `allow`), for example to accept large multipart uploads: the part past the limit is then not inspected and the handler sees the attack. net/http has no body limit of its own, and Fiber's default `BodyLimit` (4 MiB) is above Aegolith's 1 MiB, so neither server closes it for you. Whatever the rule's action, cap the request body at or below `limits.max_body_bytes` in the server: `http.MaxBytesReader` (net/http), `fiber.Config{BodyLimit: ...}` (Fiber), or the reverse proxy. If you accept larger bodies, raise `max_body_bytes` rather than monitoring the rule.
 
 ### Routes Aegolith does not match
 

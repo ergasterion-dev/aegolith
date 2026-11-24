@@ -199,8 +199,9 @@ func (s *state) capped(v string) string {
 func (e *Engine) scanBudget() int64 { return 8*(e.lim.MaxBodyBytes+256<<10) + 64<<10 }
 
 // bodyInspectLimit is how much of a body is inspected: 2 x MaxBodyBytes.
-// Protocol reports a body over MaxBodyBytes (AEG-PROTO-003); inspecting
-// past that point means padding cannot hide a payload just beyond it.
+// Protocol reports a body over MaxBodyBytes (AEG-PROTO-003, block by
+// default); when that rule is monitored, inspecting past that point means
+// padding cannot hide a payload just beyond it.
 func (e *Engine) bodyInspectLimit() int64 { return 2 * e.lim.MaxBodyBytes }
 
 // scan runs every text detector on v.

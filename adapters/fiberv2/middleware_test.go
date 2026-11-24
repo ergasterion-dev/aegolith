@@ -192,8 +192,11 @@ func TestFiberGzipOverLimitPrefixOnly(t *testing.T) {
 	_ = zw.Close()
 	var saw atomic.Int64
 	var oversize atomic.Bool
+	// AEG-PROTO-003 is set to monitor explicitly (it blocks by default in
+	// core releases after v0.1.0-alpha.1) so the request is flagged and
+	// served whichever core version this module resolves.
 	app := newApp(Config{
-		Firewall: newFW(t, aegolith.Config{}),
+		Firewall: newFW(t, aegolith.Config{RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}),
 		OnDecision: func(r *aegolith.Request, d aegolith.Decision) {
 			saw.Store(int64(len(r.Body)))
 			for _, m := range d.Matches {
@@ -206,7 +209,6 @@ func TestFiberGzipOverLimitPrefixOnly(t *testing.T) {
 	req := httptest.NewRequest("POST", "/x", bytes.NewReader(zb.Bytes()))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
-	// AEG-PROTO-003 is a monitor-only rule: the request is flagged, not blocked.
 	code, _, _ := do(t, app, req)
 	if code != 200 || !oversize.Load() || saw.Load() != 1<<20+1 {
 		t.Fatalf("code=%d oversize=%v engine body=%d", code, oversize.Load(), saw.Load())
@@ -642,17 +644,20 @@ func TestFiberCaseVariantPathKeepsRoutePolicy(t *testing.T) {
 	}
 }
 
-// TestFiberOverLimitPaddingBlockedByRuleAction: with AEG-PROTO-003 set to
-// block, an attack pushed past MaxBodyBytes by padding is refused; with the
-// default (monitor) it reaches the handler, which is the documented gap.
-func TestFiberOverLimitPaddingBlockedByRuleAction(t *testing.T) {
+// TestFiberOverLimitPaddingRuleAction: with AEG-PROTO-003 set to block (the
+// core default after v0.1.0-alpha.1), an attack pushed past MaxBodyBytes by
+// padding is refused; set to monitor, it reaches the handler, which is the
+// documented trade-off. Both actions are explicit so the test holds for
+// whichever core version this module resolves; the default itself is
+// pinned by the core and httpwaf tests.
+func TestFiberOverLimitPaddingRuleAction(t *testing.T) {
 	body := `{"pad":"` + strings.Repeat("a", 1<<20) + `","q":"1' OR '1'='1"}`
 	for _, c := range []struct {
 		name string
 		cfg  aegolith.Config
 		want int
 	}{
-		{"default", aegolith.Config{Mode: aegolith.ModeEnforce}, 200},
+		{"proto-003 monitor", aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}, 200},
 		{"proto-003 block", aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}}, 403},
 	} {
 		var calls atomic.Int32

@@ -48,10 +48,11 @@ const maxRequestIDLen = 64
 //
 // The request body is read up to Limits.MaxBodyBytes+1 bytes for inspection
 // and then restored, so the next handler sees the complete original stream.
-// Bytes past that limit are not inspected, and AEG-PROTO-003 (body over the
-// limit) is monitor by default, so padding can push an attack out of sight:
-// wrap the body in http.MaxBytesReader at or below MaxBodyBytes before this
-// middleware, or set AEG-PROTO-003 to block in Config.RuleActions.
+// Bytes past that limit are not inspected. AEG-PROTO-003 (body over the
+// limit) blocks by default, so in enforce mode padding cannot push an attack
+// out of sight; if Config.RuleActions sets it to monitor, it can. Still wrap
+// the body in http.MaxBytesReader at or below MaxBodyBytes before this
+// middleware: net/http has no body limit of its own.
 //
 // net/http does not decode Content-Encoding and neither does this
 // middleware: a compressed body is inspected as compressed bytes (normally

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -279,13 +280,20 @@ func hugeJSON(n int) string {
 
 // TestInspectHugeBody: 100k JSON fields stop the walk at MaxFields
 // (AEG-PROTO-010) and the raw body is scanned under the per-request scan
-// budget, so the time stays bounded and the legit-shaped body is allowed.
+// budget, so the time stays bounded. The body is over MaxBodyBytes, which
+// blocks by default; with AEG-PROTO-003 set to monitor the legit-shaped body
+// is inspected in full and allowed.
 func TestInspectHugeBody(t *testing.T) {
-	fw := mustNew(t, aegolith.Config{})
 	r := postJSON("/api/v1/import", hugeJSON(100000))
 	if len(r.Body) <= 1<<20 {
 		t.Fatalf("body should exceed the 1 MiB limit, is %d bytes", len(r.Body))
 	}
+	if d := mustNew(t, aegolith.Config{}).Inspect(r); d.Action != aegolith.ActionBlock {
+		t.Fatalf("default config: over-size body not blocked: %v", ruleIDs(d))
+	} else {
+		mustHave(t, d, "AEG-PROTO-003", "body")
+	}
+	fw := mustNew(t, aegolith.Config{RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}})
 	fw.Inspect(postJSON("/warm", `{"a":1}`)) // first-call setup is not what is measured
 	start := time.Now()
 	d := fw.Inspect(r)
@@ -425,6 +433,13 @@ func TestInspectPaddingDoesNotBypassEnforce(t *testing.T) {
 	d = g.Inspect(postJSON("/s", big))
 	if d.Action != aegolith.ActionBlock {
 		t.Fatalf(">1MiB json: %v", ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-PROTO-003", "body")
+	// With AEG-PROTO-003 downgraded to monitor, the engine still inspects
+	// up to 2 x MaxBodyBytes, so the attack after the padding is seen.
+	d = mustNew(t, aegolith.Config{RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}).Inspect(postJSON("/s", big))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf(">1MiB json, PROTO-003 monitor: %v", ruleIDs(d))
 	}
 	mustHave(t, d, "AEG-SQLI-001", "body.q")
 	xxe := withBody("POST", "/s", "application/xml", `<?xml version="1.0"?><!--`+strings.Repeat("a", 8200)+`--><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><x>&e;</x>`)
@@ -1447,5 +1462,36 @@ func TestNewCopiesFieldBounds(t *testing.T) {
 	}
 	if d := fw.Inspect(postJSON("/cart", `{"qty":0}`)); d.Action != aegolith.ActionBlock {
 		t.Fatalf("qty 0 after the caller lowered Min: %v", d.Action)
+	}
+}
+
+// Owner ruling 2026-11-25: AEG-PROTO-003 (body over MaxBodyBytes) blocks by
+// default, RuleActions can set it back to monitor, and a monitor-mode
+// firewall only reports it.
+func TestBodyOverLimitDefaultBlocks(t *testing.T) {
+	padded := postJSON("/s", `{"pad":"`+strings.Repeat("a", 1<<20)+`"}`)
+	d := mustNew(t, aegolith.Config{}).Inspect(padded)
+	m := mustHave(t, d, "AEG-PROTO-003", "body")
+	if d.Action != aegolith.ActionBlock || d.Monitored || m.Action != aegolith.ActionBlock {
+		t.Fatalf("default: %+v", d)
+	}
+	d = mustNew(t, aegolith.Config{RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}).Inspect(padded)
+	m = mustHave(t, d, "AEG-PROTO-003", "body")
+	if d.Action != aegolith.ActionAllow || !d.Monitored || m.Action != aegolith.ActionMonitor {
+		t.Fatalf("rule_actions monitor: %+v", d)
+	}
+	d = mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor}).Inspect(padded)
+	mustHave(t, d, "AEG-PROTO-003", "body")
+	if d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("monitor mode: %+v", d)
+	}
+	// Exactly at the limit is fine.
+	atLimit := `{"p":"` + strings.Repeat("a", 1<<20-8) + `"}`
+	if len(atLimit) != 1<<20 {
+		t.Fatalf("len %d", len(atLimit))
+	}
+	d = mustNew(t, aegolith.Config{}).Inspect(postJSON("/s", atLimit))
+	if d.Action == aegolith.ActionBlock || slices.Contains(ruleIDs(d), "AEG-PROTO-003@body") {
+		t.Fatalf("body at the limit: %v", ruleIDs(d))
 	}
 }

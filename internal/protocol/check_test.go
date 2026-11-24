@@ -81,7 +81,7 @@ func TestMatchShape(t *testing.T) {
 	}
 	r = &model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte("12345")}
 	m = Check(r, Config{Limits: model.Limits{MaxBodyBytes: 4}})[0]
-	if m.Action != model.ActionMonitor || m.Severity != model.SeverityLow {
+	if m.RuleID != "AEG-PROTO-003" || m.Action != model.ActionBlock || m.Severity != model.SeverityMedium || m.Location != model.LocBody {
 		t.Fatalf("%+v", m)
 	}
 	r = &model.Request{Method: "GET", RawPath: "/a", Header: http.Header{"X-Evil": {"a\nb"}}}

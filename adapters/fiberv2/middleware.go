@@ -57,9 +57,10 @@ const maxRequestIDLen = 64
 // is inspected decompressed; codings Fiber does not decode (x-gzip, zstd)
 // stay compressed. At most Limits().MaxBodyBytes+1 bytes of it are copied
 // for inspection; a longer body makes the engine raise AEG-PROTO-003 on that
-// prefix, which is monitor by default, so the rest is not inspected: set
-// fiber.Config.BodyLimit at or below MaxBodyBytes, or set AEG-PROTO-003 to
-// block in Config.RuleActions. The handler still sees the complete,
+// prefix. The rest is not inspected, so the rule blocks by default (core
+// releases after v0.1.0-alpha.1; that release monitors it); if
+// Config.RuleActions sets it to monitor, padding can hide an attack. Still
+// set fiber.Config.BodyLimit at or below MaxBodyBytes. The handler still sees the complete,
 // unmodified body. Fiber/fasthttp itself inflates the whole body on
 // c.Body(); fiber.Config.BodyLimit caps the compressed size.
 //

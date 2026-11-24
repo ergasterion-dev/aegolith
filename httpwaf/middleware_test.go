@@ -551,40 +551,49 @@ func TestSlogHookErrorLevelAndTruncation(t *testing.T) {
 	}
 }
 
-// TestMiddlewareOverLimitPaddingNeedsBodyCap pins the documented behaviour of
-// a body longer than MaxBodyBytes: only the first MaxBodyBytes+1 bytes are
-// inspected, and AEG-PROTO-003 defaults to monitor, so padding pushes an
-// attack past what the engine sees. RuleActions{"AEG-PROTO-003": block}
-// (or capping the body at the server) closes that gap.
-func TestMiddlewareOverLimitPaddingNeedsBodyCap(t *testing.T) {
+// TestMiddlewareOverLimitPadding pins the behaviour of a body longer than
+// MaxBodyBytes: only the first MaxBodyBytes+1 bytes are inspected, so
+// AEG-PROTO-003 blocks by default and padding cannot push an attack out of
+// sight. RuleActions can set the rule back to monitor, which reopens the
+// gap, and a monitor-mode firewall only reports it.
+func TestMiddlewareOverLimitPadding(t *testing.T) {
 	body := `{"pad":"` + strings.Repeat("a", 1<<20) + `","q":"1' OR '1'='1"}`
-	run := func(cfg aegolith.Config) (int, bool) {
+	run := func(cfg aegolith.Config, body string) (int, bool, aegolith.Decision) {
 		var called atomic.Bool
-		h := Middleware(newFW(t, cfg), Options{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got aegolith.Decision
+		h := Middleware(newFW(t, cfg), Options{OnDecision: func(_ *aegolith.Request, d aegolith.Decision) { got = d }})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called.Store(true)
 		}))
 		req := httptest.NewRequest("POST", "/search", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		return rec.Code, called.Load()
+		return rec.Code, called.Load(), got
 	}
-	// Default (documented gap): the attack after the padding is not seen.
-	if code, called := run(aegolith.Config{Mode: aegolith.ModeEnforce}); code != 200 || !called {
-		t.Fatalf("default: code=%d called=%v; the PROTO-003 default changed, update the docs", code, called)
+	has003 := func(d aegolith.Decision) bool {
+		for _, m := range d.Matches {
+			if m.RuleID == "AEG-PROTO-003" {
+				return true
+			}
+		}
+		return false
 	}
-	// The documented override blocks it.
-	cfg := aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}}
-	if code, called := run(cfg); code != 403 || called {
-		t.Fatalf("PROTO-003 block: code=%d called=%v", code, called)
+	// Default config (enforce): the padded body is refused.
+	if code, called, d := run(aegolith.Config{}, body); code != 403 || called || !has003(d) || d.Action != aegolith.ActionBlock {
+		t.Fatalf("default: code=%d called=%v decision=%+v", code, called, d)
 	}
-	// A body within the limit is unaffected by the override.
-	h := Middleware(newFW(t, cfg), Options{})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	req := httptest.NewRequest("POST", "/search", strings.NewReader(`{"q":"red shoes"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != 200 {
-		t.Fatalf("small body with PROTO-003 block: code=%d", rec.Code)
+	// Monitor mode only reports it.
+	if code, called, d := run(aegolith.Config{Mode: aegolith.ModeMonitor}, body); code != 200 || !called || !has003(d) || !d.Monitored {
+		t.Fatalf("monitor mode: code=%d called=%v decision=%+v", code, called, d)
+	}
+	// RuleActions can downgrade it to monitor: the attack past the limit
+	// is then not seen (the documented trade-off).
+	cfg := aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}
+	if code, called, d := run(cfg, body); code != 200 || !called || !has003(d) {
+		t.Fatalf("PROTO-003 monitor: code=%d called=%v decision=%+v", code, called, d)
+	}
+	// A body within the limit is unaffected by the default.
+	if code, called, d := run(aegolith.Config{}, `{"q":"red shoes"}`); code != 200 || !called || has003(d) {
+		t.Fatalf("small body: code=%d called=%v", code, called)
 	}
 }

@@ -64,13 +64,15 @@ binary data and normally blocks it (`AEG-LFI-001`). A handler that decodes
 `c.Request().Body()` itself sees data Aegolith did not. For an API, reject
 request `Content-Encoding` other than `identity` before this middleware.
 
-**Cap the body, or padding bypasses inspection.** At most
-`Limits.MaxBodyBytes+1` bytes are copied (default 1 MiB); a longer body only
-makes the engine report `AEG-PROTO-003` (monitor by default) on that prefix,
-so an attack placed after the padding reaches the handler even in enforce
-mode. Fiber's default `BodyLimit` (4 MiB) is larger than that. Either set
-`fiber.Config{BodyLimit: ...}` at or below `max_body_bytes`, or set
-`RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}`.
+**Cap the body.** At most `Limits.MaxBodyBytes+1` bytes are copied (default
+1 MiB); a longer body makes the engine raise `AEG-PROTO-003` on that prefix,
+and the rest is not inspected. The rule blocks by default, so in enforce
+mode a padded body is refused. (Core `v0.1.0-alpha.1`, which this adapter
+release pins, still monitors it; there, set
+`RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}`.)
+If you set it back to monitor, an attack placed after the padding reaches the
+handler. Fiber's default `BodyLimit` (4 MiB) is larger than `max_body_bytes`,
+so set `fiber.Config{BodyLimit: ...}` at or below it as well.
 `BodyLimit` caps the compressed size; fasthttp inflates the whole body on
 `c.Body()`, so it is also your bound on decompression.
 

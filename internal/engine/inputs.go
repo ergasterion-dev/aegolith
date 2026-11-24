@@ -156,9 +156,10 @@ func mediaType(ct string) string {
 }
 
 // checkBody inspects the body according to its media type. Protocol
-// reports a body over MaxBodyBytes (AEG-PROTO-003, monitor); up to
-// bodyInspectLimit (2 x MaxBodyBytes) of it is still inspected so an attack
-// placed after padding is seen. Bodies of other media types are scanned raw only
+// reports a body over MaxBodyBytes (AEG-PROTO-003, block by default, so in
+// enforce mode an over-size body never gets this far); with that rule set to
+// monitor, up to bodyInspectLimit (2 x MaxBodyBytes) of it is still inspected
+// so an attack placed after padding is seen. Bodies of other media types are scanned raw only
 // when textual (text/*); binary bodies are not.
 func (s *state) checkBody() {
 	body := s.req.Body
