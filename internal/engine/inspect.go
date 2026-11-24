@@ -176,25 +176,25 @@ func (s *state) capped(v string) string {
 }
 
 // scanBudget is the per-request limit on bytes handed to the text
-// detectors: 4 x (MaxBodyBytes + 256 KiB) + 64 KiB. Every scanned value is
+// detectors: 8 x (MaxBodyBytes + 256 KiB) + 64 KiB. Every scanned value is
 // charged its length once per window it occupies; windows of a value over
 // MaxValueLen overlap by half, so a value is charged at most 2x its length.
-// Per byte, then:
-//   - a body byte is charged at most 4x: up to 2x as part of a walked
-//     value (or a form, multipart, XML or text value), plus up to 2x by
-//     the windowed raw rescan after malformed JSON or a depth overflow;
+// Per byte of input, then:
+//   - a body byte is charged at most 8x. A walked JSON value can be up to
+//     3x as long as its source bytes (the decoder turns each invalid UTF-8
+//     byte into U+FFFD, 1 -> 3 bytes; escapes only shrink), and the
+//     overlapping windows double that: 6x. The windowed raw rescan after
+//     malformed JSON or a depth overflow adds 2x: 8x. Form, multipart,
+//     XML and text values are not expanded: at most 2x;
 //   - a byte of any other input (path, query, cookies, scanned headers) is
 //     charged at most 2x.
 //
-// One exception to the body bound: the JSON decoder turns each byte of
-// invalid UTF-8 inside a string into U+FFFD (3 bytes), so such a byte can
-// be charged up to 6x in the walk (plus 2x in a rescan). Apart from that,
-// no request whose body is within MaxBodyBytes and whose other inputs
+// So no request whose body is within MaxBodyBytes and whose other inputs
 // total at most 256 KiB can exhaust it. Beyond that it can (a documented
 // gap: one monitor match, never a block or a panic); servers cap those
 // inputs well below it anyway (net/http: 1 MiB of headers; Fiber: 4 KiB
 // buffers).
-func (e *Engine) scanBudget() int64 { return 4*(e.lim.MaxBodyBytes+256<<10) + 64<<10 }
+func (e *Engine) scanBudget() int64 { return 8*(e.lim.MaxBodyBytes+256<<10) + 64<<10 }
 
 // bodyInspectLimit is how much of a body is inspected: 2 x MaxBodyBytes.
 // Protocol reports a body over MaxBodyBytes (AEG-PROTO-003); inspecting
