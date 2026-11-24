@@ -116,9 +116,11 @@ func TestFiberBodyIntact(t *testing.T) {
 	for name, body := range map[string][]byte{"small": small, "over-limit": over} {
 		t.Run(name, func(t *testing.T) {
 			var sawSize atomic.Int64
+			var hooked atomic.Int32
 			app := newApp(Config{
 				Firewall: newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor}),
 				OnDecision: func(r *aegolith.Request, _ aegolith.Decision) {
+					hooked.Add(1)
 					sawSize.Store(int64(len(r.Body)))
 				},
 			}, nil)
@@ -128,8 +130,18 @@ func TestFiberBodyIntact(t *testing.T) {
 			if code != 200 || !bytes.Equal(got, body) {
 				t.Fatalf("code=%d len(got)=%d len(want)=%d", code, len(got), len(body))
 			}
-			if name == "over-limit" && (sawSize.Load() == 0 || sawSize.Load() > 1<<20+1) {
-				t.Fatalf("engine got %d bytes, want at most limit+1", sawSize.Load())
+			switch name {
+			case "over-limit":
+				// Monitored (AEG-PROTO-003), so the hook must run exactly
+				// once and see exactly limit+1 bytes.
+				if hooked.Load() != 1 || sawSize.Load() != 1<<20+1 {
+					t.Fatalf("hook calls=%d, engine got %d bytes, want 1 call and limit+1 bytes", hooked.Load(), sawSize.Load())
+				}
+			case "small":
+				// A clean allow never reaches the hook.
+				if hooked.Load() != 0 {
+					t.Fatalf("hook called %d times for a clean request", hooked.Load())
+				}
 			}
 		})
 	}
@@ -667,6 +679,47 @@ func TestFiberOverLimitPaddingRuleAction(t *testing.T) {
 		code, _, _ := do(t, app, req)
 		if code != c.want || (calls.Load() > 0) != (c.want == 200) {
 			t.Errorf("%s: code=%d calls=%d, want %d", c.name, code, calls.Load(), c.want)
+		}
+	}
+}
+
+// TestRouteFoldCachedPerApp: the app config is read once per app, not per
+// request, and one middleware mounted on two apps answers for each.
+func TestRouteFoldCachedPerApp(t *testing.T) {
+	var loads atomic.Int32
+	f := &routeFold{load: func(app *fiber.App) bool { loads.Add(1); return appFoldsRoutes(app) }}
+	folding := fiber.New()
+	strict := fiber.New(fiber.Config{CaseSensitive: true})
+	for range 100 {
+		if !f.get(folding) {
+			t.Fatal("default app should fold")
+		}
+	}
+	if loads.Load() != 1 {
+		t.Fatalf("config read %d times for one app", loads.Load())
+	}
+	if f.get(strict) || !f.get(folding) {
+		t.Fatal("wrong answer after switching apps")
+	}
+
+	// End to end: one handler on both apps. With folding, /API/... matches
+	// the route and the non-int id is a schema block; case-sensitive, it is
+	// an unknown route (monitor), so the request is served.
+	h := New(Config{Firewall: newFW(t, aegolith.Config{
+		Mode:   aegolith.ModeEnforce,
+		Routes: []aegolith.Route{{Method: "GET", Path: "/api/v1/orders/:id", PathParams: map[string]aegolith.Field{"id": {Type: aegolith.TypeInt}}}},
+	})})
+	for _, app := range []*fiber.App{folding, strict} {
+		app.Use(h)
+		app.Get("/*", func(c *fiber.Ctx) error { return c.SendString("ok") })
+	}
+	for i, c := range []struct {
+		app  *fiber.App
+		want int
+	}{{folding, 403}, {strict, 200}, {folding, 403}, {strict, 200}} {
+		code, _, _ := do(t, c.app, httptest.NewRequest("GET", "/API/v1/orders/abc", nil))
+		if code != c.want {
+			t.Fatalf("step %d: code=%d want %d", i, code, c.want)
 		}
 	}
 }

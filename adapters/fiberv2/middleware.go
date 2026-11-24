@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"strings"
+	"sync/atomic"
 
 	"github.com/ergasterion-dev/aegolith"
 	"github.com/gofiber/fiber/v2"
@@ -78,11 +79,12 @@ func New(cfg Config) fiber.Handler {
 	if maxBody == math.MaxInt64 {
 		maxBody = math.MaxInt64 - 1 // keep maxBody+1 from overflowing
 	}
+	folds := &routeFold{load: appFoldsRoutes}
 	return func(c *fiber.Ctx) error {
 		if cfg.Next != nil && cfg.Next(c) {
 			return c.Next()
 		}
-		ar, dec, ok := inspect(cfg.Firewall, c, maxBody)
+		ar, dec, ok := inspect(cfg.Firewall, c, maxBody, folds)
 		if !ok {
 			// Inspection itself panicked.
 			if cfg.Firewall.FailOpen() {
@@ -102,7 +104,7 @@ func New(cfg Config) fiber.Handler {
 
 // inspect builds the engine request from copies of the fasthttp data and
 // inspects it. ok is false if anything in that step panicked.
-func inspect(fw *aegolith.Firewall, c *fiber.Ctx, maxBody int64) (ar *aegolith.Request, dec aegolith.Decision, ok bool) {
+func inspect(fw *aegolith.Firewall, c *fiber.Ctx, maxBody int64, folds *routeFold) (ar *aegolith.Request, dec aegolith.Decision, ok bool) {
 	defer func() {
 		if recover() != nil {
 			ok = false
@@ -119,10 +121,38 @@ func inspect(fw *aegolith.Firewall, c *fiber.Ctx, maxBody int64) (ar *aegolith.R
 		// Fiber routes case-insensitively unless CaseSensitive is set, so
 		// "/API/v1/x" reaches the "/api/v1/x" handler; match the route
 		// policy the same way.
-		CaseInsensitiveRoutes: !c.App().Config().CaseSensitive,
+		CaseInsensitiveRoutes: folds.get(c.App()),
 	}
 	return ar, fw.Inspect(ar), true
 }
+
+// routeFold caches, per middleware instance, whether the app routes
+// case-insensitively. c.App().Config() copies the whole fiber.Config, so it
+// is read once per app rather than on every request. The cache is keyed on
+// the *fiber.App, so one handler mounted on two apps stays correct (the
+// second app replaces the entry and is read again on a switch).
+type routeFold struct {
+	load  func(*fiber.App) bool
+	cache atomic.Pointer[foldEntry]
+}
+
+type foldEntry struct {
+	app   *fiber.App
+	folds bool
+}
+
+func (f *routeFold) get(app *fiber.App) bool {
+	if e := f.cache.Load(); e != nil && e.app == app {
+		return e.folds
+	}
+	e := &foldEntry{app: app, folds: f.load(app)}
+	f.cache.Store(e)
+	return e.folds
+}
+
+// appFoldsRoutes reports whether app routes literal segments
+// case-insensitively (Fiber's default unless CaseSensitive is set).
+func appFoldsRoutes(app *fiber.App) bool { return !app.Config().CaseSensitive }
 
 // engineHeader copies every raw request header, keeping duplicates in their
 // original order, and adds Host and Content-Length when fasthttp keeps them
