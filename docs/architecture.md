@@ -81,7 +81,7 @@ Matches are always charged by bytes actually scanned, JSON is walked without bui
 
 ## Decisions are deterministic
 
-For a given `Config` and request the `Decision` is the same every time. There is no global mutable state; a `Firewall` is immutable and safe for concurrent use. Where Go would otherwise leak map order (headers, path parameters), the code sorts keys first, so the reported match does not depend on iteration order.
+For a given `Config` and request the `Decision` is the same every time, except `Decision.Duration`, which is the measured inspection time. There is no global mutable state; a `Firewall` is immutable and safe for concurrent use. Where Go would otherwise leak map order (headers, path parameters), the code sorts keys first, so the reported match does not depend on iteration order.
 
 ## No panic, fail open by default
 

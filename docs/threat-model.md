@@ -80,7 +80,7 @@ Each item says what is missed and why. Most are the price of the first ground ru
 
 Only the first `MaxBodyBytes + 1` bytes of a body reach the engine (default 1 MiB). `AEG-PROTO-003`, raised for a longer body, defaults to **block**, so a body such as `{"pad":"<1 MiB of a>","q":"1' OR '1'='1"}` is refused in enforce mode. (In monitor mode it is only reported, like every other rule.)
 
-The gap reopens if you set `"rule_actions": {"AEG-PROTO-003": "monitor"}` (or `allow`), for example to accept large multipart uploads: the part past the limit is then not inspected and the handler sees the attack. net/http has no body limit of its own, and Fiber's default `BodyLimit` (4 MiB) is above Aegolith's 1 MiB, so neither server closes it for you. Whatever the rule's action, cap the request body at or below `limits.max_body_bytes` in the server: `http.MaxBytesReader` (net/http), `fiber.Config{BodyLimit: ...}` (Fiber), or the reverse proxy. If you accept larger bodies, raise `max_body_bytes` rather than monitoring the rule.
+The gap reopens if you set `"rule_actions": {"AEG-PROTO-003": "monitor"}` (or `allow`), or add an exclusion that covers `AEG-PROTO-003`, for example to accept large multipart uploads: the part past the limit is then not inspected and the handler sees the attack. net/http has no body limit of its own, and Fiber's default `BodyLimit` (4 MiB) is above Aegolith's 1 MiB, so neither server closes it for you. Whatever the rule's action, cap the request body at or below `limits.max_body_bytes` in the server: `http.MaxBytesReader` (net/http), `fiber.Config{BodyLimit: ...}` (Fiber), or the reverse proxy. If you accept larger bodies, raise `max_body_bytes` rather than monitoring the rule.
 
 ### Routes Aegolith does not match
 
