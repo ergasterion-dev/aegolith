@@ -196,7 +196,9 @@ func (t *Table) insert(r *Route) error {
 	return nil
 }
 
-// Match finds the route for method and path (a decoded, cleaned path).
+// Match finds the route for method and path. The engine passes the raw
+// (still percent-escaped) path and decodes parameter values afterwards, so
+// an encoded "/" (%2F) can neither split a segment nor forge one.
 // At each segment a literal beats a parameter, which beats a trailing "*";
 // a branch that dead-ends falls back to the next option. HEAD requests
 // match GET routes when no HEAD route matches.

