@@ -61,7 +61,9 @@ type Config struct {
 	// typed fields and unknown-field action. Default false (net/http, chi
 	// and gorilla are case-sensitive). The Fiber adapter turns it on per
 	// request unless fiber.Config.CaseSensitive is set. Two templates that
-	// differ only in letter case are then duplicates and rejected by New.
+	// differ only in letter case are then duplicates and rejected by New;
+	// under the Fiber adapter's per-request folding they are accepted and
+	// the first declared wins (the most specific template wins otherwise).
 	CaseInsensitiveRoutes bool `json:"case_insensitive_routes,omitempty"`
 	// UnknownRoute is the action for a request matching no route when
 	// Routes is set. Default (and the zero value, ActionAllow): monitor, so

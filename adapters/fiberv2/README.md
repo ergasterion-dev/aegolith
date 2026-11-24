@@ -49,8 +49,11 @@ middleware reads `c.App().Config().CaseSensitive` and, when it is false,
 matches the literal segments of your route policies case-insensitively too
 (parameter values keep their case). Without this, a case variant of a path
 would be an unknown route and escape the route's typed fields and
-`unknown_fields: block`. Nothing to configure; templates that differ only in
-letter case are matched exact-case first.
+`unknown_fields: block`. Nothing to configure. Write templates in lower case:
+under folding the most specific template wins (a literal beats a parameter,
+which beats `*`), and of templates that differ only in letter case the first
+declared wins, whereas Fiber serves the first registered handler. (Core
+`v0.1.0-alpha.1` tried the exact-case template first instead.)
 
 ## Body inspection
 

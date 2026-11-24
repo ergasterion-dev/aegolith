@@ -25,18 +25,24 @@ type Route struct {
 }
 
 // Table is a compiled, immutable route table, safe for concurrent use.
+//
+// It holds two tries per method: byMethod, the table as compiled (literal
+// segments case-sensitive, or folded for CompileFold), and foldByMethod,
+// the same routes with literal segments folded to ASCII lower case, used
+// when a caller asks MatchFold to fold on a case-sensitive table. For a
+// CompileFold table both are the same trie.
 type Table struct {
-	byMethod map[string]*node
-	fold     bool // literal segments match regardless of ASCII case
+	byMethod     map[string]*node
+	foldByMethod map[string]*node
+	fold         bool // literal segments match regardless of ASCII case
 }
 
 // node is one segment position in a method's route trie.
 type node struct {
-	literal  map[string]*node
-	folded   map[string][]*node // ASCII-lower-cased literal -> children, in insertion order
-	param    *node              // any non-empty segment
-	wildcard *entry             // route whose template ends in "*" at this position
-	end      *entry             // route whose template ends exactly here
+	literal  map[string]*node // lower-cased in a folded trie
+	param    *node            // any non-empty segment
+	wildcard *entry           // route whose template ends in "*" at this position
+	end      *entry           // route whose template ends exactly here
 }
 
 type entry struct {
@@ -69,13 +75,24 @@ func CompileFold(routes []Route) (*Table, error) {
 
 func compile(routes []Route, fold bool) (*Table, error) {
 	t := &Table{byMethod: map[string]*node{}, fold: fold}
+	if fold {
+		t.foldByMethod = t.byMethod
+	} else {
+		t.foldByMethod = map[string]*node{}
+	}
 	for i := range routes {
 		r, err := compileRoute(routes[i])
 		if err != nil {
 			return nil, fmt.Errorf("policy: route %d (%s %s): %w", i, routes[i].Method, routes[i].Path, err)
 		}
-		if err := t.insert(r); err != nil {
+		if err := insert(t.byMethod, r, fold); err != nil {
 			return nil, fmt.Errorf("policy: route %d (%s %s): %w", i, routes[i].Method, routes[i].Path, err)
+		}
+		if !fold {
+			// Templates that differ only in letter case are distinct
+			// here but collide in the folded view: the first declared
+			// keeps the slot, deterministically.
+			_ = insert(t.foldByMethod, r, true)
 		}
 	}
 	return t, nil
@@ -168,11 +185,15 @@ func splitPath(p string) []string {
 	return strings.Split(p, "/")
 }
 
-func (t *Table) insert(r *Route) error {
-	root := t.byMethod[r.Method]
+// insert adds r to the trie of its method in byMethod, folding literal
+// segments to ASCII lower case when fold is set. A route that ends where
+// another already ends is a duplicate; the trie is then left unchanged
+// apart from empty interior nodes.
+func insert(byMethod map[string]*node, r *Route, fold bool) error {
+	root := byMethod[r.Method]
 	if root == nil {
 		root = &node{}
-		t.byMethod[r.Method] = root
+		byMethod[r.Method] = root
 	}
 	e := &entry{route: r, key: r.Method + " " + r.Path}
 	n := root
@@ -193,19 +214,16 @@ func (t *Table) insert(r *Route) error {
 			}
 			n = n.param
 		default:
-			if t.fold {
+			if fold {
 				s = asciiLower(s)
 			}
 			if n.literal == nil {
 				n.literal = map[string]*node{}
-				n.folded = map[string][]*node{}
 			}
 			c := n.literal[s]
 			if c == nil {
 				c = &node{}
 				n.literal[s] = c
-				ls := asciiLower(s)
-				n.folded[ls] = append(n.folded[ls], c)
 			}
 			n = c
 		}
@@ -232,10 +250,12 @@ func (t *Table) Match(method, path string) (Matched, bool) {
 }
 
 // MatchFold is Match with literal-segment case folding chosen per call; a
-// table built with CompileFold always folds. When folding, an exact-case
-// literal is tried first, then the other literals equal to the segment
-// under ASCII case folding, in declaration order. Parameter values and the
-// wildcard rest keep their case.
+// table built with CompileFold always folds. When folding, matching is
+// exactly as on a CompileFold table: literal segments compare after ASCII
+// lower-casing, the most specific template wins (literal, then param, then
+// wildcard, segment by segment), and of templates that differ only in
+// letter case the first declared wins. Parameter values and the wildcard
+// rest keep their case.
 func (t *Table) MatchFold(method, path string, fold bool) (Matched, bool) {
 	if t == nil {
 		return Matched{}, false
@@ -253,7 +273,11 @@ func (t *Table) MatchFold(method, path string, fold bool) (Matched, bool) {
 }
 
 func (t *Table) matchMethod(method string, segs []string, fold bool) (Matched, bool) {
-	root := t.byMethod[method]
+	tries := t.byMethod
+	if fold {
+		tries = t.foldByMethod
+	}
+	root := tries[method]
 	if root == nil {
 		return Matched{}, false
 	}
@@ -291,20 +315,13 @@ func (n *node) find(segs []string, i int, fold bool, bound *[]string) (*entry, i
 		return nil, -1
 	}
 	s := segs[i]
-	exact := n.literal[s]
-	if exact != nil {
-		if e, r := exact.find(segs, i+1, fold, bound); e != nil {
-			return e, r
-		}
+	lit := s
+	if fold {
+		lit = asciiLower(s)
 	}
-	if fold && n.folded != nil {
-		for _, c := range n.folded[asciiLower(s)] {
-			if c == exact {
-				continue
-			}
-			if e, r := c.find(segs, i+1, fold, bound); e != nil {
-				return e, r
-			}
+	if c := n.literal[lit]; c != nil {
+		if e, r := c.find(segs, i+1, fold, bound); e != nil {
+			return e, r
 		}
 	}
 	if n.param != nil && s != "" {

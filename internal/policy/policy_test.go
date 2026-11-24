@@ -515,27 +515,62 @@ func TestMatchCaseFolding(t *testing.T) {
 	}
 }
 
-func TestMatchFoldPrefersExactCase(t *testing.T) {
-	tbl, err := Compile([]Route{
+// TestMatchFoldMostSpecific: folding on a case-sensitive table (the Fiber
+// adapter's per-request mode) matches exactly like a CompileFold table:
+// the most specific template wins, and of templates that differ only in
+// letter case the first declared wins (final re-review m1).
+func TestMatchFoldMostSpecific(t *testing.T) {
+	routes := []Route{
 		{Method: "GET", Path: "/a/Users"},
 		{Method: "GET", Path: "/a/users"},
 		{Method: "GET", Path: "/b/X/end"},
 		{Method: "GET", Path: "/b/x/:id/z"},
-	})
+		// m1 probes: a case variant must not make a param or wildcard
+		// template beat a more specific literal one.
+		{Method: "GET", Path: "/api/Users/:id"},
+		{Method: "GET", Path: "/api/users/me"},
+		{Method: "GET", Path: "/files/*"},
+		{Method: "GET", Path: "/Files/admin"},
+	}
+	tbl, err := Compile(routes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct{ path, key string }{
-		{"/a/users", "GET /a/users"},
+	cases := []struct{ path, key string }{
+		// identical under folding: first declared, whatever the request case
+		{"/a/users", "GET /a/Users"},
 		{"/a/Users", "GET /a/Users"},
-		{"/a/USERS", "GET /a/Users"}, // first declared among the folded candidates
-		// the exact-case branch dead-ends, so the folded sibling is tried
+		{"/a/USERS", "GET /a/Users"},
 		{"/b/x/end", "GET /b/X/end"},
 		{"/b/x/7/z", "GET /b/x/:id/z"},
-	} {
+		{"/api/USERS/Me", "GET /api/users/me"},
+		{"/api/Users/me", "GET /api/users/me"},
+		{"/api/users/42", "GET /api/Users/:id"},
+		{"/files/ADMIN", "GET /Files/admin"},
+		{"/FILES/other/x", "GET /files/*"},
+	}
+	for _, c := range cases {
 		m, ok := tbl.MatchFold("GET", c.path, true)
 		if !ok || m.Key != c.key {
 			t.Errorf("MatchFold(%s) = %q,%v; want %q", c.path, m.Key, ok, c.key)
+		}
+	}
+	// Without folding the case-sensitive table is unchanged.
+	if m, ok := tbl.Match("GET", "/a/users"); !ok || m.Key != "GET /a/users" {
+		t.Errorf("Match(/a/users) = %q,%v", m.Key, ok)
+	}
+	if m, ok := tbl.Match("GET", "/api/Users/me"); !ok || m.Key != "GET /api/Users/:id" {
+		t.Errorf("Match(/api/Users/me) = %q,%v", m.Key, ok)
+	}
+	// A CompileFold table of the routes without the case duplicate agrees
+	// with MatchFold on every probe.
+	foldTbl, err := CompileFold(append(routes[:1:1], routes[2:]...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if m, ok := foldTbl.Match("GET", c.path); !ok || m.Key != c.key {
+			t.Errorf("CompileFold Match(%s) = %q,%v; want %q", c.path, m.Key, ok, c.key)
 		}
 	}
 	// CompileFold rejects templates that differ only in letter case.
