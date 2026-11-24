@@ -220,8 +220,19 @@ func TestWalkJSONLimits(t *testing.T) {
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("fields: got %v want ErrLimit", err)
 	}
-	if len(got) != lim.MaxFields {
-		t.Fatalf("emitted %d values, want exactly %d", len(got), lim.MaxFields)
+	counted := 0
+	for _, v := range got {
+		if !v.IsContainer {
+			counted++
+		}
+	}
+	if counted != lim.MaxFields {
+		t.Fatalf("emitted %d keys and values, want exactly %d", counted, lim.MaxFields)
+	}
+	// Containers do not count toward MaxFields.
+	small := model.Limits{MaxDepth: 32, MaxFields: 2}
+	if _, err := collect(`[[[[{"a":1}]]]]`, small); err != nil {
+		t.Fatalf("containers counted: %v", err)
 	}
 }
 

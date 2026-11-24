@@ -38,8 +38,9 @@ type jsonFrame struct {
 
 // WalkJSON streams body through a token decoder and calls fn for every
 // string, number and boolean value, once per object key and once at the
-// start of every object or array. Nesting beyond
-// lim.MaxDepth or more than lim.MaxFields emitted items yields ErrLimit; a
+// start of every object or array. Object keys and scalar values count
+// toward lim.MaxFields; container starts do not (the body size bounds them). Nesting beyond
+// lim.MaxDepth or more than lim.MaxFields counted items yields ErrLimit; a
 // syntax error yields ErrMalformed. Values emitted before an error stay
 // emitted. It uses an explicit stack, so depth cannot exhaust the call stack.
 func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
@@ -57,10 +58,12 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 	)
 
 	emitValue := func(v JSONValue) error {
-		if count >= lim.MaxFields {
-			return ErrLimit
+		if !v.IsContainer {
+			if count >= lim.MaxFields {
+				return ErrLimit
+			}
+			count++
 		}
-		count++
 		v.Path = string(path)
 		fn(v)
 		return nil
