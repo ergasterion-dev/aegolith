@@ -83,6 +83,8 @@ var (
 		"HTTP://user:pw@169.254.169.254:80/",
 		"http://metadata.google.internal./",
 		"http%3A%2F%2F169.254.169.254%2F",
+		"http://ok.example,http://169.254.169.254/latest/meta-data/",
+		"http://ok.example;http://[fd00:ec2::254]/",
 	}
 	ssrfPrivatePositives = []string{
 		"http://127.0.0.1:8080/admin",
@@ -105,6 +107,7 @@ var (
 		"http://0177.0.0.1/",
 		"http://0.0.0.0:8080/",
 		"see http://127.0.0.1/x for details",
+		"http://ok.example,http://127.0.0.1/admin",
 	}
 	ssrfNegatives = []string{
 		"router at 192.168.1.1",

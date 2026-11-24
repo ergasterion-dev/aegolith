@@ -205,8 +205,9 @@ const (
 )
 
 // ssrfRule classifies the host of every URL in s and returns the worst
-// class found. Each authority ends at the next '/', so the scan from one
-// "://" never reaches past the next one: linear overall.
+// class found. Each authority scan stops at the first '/', and every later
+// "://" contains one, so no scan reaches past the next "://": every byte is
+// read a bounded number of times, linear overall.
 func ssrfRule(s string) int {
 	worst := ssrfNone
 	for off := 0; ; {
@@ -229,7 +230,9 @@ func ssrfRule(s string) int {
 		case ssrfInternal:
 			worst = ssrfInternal
 		}
-		off = end
+		// The next search resumes right after this "://", not at the end
+		// of the authority: in "http://ok.example,http://169.254.169.254/"
+		// the first authority runs into the second URL's scheme.
 	}
 }
 
