@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // Field types accepted in FieldSpec.Type.
@@ -28,7 +28,7 @@ const (
 	maxNumberLen = 64   // decimal literal, int or float
 	maxEmailLen  = 254  // RFC 5321 path limit
 	maxPhoneLen  = 32   // 15 digits plus separators and '+'
-	maxURLLen    = 2048 // de-facto browser/CDN limit
+	maxURLLen    = 8192 // room for long presigned URLs
 )
 
 // FieldSpec declares the type of one path parameter, query value or JSON
@@ -79,18 +79,32 @@ func (s FieldSpec) compile() (FieldSpec, error) {
 	return s, nil
 }
 
-// anchored compiles a pattern so it must match the whole value. Go's RE2
-// engine runs in time linear in the input, so a user pattern cannot cause
-// catastrophic backtracking.
+// anchored compiles a pattern so it must match the whole value. The raw
+// pattern is compiled first so that unbalanced input such as "a)|(?:.*"
+// cannot break out of the anchoring group. Go's RE2 engine runs in time
+// linear in the input, so a user pattern cannot cause catastrophic
+// backtracking.
 func anchored(p string) (*regexp.Regexp, error) {
+	if _, err := regexp.Compile(p); err != nil {
+		return nil, err
+	}
 	return regexp.Compile(`^(?:` + p + `)$`)
 }
 
 // Validate reports whether value conforms to spec. isString says whether
 // the value was a JSON string (query, path and form values always are);
-// JSON numbers and booleans arrive with isString false and their literal
-// text as value. Validate never logs the value.
+// JSON numbers, booleans and null arrive with isString false and their
+// literal text as value. Only int, number and bool accept such values;
+// for every other type a non-string JSON value is a schema mismatch.
+// Validate never logs the value.
 func Validate(spec FieldSpec, value string, isString bool) bool {
+	switch spec.Type {
+	case TypeInt, TypeNumber, TypeBool:
+	default:
+		if !isString {
+			return false
+		}
+	}
 	switch spec.Type {
 	case TypeUUID:
 		return isUUID(value)
@@ -116,12 +130,7 @@ func Validate(spec FieldSpec, value string, isString bool) bool {
 		_, err := strconv.ParseBool(value)
 		return err == nil
 	case TypeEnum:
-		for _, e := range spec.Enum {
-			if value == e {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(spec.Enum, value)
 	case TypeString:
 		if !withinRunes(value, spec.MaxLen) {
 			return false
@@ -159,16 +168,16 @@ func inRange(spec FieldSpec, f float64) bool {
 	return true
 }
 
-// withinRunes reports whether s has at most max runes (max 0 = no limit).
+// withinRunes reports whether s has at most limit runes (0 = no limit).
 // It stops counting as soon as the limit is exceeded.
-func withinRunes(s string, max int) bool {
-	if max == 0 || len(s) <= max {
+func withinRunes(s string, limit int) bool {
+	if limit == 0 || len(s) <= limit {
 		return true
 	}
 	n := 0
 	for range s {
 		n++
-		if n > max {
+		if n > limit {
 			return false
 		}
 	}
@@ -184,7 +193,7 @@ func isUUID(s string) bool {
 	if len(s) != 36 {
 		return false
 	}
-	for i := 0; i < 36; i++ {
+	for i := range 36 {
 		switch i {
 		case 8, 13, 18, 23:
 			if s[i] != '-' {
@@ -259,29 +268,54 @@ func isDecimalLiteral(s string) bool {
 	return i == len(s)
 }
 
-// isEmail is a deliberately loose check: exactly one '@' with something on
-// both sides, no whitespace or control characters, at most 254 bytes.
-// Deliverability is the application's problem; this only rejects values
-// that cannot be an address (and header/command injection shapes).
+// isEmail checks the shape of an address: a dot-atom local part made of
+// RFC 5322 atext minus the quote characters (' and `), an '@', and a
+// domain of hostname labels ([A-Za-z0-9-], or bytes >= 0x80 for IDN)
+// joined by single dots; at most 254 bytes. Quoted local parts, address
+// literals and comments are rejected: an email field is not text-scanned,
+// so it must not admit markup or SQL punctuation.
 func isEmail(s string) bool {
 	if len(s) == 0 || len(s) > maxEmailLen {
 		return false
 	}
-	at := -1
-	for i := 0; i < len(s); i++ {
+	at := strings.IndexByte(s, '@')
+	if at <= 0 || at == len(s)-1 {
+		return false
+	}
+	return dotted(s[:at], isAtext) && dotted(s[at+1:], isHostByte)
+}
+
+// dotted reports whether s is one or more non-empty runs of ok bytes
+// separated by single dots.
+func dotted(s string, ok func(byte) bool) bool {
+	run := 0
+	for i := range len(s) {
 		c := s[i]
-		if c <= ' ' || c == 0x7f {
-			return false
-		}
-		if c == '@' {
-			if at >= 0 {
+		switch {
+		case c == '.':
+			if run == 0 {
 				return false
 			}
-			at = i
+			run = 0
+		case ok(c):
+			run++
+		default:
+			return false
 		}
 	}
-	return at > 0 && at < len(s)-1 && utf8.ValidString(s)
+	return run > 0
 }
+
+func isAlnum(c byte) bool {
+	return isDigit(c) || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// isAtext is RFC 5322 atext without ' and `.
+func isAtext(c byte) bool {
+	return isAlnum(c) || strings.IndexByte("!#$%&*+-/=?^_{|}~", c) >= 0
+}
+
+func isHostByte(c byte) bool { return isAlnum(c) || c == '-' || c >= 0x80 }
 
 // isPhone accepts an optional leading '+', then digits, spaces and dashes,
 // with 7 to 15 digits in total (E.164 allows at most 15).
@@ -305,14 +339,16 @@ func isPhone(s string) bool {
 	return n >= 7 && n <= 15
 }
 
-// isHTTPURL accepts an absolute http or https URL with a host. Whether the
-// host is safe to fetch is the SSRF detector's job, not the type's.
+// isHTTPURL accepts an absolute http or https URL with a host, made only of
+// RFC 3986 unreserved and reserved characters and percent-encoding (minus
+// the single quote). Whether the host is safe to fetch is the SSRF
+// detector's job, not the type's.
 func isHTTPURL(s string) bool {
 	if len(s) == 0 || len(s) > maxURLLen {
 		return false
 	}
-	for i := 0; i < len(s); i++ {
-		if c := s[i]; c <= ' ' || c == 0x7f {
+	for i := range len(s) {
+		if !isURLByte(s[i]) {
 			return false
 		}
 	}
@@ -321,5 +357,9 @@ func isHTTPURL(s string) bool {
 		return false
 	}
 	scheme := strings.ToLower(u.Scheme)
-	return (scheme == "http" || scheme == "https") && u.Host != "" && u.Opaque == ""
+	return (scheme == "http" || scheme == "https") && u.Hostname() != "" && u.Opaque == ""
+}
+
+func isURLByte(c byte) bool {
+	return isAlnum(c) || strings.IndexByte("-._~:/?#[]@!$&()*+,;=%", c) >= 0
 }
