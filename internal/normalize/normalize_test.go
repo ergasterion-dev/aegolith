@@ -78,6 +78,21 @@ func TestParseCookies(t *testing.T) {
 	}
 }
 
+func TestParseCookiesNoEvasion(t *testing.T) {
+	h := http.Header{}
+	h.Add("Cookie", `a=x\y; b=ok; c=café`)
+	h.Add("Cookie", `bad name=1; q="quoted"; flag; =v; ;e=1=2`)
+	got := ParseCookies(h)
+	want := []KV{{"a", `x\y`}, {"b", "ok"}, {"c", "café"}, {"bad name", "1"}, {"q", "quoted"}, {"flag", ""}, {"", "v"}, {"e", "1=2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	h = http.Header{"Cookie": {`a=1' OR 1=1--\`}}
+	if got := ParseCookies(h); len(got) != 1 || got[0].Value != `1' OR 1=1--\` {
+		t.Fatalf("payload dropped: %q", got)
+	}
+}
+
 func collect(body string, lim model.Limits) ([]JSONValue, error) {
 	var out []JSONValue
 	err := WalkJSON([]byte(body), lim, func(v JSONValue) { out = append(out, v) })
@@ -227,8 +242,14 @@ func TestParseMultipartBounds(t *testing.T) {
 	lim.MaxValueLen = 5
 	body, ct := buildMultipart(t, func(w *multipart.Writer) { _ = w.WriteField("f", "0123456789") })
 	got, err := ParseMultipart(body, ct, lim)
-	if err != nil || len(got) != 1 || got[0].Value != "01234" {
+	if err != nil || len(got) != 1 || got[0].Value != "01234" || !got[0].Truncated {
 		t.Fatalf("value cap: %+v %v", got, err)
+	}
+
+	body, ct = buildMultipart(t, func(w *multipart.Writer) { _ = w.WriteField("f", "01234") })
+	got, err = ParseMultipart(body, ct, lim)
+	if err != nil || len(got) != 1 || got[0].Value != "01234" || got[0].Truncated {
+		t.Fatalf("exact-length value must not be truncated: %+v %v", got, err)
 	}
 
 	lim = model.DefaultLimits()

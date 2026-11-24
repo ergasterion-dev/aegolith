@@ -17,6 +17,9 @@ type Part struct {
 	Name   string
 	IsFile bool
 	Value  string
+	// Truncated is true when a non-file value exceeded Limits.MaxValueLen
+	// and was cut.
+	Truncated bool
 }
 
 // ParseMultipart parses a multipart/* body. Each non-file part's value is
@@ -52,9 +55,13 @@ func ParseMultipart(body []byte, contentType string, lim model.Limits) ([]Part, 
 		if p.FileName() != "" {
 			part.IsFile = true
 		} else {
-			val, err := io.ReadAll(io.LimitReader(p, int64(lim.MaxValueLen)))
+			val, err := io.ReadAll(io.LimitReader(p, int64(lim.MaxValueLen)+1))
 			if err != nil {
 				return parts, fmt.Errorf("normalize: malformed multipart: %w", err)
+			}
+			if len(val) > lim.MaxValueLen {
+				val = val[:lim.MaxValueLen]
+				part.Truncated = true
 			}
 			part.Value = string(val)
 		}
