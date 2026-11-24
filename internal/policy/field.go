@@ -35,6 +35,8 @@ const (
 // body value. Only Type is required; the other fields refine it:
 // Min/Max bound int and number, MaxLen (in runes) bounds string and text,
 // Pattern (RE2, whole-value match) refines string, Enum lists enum values.
+// A url value must be an absolute http(s) URL in ASCII: non-ASCII bytes are
+// rejected, so clients must percent-encode them.
 type FieldSpec struct {
 	Type    string   `json:"type"`
 	Min     *float64 `json:"min,omitempty"`
@@ -269,11 +271,12 @@ func isDecimalLiteral(s string) bool {
 }
 
 // isEmail checks the shape of an address: a dot-atom local part made of
-// RFC 5322 atext minus the quote characters (' and `), an '@', and a
-// domain of hostname labels ([A-Za-z0-9-], or bytes >= 0x80 for IDN)
+// RFC 5322 atext minus the backtick (so o'brien is accepted), an '@', and
+// a domain of hostname labels ([A-Za-z0-9-], or bytes >= 0x80 for IDN)
 // joined by single dots; at most 254 bytes. Quoted local parts, address
-// literals and comments are rejected: an email field is not text-scanned,
-// so it must not admit markup or SQL punctuation.
+// literals and comments are rejected, so markup (<>) and the remaining
+// specials ()[]\,;:" never pass. The type checks shape only: the engine
+// still runs ScanText on email values, which catches SQLi in the local part.
 func isEmail(s string) bool {
 	if len(s) == 0 || len(s) > maxEmailLen {
 		return false
@@ -310,9 +313,9 @@ func isAlnum(c byte) bool {
 	return isDigit(c) || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
-// isAtext is RFC 5322 atext without ' and `.
+// isAtext is RFC 5322 atext without the backtick.
 func isAtext(c byte) bool {
-	return isAlnum(c) || strings.IndexByte("!#$%&*+-/=?^_{|}~", c) >= 0
+	return isAlnum(c) || strings.IndexByte("!#$%&'*+-/=?^_{|}~", c) >= 0
 }
 
 func isHostByte(c byte) bool { return isAlnum(c) || c == '-' || c >= 0x80 }
@@ -341,8 +344,9 @@ func isPhone(s string) bool {
 
 // isHTTPURL accepts an absolute http or https URL with a host, made only of
 // RFC 3986 unreserved and reserved characters and percent-encoding (minus
-// the single quote). Whether the host is safe to fetch is the SSRF
-// detector's job, not the type's.
+// the single quote). Non-ASCII bytes are rejected: clients must send IRIs
+// percent-encoded (and IDN hosts in punycode). Whether the host is safe to
+// fetch is the SSRF detector's job, not the type's.
 func isHTTPURL(s string) bool {
 	if len(s) == 0 || len(s) > maxURLLen {
 		return false

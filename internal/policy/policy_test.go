@@ -335,7 +335,12 @@ func TestValidateTypes(t *testing.T) {
 			{"first_last-1!#$%&*/=?^{|}~@mail.example-1.co.uk", true, true},
 			{"user@bücher.example", true, true},
 			{"<script>alert(1)</script>@x", true, false},
-			{"'or'1'='1'--@x.io", true, false},
+			{"o'brien@example.com", true, true},
+			// Validates: ' = and - are RFC 5322 atext. The type only checks the
+			// address shape; the engine still runs ScanText on email values,
+			// which is what catches SQLi like this.
+			{"'or'1'='1'--@x.io", true, true},
+			{"a@o'brien.com", true, false},
 			{"\"quoted\"@example.com", true, false},
 			{"a`b@example.com", true, false},
 			{"a(b)@example.com", true, false},
