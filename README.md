@@ -88,7 +88,7 @@ func main() {
 The Fiber adapter is its own Go module, so the core never pulls Fiber:
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.2
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.3
 ```
 
 ```go

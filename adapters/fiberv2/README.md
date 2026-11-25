@@ -8,7 +8,7 @@ module stays free of Fiber.
 ## Install
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.2
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.3
 ```
 
 ## Usage
@@ -70,8 +70,8 @@ request `Content-Encoding` other than `identity` before this middleware.
 **Cap the body.** At most `Limits.MaxBodyBytes+1` bytes are copied (default
 1 MiB); a longer body makes the engine raise `AEG-PROTO-003` on that prefix,
 and the rest is not inspected. The rule blocks by default, so in enforce
-mode a padded body is refused. (Core `v0.1.0-alpha.1`, which this adapter
-release pins, still monitors it; there, set
+mode a padded body is refused. (Core `v0.1.0-alpha.1` still monitored it;
+this adapter release pins core `v0.1.0-alpha.3`. With the older core, set
 `RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}`.)
 If you set it back to monitor, an attack placed after the padding reaches the
 handler. Fiber's default `BodyLimit` (4 MiB) is larger than `max_body_bytes`,
