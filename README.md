@@ -271,7 +271,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-PPOLL-001` | protopollution | block | A JSON key `__proto__`, `constructor` or `prototype`; a query or form key with a `__proto__` segment or `constructor` then `prototype` in bracket or dot form (`__proto__[isAdmin]`, `a.constructor.prototype.x`). |
 | `AEG-SESSION-001` | session | block | A session identifier in a query, form or JSON value (`PHPSESSID=`, `JSESSIONID=`, `ASPSESSIONID`). |
 | `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, wfuzz, feroxbuster, hydra, acunetix, nessus, openvas). |
-| `AEG-SCANNER-002` | scanner | block | A well-known probe path (`/wp-admin`, `/phpmyadmin`, `/.env`, `/.git/`, `/actuator`, `/server-status`, ...) as any segment of the path, not only the first. |
+| `AEG-SCANNER-002` | scanner | block | A well-known probe path: `/wp-admin`, `/phpmyadmin`, `/actuator`, `/server-status` at the path start; `/.env`, `/.git/`, `/.aws/`, `/.ssh/`, `/wp-login.php` at the start of any segment; and `/actuator/<endpoint>` (`env`, `heapdump`, ...) at any depth. |
 | `AEG-SCANNER-003` | scanner | block | A backup, editor or PHP file (`.bak`, `.old`, `.orig`, `.swp`, `.save`, `.php`, a trailing `~`). |
 
 Each rule's known gaps and false-positive shapes are in the [threat model](docs/threat-model.md#known-gaps-and-trade-offs).
