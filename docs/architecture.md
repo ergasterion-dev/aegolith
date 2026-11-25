@@ -97,7 +97,7 @@ Rule selectors (in `rule_actions` and exclusions) are an exact ID (`AEG-SQLI-001
 
 ## Adapters
 
-`httpwaf.Middleware` and `fiberv2.New` do the same job: build an `aegolith.Request` (copying everything out of fasthttp, whose buffers are reused), read at most `MaxBodyBytes + 1` bytes of the body and give the handler the complete stream back, call `Inspect`, call the hook for blocked, monitored or errored decisions, and on a block answer `403` with `{"error":"request blocked","request_id":"..."}`. The response names no product and no rule, so a probing client learns nothing about the firewall. Both adapters can be given a custom block handler.
+`httpwaf.Middleware` and `fiberv2.New` do the same job: build an `aegolith.Request` (copying everything out of fasthttp, whose buffers are reused), read at most `MaxBodyBytes + 1` bytes of the body (the Fiber adapter: up to `2 * MaxBodyBytes + 1` when `AEG-PROTO-003` does not block, so the engine inspects its full `2 * MaxBodyBytes`) and give the handler the complete stream back, call `Inspect`, call the hook for blocked, monitored or errored decisions, and on a block answer `403` with `{"error":"request blocked","request_id":"..."}`. The response names no product and no rule, so a probing client learns nothing about the firewall. Both adapters can be given a custom block handler.
 
 Route matching is always Aegolith's own: Fiber v2 global middleware cannot see the matched route, so the adapters pass method and path only.
 

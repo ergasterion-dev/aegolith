@@ -133,9 +133,10 @@ func TestFiberBodyIntact(t *testing.T) {
 			switch name {
 			case "over-limit":
 				// Monitored (AEG-PROTO-003), so the hook must run exactly
-				// once and see exactly limit+1 bytes.
-				if hooked.Load() != 1 || sawSize.Load() != 1<<20+1 {
-					t.Fatalf("hook calls=%d, engine got %d bytes, want 1 call and limit+1 bytes", hooked.Load(), sawSize.Load())
+				// once; in monitor the engine inspects up to 2 x limit, so
+				// it gets the whole body.
+				if hooked.Load() != 1 || sawSize.Load() != int64(len(body)) {
+					t.Fatalf("hook calls=%d, engine got %d bytes, want 1 call and %d bytes", hooked.Load(), sawSize.Load(), len(body))
 				}
 			case "small":
 				// A clean allow never reaches the hook.
@@ -222,7 +223,9 @@ func TestFiberGzipOverLimitPrefixOnly(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	code, _, _ := do(t, app, req)
-	if code != 200 || !oversize.Load() || saw.Load() != 1<<20+1 {
+	// AEG-PROTO-003 does not block, so up to 2 x limit (+1 byte marking the
+	// cut) of the decoded body is inspected.
+	if code != 200 || !oversize.Load() || saw.Load() != 2<<20+1 {
 		t.Fatalf("code=%d oversize=%v engine body=%d", code, oversize.Load(), saw.Load())
 	}
 }
@@ -658,23 +661,28 @@ func TestFiberCaseVariantPathKeepsRoutePolicy(t *testing.T) {
 
 // TestFiberOverLimitPaddingRuleAction: with AEG-PROTO-003 set to block (the
 // core default after v0.1.0-alpha.1), an attack pushed past MaxBodyBytes by
-// padding is refused; set to monitor, it reaches the handler, which is the
+// padding is refused. Set to monitor, the engine inspects up to
+// 2 x MaxBodyBytes, so an attack within that is still refused by its own
+// rule; one pushed past 2 x MaxBodyBytes reaches the handler, which is the
 // documented trade-off. Both actions are explicit so the test holds for
 // whichever core version this module resolves; the default itself is
 // pinned by the core and httpwaf tests.
 func TestFiberOverLimitPaddingRuleAction(t *testing.T) {
-	body := `{"pad":"` + strings.Repeat("a", 1<<20) + `","q":"1' OR '1'='1"}`
+	monitor003 := aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}
+	padded := func(n int) string { return `{"pad":"` + strings.Repeat("a", n) + `","q":"1' OR '1'='1"}` }
 	for _, c := range []struct {
 		name string
 		cfg  aegolith.Config
+		body string
 		want int
 	}{
-		{"proto-003 monitor", aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}, 200},
-		{"proto-003 block", aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}}, 403},
+		{"proto-003 monitor, attack within 2x", monitor003, padded(1 << 20), 403},
+		{"proto-003 monitor, attack past 2x", monitor003, padded(2 << 20), 200},
+		{"proto-003 block", aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}}, padded(1 << 20), 403},
 	} {
 		var calls atomic.Int32
 		app := newApp(Config{Firewall: newFW(t, c.cfg)}, &calls)
-		req := httptest.NewRequest("POST", "/search", strings.NewReader(body))
+		req := httptest.NewRequest("POST", "/search", strings.NewReader(c.body))
 		req.Header.Set("Content-Type", "application/json")
 		code, _, _ := do(t, app, req)
 		if code != c.want || (calls.Load() > 0) != (c.want == 200) {
@@ -720,6 +728,114 @@ func TestRouteFoldCachedPerApp(t *testing.T) {
 		code, _, _ := do(t, c.app, httptest.NewRequest("GET", "/API/v1/orders/abc", nil))
 		if code != c.want {
 			t.Fatalf("step %d: code=%d want %d", i, code, c.want)
+		}
+	}
+}
+
+// overCapBody is a ~1.5 MiB JSON body (over the 1 MiB default cap, within
+// the engine's 2 x cap inspection limit) with an attack after the padding.
+func overCapBody() []byte {
+	return []byte(`{"pad":"` + strings.Repeat("a", 3<<19) + `","q":"1 UNION SELECT password FROM users"}`)
+}
+
+// G8: in monitor mode an over-cap body is handed to the engine up to its
+// inspection limit (2 x MaxBodyBytes), so an attack after 1 MiB of padding
+// is seen, and the complete JSON does not raise AEG-PROTO-020. The handler
+// still gets the whole body when the request is served.
+func TestFiberMonitorInspectsOverCapBody(t *testing.T) {
+	body := overCapBody()
+	for _, c := range []struct {
+		name string
+		cfg  aegolith.Config
+		want int
+	}{
+		{"monitor mode", aegolith.Config{Mode: aegolith.ModeMonitor}, 200},
+		// Enforce with only AEG-PROTO-003 monitored: the attack past the
+		// cap is now seen, so its own rule blocks.
+		{"proto-003 monitor", aegolith.Config{Mode: aegolith.ModeEnforce, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}, 403},
+	} {
+		cfg := c.cfg
+		t.Run(c.name, func(t *testing.T) {
+			var saw atomic.Int64
+			var rules sync.Map
+			app := newApp(Config{
+				Firewall: newFW(t, cfg),
+				OnDecision: func(r *aegolith.Request, d aegolith.Decision) {
+					saw.Store(int64(len(r.Body)))
+					for _, m := range d.Matches {
+						rules.Store(m.RuleID, true)
+					}
+				},
+			}, nil)
+			req := httptest.NewRequest("POST", "/api/v1/search", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			code, got, _ := do(t, app, req)
+			has := func(id string) bool { _, ok := rules.Load(id); return ok }
+			if code != c.want || (c.want == 200 && !bytes.Equal(got, body)) {
+				t.Fatalf("code=%d (want %d) len(got)=%d len(want)=%d", code, c.want, len(got), len(body))
+			}
+			if saw.Load() != int64(len(body)) || !has("AEG-PROTO-003") || !has("AEG-SQLI-001") || has("AEG-PROTO-020") {
+				t.Fatalf("engine body=%d (want %d) proto003=%v sqli=%v proto020=%v",
+					saw.Load(), len(body), has("AEG-PROTO-003"), has("AEG-SQLI-001"), has("AEG-PROTO-020"))
+			}
+		})
+	}
+}
+
+// In enforce mode (AEG-PROTO-003 blocks) the same request is still refused
+// and only MaxBodyBytes+1 bytes are copied; in monitor mode a body longer
+// than 2 x MaxBodyBytes is copied only up to 2 x MaxBodyBytes+1 (the extra
+// byte tells the engine it was cut).
+func TestFiberOverCapCopyBounded(t *testing.T) {
+	const limit = 1 << 20
+	for _, c := range []struct {
+		name     string
+		cfg      aegolith.Config
+		body     []byte
+		wantCode int
+		wantCopy int64
+	}{
+		{"enforce", aegolith.Config{Mode: aegolith.ModeEnforce}, overCapBody(), 403, limit + 1},
+		{"enforce 3x", aegolith.Config{Mode: aegolith.ModeEnforce}, jsonBody(3 * limit), 403, limit + 1},
+		{"monitor 3x", aegolith.Config{Mode: aegolith.ModeMonitor}, jsonBody(3 * limit), 200, 2*limit + 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var saw atomic.Int64
+			var calls atomic.Int32
+			app := newApp(Config{
+				Firewall:   newFW(t, c.cfg),
+				OnDecision: func(r *aegolith.Request, _ aegolith.Decision) { saw.Store(int64(len(r.Body))) },
+			}, &calls)
+			req := httptest.NewRequest("POST", "/api/v1/search", bytes.NewReader(c.body))
+			req.Header.Set("Content-Type", "application/json")
+			code, _, _ := do(t, app, req)
+			if code != c.wantCode || (calls.Load() > 0) != (c.wantCode == 200) || saw.Load() != c.wantCopy {
+				t.Fatalf("code=%d calls=%d engine body=%d, want code %d and %d bytes", code, calls.Load(), saw.Load(), c.wantCode, c.wantCopy)
+			}
+		})
+	}
+}
+
+// bodyCopyLimit: 2 x MaxBodyBytes+1 only when the probe shows AEG-PROTO-003
+// does not block; MaxBodyBytes+1 for a nil firewall, an enforcing one, a
+// limit too large to probe, and without overflow at MaxInt64.
+func TestBodyCopyLimit(t *testing.T) {
+	small := aegolith.Limits{MaxBodyBytes: 4096}
+	big := aegolith.Limits{MaxBodyBytes: maxProbeBody + 1}
+	for _, c := range []struct {
+		name string
+		fw   *aegolith.Firewall
+		want int64
+	}{
+		{"nil", nil, 1<<20 + 1},
+		{"enforce", newFW(t, aegolith.Config{Limits: small}), 4097},
+		{"monitor", newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: small}), 8193},
+		{"proto-003 monitor", newFW(t, aegolith.Config{Limits: small, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}), 8193},
+		{"monitor over probe cap", newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: big}), maxProbeBody + 2},
+		{"maxint64", newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: aegolith.Limits{MaxBodyBytes: 1<<63 - 1}}), 1<<63 - 1},
+	} {
+		if got := bodyCopyLimit(c.fw); got != c.want {
+			t.Errorf("%s: %d, want %d", c.name, got, c.want)
 		}
 	}
 }
