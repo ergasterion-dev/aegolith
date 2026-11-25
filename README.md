@@ -40,7 +40,7 @@ Things it deliberately is not: a CRS clone, a ModSecurity-rule engine, a rate li
 You need Go 1.25 or later. The core module depends on the standard library and [libinjection-go](https://github.com/corazawaf/libinjection-go) only.
 
 ```sh
-go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.3
+go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.4
 ```
 
 (This is an alpha release; see [Status](#status-and-roadmap).)
@@ -88,7 +88,7 @@ func main() {
 The Fiber adapter is its own Go module, so the core never pulls Fiber:
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.3
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.4
 ```
 
 ```go
@@ -373,7 +373,7 @@ make corpus     # the tables above
 
 Aegolith v0.1 is **alpha**. What that means:
 
-- **Alpha release (`v0.1.0-alpha.3`; alpha.4 is in preparation, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
+- **Alpha release (`v0.1.0-alpha.4`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
 - **Tuned on one corpus.** It blocks 128 and 129 of the 132 corpus attacks with no false positives on 118 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
