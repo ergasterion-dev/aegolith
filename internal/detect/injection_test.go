@@ -363,6 +363,42 @@ func TestCmdINegatives(t *testing.T) {
 	assertNoHits(t, "CmdI", CmdI, cmdINegatives)
 }
 
+// TestCmdISleepPrefix: a one-word (or word and number) prefix written as
+// prose before "; sleep N" is not command injection; a leading operator, a
+// shell-only operator ("&&", "|") or a prefix glued to the operator with no
+// blank after it ("1;sleep 5") stays a hit.
+func TestCmdISleepPrefix(t *testing.T) {
+	want := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	assertHits(t, "CmdI", CmdI, want, []string{
+		"; sleep 10",
+		"x| sleep 10 |",
+		";sleep 10",
+		"a && sleep 10",
+		"1;sleep 5",
+		"Mon;sleep 8",
+		"Mon; sleep 8 &",
+		"Mon; sleep 8; id",
+		"Mon%3B%20sleep%208%20%7C",
+	})
+	assertNoHits(t, "CmdI", CmdI, []string{
+		"Mon; sleep 8",
+		"Gate 2; sleep 10",
+		"Good night; sleep 8",
+		"Tired & sleep 8",
+		"Mon%3B%20sleep%208",
+		// Accepted trade-off: "; " after a number reads like "Gate 2; sleep
+		// 10", so "1; sleep 5" is clean too. "1;sleep 5" (no blank) is not.
+		"1; sleep 5",
+	})
+	// Other commands keep their rules after a one-word prefix.
+	assertHits(t, "CmdI", CmdI, want, []string{
+		"Mon; id",
+		"Gate 2; ls",
+		"x; cat /etc/passwd",
+		"Mon; whoami",
+	})
+}
+
 // TestCmdIVariants covers the G4 lab payloads: a quote- or
 // backslash-split command word, sleep with a number, and a bare command
 // after a line break that arrived percent-encoded (the query string, where

@@ -72,6 +72,9 @@
 {"name":"shellshock user-agent","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"() { :; }; /bin/bash -c 'cat /etc/passwd'"},"content_type":"","body":""}
 {"name":"encoded newline id","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x\nid"]],"headers":{},"content_type":"","body":""}
 {"name":"sleep after semicolon","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","; sleep 10"]],"headers":{},"content_type":"","body":""}
+{"name":"sleep between pipes","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x| sleep 10 |"]],"headers":{},"content_type":"","body":""}
+{"name":"sleep after and-and","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","a && sleep 10"]],"headers":{},"content_type":"","body":""}
+{"name":"sleep glued to prefix","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1;sleep 5"]],"headers":{},"content_type":"","body":""}
 {"name":"quote-split whoami","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";w'h'o'am'i"]],"headers":{},"content_type":"","body":""}
 {"name":"backslash-split cat","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";c\\at /et\\c/pas\\swd"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja config","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{config.items()}}"]],"headers":{},"content_type":"","body":""}

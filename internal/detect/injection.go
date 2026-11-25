@@ -194,6 +194,11 @@ const (
 	// address or another absolute path is prose there. A two-letter
 	// command needs a short flag (-u, -la, -lah).
 	opProseAmp
+	// opWordSemi: "; " directly after a word or number that does not end
+	// a prose sentence ("Mon; sleep 8", "Gate 2; sleep 10"). Only sleep
+	// reads it as prose (see sleepArgAt); every other command treats it
+	// as opShell, so "Mon; id" still matches.
+	opWordSemi
 )
 
 // operatorContext classifies the operator at s[i] (see opContext).
@@ -206,8 +211,13 @@ func operatorContext(s string, i, firstBlank int) opContext {
 			return opProseAmp
 		}
 	case ';':
-		if i+1 < len(s) && s[i+1] == ' ' && endsProseSentence(s, i, firstBlank) {
-			return opProseSemi
+		if i+1 < len(s) && s[i+1] == ' ' && i > 0 {
+			if endsProseSentence(s, i, firstBlank) {
+				return opProseSemi
+			}
+			if c := s[i-1]; isASCIILetter(c) || c >= '0' && c <= '9' || c >= 0x80 {
+				return opWordSemi
+			}
 		}
 	}
 	return opShell
@@ -309,6 +319,9 @@ func commandAt(s string, i int, afterNewline bool, ctx opContext) bool {
 		if w.sleep {
 			return sleepArgAt(s, j, afterNewline, ctx)
 		}
+		if ctx == opWordSemi {
+			ctx = opShell
+		}
 		return unixArgsAt(s, j, w, afterNewline, ctx)
 	}
 	return false
@@ -375,7 +388,8 @@ func dequoteShellWord(s string) string {
 // invocation: a whole number of seconds followed only by blanks and then
 // the end of the value or an operator ("; sleep 10", "| sleep 5 |").
 // "sleep well", "sleep 8 hours" and "sleep 1.5h" are prose. After a
-// prose-like operator ("Kids & sleep 8", "Long day; sleep 8") the number
+// prose-like operator ("Kids & sleep 8", "Long day; sleep 8", and "; "
+// after a single word or number: "Mon; sleep 8", "Gate 2; sleep 10") the number
 // must be followed by another non-line-break operator ("x & sleep 10 &"),
 // and after a literal line break it may not end the line.
 func sleepArgAt(s string, j int, afterNewline bool, ctx opContext) bool {

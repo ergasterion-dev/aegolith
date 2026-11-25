@@ -132,6 +132,10 @@ hdr $A cmdi "shellshock user-agent"    User-Agent "() { :; }; /bin/bash -c 'cat 
 # Aegolith: an encoded line break before a bare command, sleep, and quote- or backslash-split command words (G4).
 path $A cmdi "encoded newline id"      "/api/v1/products/search?q=x%0aid"
 q $A cmdi "sleep after semicolon"      "; sleep 10"
+# Aegolith: sleep after a pipe, after "&&", and glued to a prefix with no blank (alpha.5).
+q $A cmdi "sleep between pipes"        "x| sleep 10 |"
+q $A cmdi "sleep after and-and"        "a && sleep 10"
+q $A cmdi "sleep glued to prefix"      "1;sleep 5"
 q $A cmdi "quote-split whoami"         ";w'h'o'am'i"
 q $A cmdi "backslash-split cat"        ";c\\at /et\\c/pas\\swd"
 
