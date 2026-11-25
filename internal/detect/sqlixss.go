@@ -91,8 +91,11 @@ type sqliStart struct {
 // Cost: two passes over s (the syntax scan and the candidate scan), then
 // at most 2*maxSQLiStarts libinjection calls of at most sqliStartWindow
 // bytes each: linear in len(s) with a small fixed bound on the extra
-// libinjection work. The first maxSQLiStarts candidates and the last
-// maxSQLiStarts are tried, so padding on one side of the payload cannot push
+// libinjection work. The SELECT check after each UNION reads at most
+// sqliStartWindow bytes and shares one forward search for "*/" across all
+// of them (see selectFollows), and the walk back to a number reads only the
+// gap before its keyword, so the candidate scan stays one pass. The first
+// maxSQLiStarts candidates and the last maxSQLiStarts are tried, so padding on one side of the payload cannot push
 // it out, and keywords that cannot lead to either shape (a "union" with no
 // SELECT after it, a keyword with no SQL syntax after it) are not
 // candidates, so they cannot be used as padding at all. Hiding a payload
@@ -114,6 +117,7 @@ func sqliFromKeywordStarts(s string) bool {
 	}
 	var ring [maxSQLiStarts]sqliStart
 	n := 0
+	var closes commentCloses // shared by selectFollows across the scan
 	for i := 1; i < end; i++ {
 		if p := s[i-1]; !isLetter(s[i]) || !isBlank(p) && p != ';' && p != ')' && !strings.HasSuffix(s[:i], "*/") {
 			continue
@@ -124,7 +128,7 @@ func sqliFromKeywordStarts(s string) bool {
 		}
 		kw := s[i:j]
 		i = j - 1
-		union := strings.EqualFold(kw, "union") && selectFollows(s[j:end])
+		union := strings.EqualFold(kw, "union") && selectFollows(s[:end], j, &closes)
 		if !union && !(tail && lastSyntax >= j && isSQLiStartKeyword(kw)) {
 			continue
 		}
@@ -158,27 +162,66 @@ func sqliStartMatches(s string, st sqliStart, tail bool, lastSyntax int) bool {
 	return st.union && strings.Contains(fp, "UE") || tail && lastSyntax >= st.kwEnd
 }
 
-// selectFollows reports whether s, the text after a UNION, starts with
-// SELECT, ALL or DISTINCT after blanks, inline comments or '(' ("UNION
-// SELECT", "UNION/**/SELECT", "UNION ALL SELECT", "UNION (SELECT"). It stops
-// at the first other byte, so it reads only the gap after this UNION.
-func selectFollows(s string) bool {
-	i := 0
-	for i < len(s) {
+// selectFollows reports whether the text of s after a UNION ending at
+// s[j] starts with SELECT, ALL or DISTINCT after blanks, inline comments or
+// '(' ("UNION SELECT", "UNION/**/SELECT", "UNION ALL SELECT", "UNION
+// (SELECT"). It reads at most sqliStartWindow bytes from j, all that the
+// libinjection call for this start would read anyway, and finds the end of
+// each comment through c, which the calls of one scan share.
+func selectFollows(s string, j int, c *commentCloses) bool {
+	hi := min(len(s), j+sqliStartWindow)
+	for i := j; i < hi; {
 		switch {
 		case isBlank(s[i]) || s[i] == '(':
 			i++
 		case strings.HasPrefix(s[i:], "/*"):
-			k := strings.Index(s[i+2:], "*/")
-			if k < 0 {
+			k := c.after(s, i+2)
+			if k+2 > hi {
 				return false
 			}
-			i += k + 4
+			i = k + 2
 		default:
-			return wordAt(s, i, "select") || wordAt(s, i, "all") || wordAt(s, i, "distinct")
+			return wordAt(s[:hi], i, "select") || wordAt(s[:hi], i, "all") || wordAt(s[:hi], i, "distinct")
 		}
 	}
 	return false
+}
+
+// commentCloses finds the next "*/" in one value for a scan that asks with
+// (mostly) increasing positions. It remembers the last answer: at is the
+// first "*/" at or after from (len(s) when there is none). Without it each
+// UNION in "union /* union /* ..." searched to the end of the value, which
+// is quadratic.
+type commentCloses struct {
+	from, at int
+	set      bool
+}
+
+// after returns the index of the first "*/" at or after p, or len(s). A p
+// inside [from, at] is answered from the cache. A p past at searches
+// forward from p; positions only grow there, so those searches never cover
+// a byte twice. A p before from (a later UNION inside the window of an
+// earlier one, at most sqliStartWindow back) searches only up to from,
+// where the cached answer takes over. Total work stays linear in len(s).
+func (c *commentCloses) after(s string, p int) int {
+	switch {
+	case c.set && p >= c.from && p <= c.at:
+		return c.at
+	case c.set && p < c.from:
+		if k := strings.Index(s[p:min(len(s), c.from+1)], "*/"); k >= 0 {
+			c.from, c.at = p, p+k
+		} else {
+			c.from = p
+		}
+		return c.at
+	}
+	c.from, c.set = p, true
+	if k := strings.Index(s[p:], "*/"); k >= 0 {
+		c.at = p + k
+	} else {
+		c.at = len(s)
+	}
+	return c.at
 }
 
 // trailingSQLComment reports whether s ends in a SQL comment that cuts off

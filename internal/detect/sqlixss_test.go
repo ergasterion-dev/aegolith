@@ -363,7 +363,11 @@ func TestSQLiProseStaysClean(t *testing.T) {
 }
 
 // TestSQLiStartsLinear checks the extra libinjection starts stay bounded on
-// long values made only of start tokens.
+// long values made only of start tokens. Besides an absolute bound at
+// 200 KiB it checks growth from 64 KiB to 256 KiB the way TestScanTextLinear
+// does (over 8x the time for 4x the input, three times in a row, fails):
+// an unclosed "/*" after every UNION once made each start search to the
+// end of the value, which an absolute bound of seconds does not catch.
 func TestSQLiStartsLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("wall-clock bound; skipped under -short")
@@ -371,14 +375,28 @@ func TestSQLiStartsLinear(t *testing.T) {
 	const size = 200 << 10
 	lim := wallLimit(50*time.Millisecond, 2*time.Second)
 	for _, unit := range []string{"select 1 union ", "1 or ", "1 or 1=1-- ", "union ", "union select ", "x union all ",
-		"drop me ", "a or ", "1 or x(", "x 1 and 'y' "} {
+		"drop me ", "a or ", "1 or x(", "x 1 and 'y' ", "union /* ", "and union (/* note ", "union (", "1 or 1=1 /* "} {
 		in := strings.Repeat(unit, size/len(unit))
 		for _, v := range []string{in, in + "--", in + "1=1--"} {
 			if d := bestOf(3, func() { SQLi(v) }); d > lim {
 				t.Errorf("%q x %d: SQLi took %v, want under %v", unit, len(v)/len(unit), d, lim)
 			}
 		}
+		sm := strings.Repeat(unit, (64<<10)/len(unit))
+		md := strings.Repeat(unit, (256<<10)/len(unit))
+		if raceSlowdown == 1 && sqliSuperLinear(sm, md) && sqliSuperLinear(sm, md) && sqliSuperLinear(sm, md) {
+			t.Errorf("%q: SQLi on %d bytes took over 8x its time on %d bytes: super-linear", unit, len(md), len(sm))
+		}
 	}
+}
+
+// sqliSuperLinear reports whether SQLi on m (four times the length of s)
+// took more than eight times as long as on s, best of five runs each. Runs
+// on s under 500µs are too fast to time reliably and never count.
+func sqliSuperLinear(s, m string) bool {
+	ds := bestOf(5, func() { SQLi(s) })
+	dm := bestOf(5, func() { SQLi(m) })
+	return ds > 500*time.Microsecond && dm > 8*ds
 }
 
 func hasRule(hits []Hit, id string) bool {
