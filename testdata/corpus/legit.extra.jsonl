@@ -81,3 +81,4 @@
 {"name":"note: i'd after semicolon","category":"fp","kind":"legit","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"product_id\": \"4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b\", \"qty\": 1, \"note\": \"Sure; i'd love it gift wrapped\"}"}
 {"name":"search: it's; fine","category":"fp","kind":"legit","method":"GET","path":"/api/v1/products/search","query":[["q","it's; fine"]],"headers":{},"content_type":"","body":""}
 {"name":"search: windows path text","category":"fp","kind":"legit","method":"GET","path":"/api/v1/products/search","query":[["q","C:\\temp\\notes"]],"headers":{},"content_type":"","body":""}
+{"name": "ua: Hydration app", "category": "fp", "kind": "legit", "method": "GET", "path": "/api/v1/products", "query": [], "headers": {"User-Agent": "Hydration/1.0"}, "content_type": "", "body": ""}

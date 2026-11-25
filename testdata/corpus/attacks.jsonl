@@ -117,6 +117,12 @@
 {"name":"wp-admin probe","category":"scanner","kind":"attack","method":"GET","path":"/wp-admin/admin-ajax.php","query":[],"headers":{},"content_type":"","body":""}
 {"name":"phpmyadmin probe","category":"scanner","kind":"attack","method":"GET","path":"/phpmyadmin/index.php","query":[],"headers":{},"content_type":"","body":""}
 {"name":"actuator probe","category":"scanner","kind":"attack","method":"GET","path":"/actuator/env","query":[],"headers":{},"content_type":"","body":""}
+{"name":"dotenv under prefix","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/.env","query":[],"headers":{},"content_type":"","body":""}
+{"name":"git config under prefix","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/.git/config","query":[],"headers":{},"content_type":"","body":""}
+{"name":"actuator under prefix","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/actuator/env","query":[],"headers":{},"content_type":"","body":""}
+{"name":"wfuzz","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Wfuzz/3.1.0"},"content_type":"","body":""}
+{"name":"feroxbuster","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"feroxbuster/2.10.4"},"content_type":"","body":""}
+{"name":"hydra","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Hydra"},"content_type":"","body":""}
 {"name":"session fixation","category":"session","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","PHPSESSID=attacker-fixed-id"]],"headers":{},"content_type":"","body":""}
 {"name":"ldap injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","*)(uid=*))(|(uid=*"]],"headers":{},"content_type":"","body":""}
 {"name":"xpath injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","' or name()='username' or 'x'='y"]],"headers":{},"content_type":"","body":""}

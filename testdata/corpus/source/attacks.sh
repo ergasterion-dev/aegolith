@@ -195,6 +195,14 @@ path $A scanner "wp-admin probe"       "/wp-admin/admin-ajax.php"
 path $A scanner "phpmyadmin probe"     "/phpmyadmin/index.php"
 path $A scanner "actuator probe"       "/actuator/env"
 
+# Aegolith: scanner probe paths under an API prefix and fuzzer user agents (G5, G6).
+path $A scanner "dotenv under prefix"  "/api/v1/.env"
+path $A scanner "git config under prefix" "/api/v1/.git/config"
+path $A scanner "actuator under prefix" "/api/v1/actuator/env"
+hdr $A scanner "wfuzz"                 User-Agent "Wfuzz/3.1.0"
+hdr $A scanner "feroxbuster"           User-Agent "feroxbuster/2.10.4"
+hdr $A scanner "hydra"                 User-Agent "Hydra"
+
 # --- 14. Session fixation / misc ----------------------------------------------------------------------------------
 q $A session "session fixation"        "PHPSESSID=attacker-fixed-id"
 q $A misc "ldap injection"             "*)(uid=*))(|(uid=*"

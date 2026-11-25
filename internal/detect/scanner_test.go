@@ -89,3 +89,36 @@ func TestProbePath(t *testing.T) {
 	})
 	assertNoHits(t, "ProbePath", ProbePath, legitPaths)
 }
+
+func TestProbePathUnderPrefix(t *testing.T) {
+	probe := Hit{RuleID: "AEG-SCANNER-002", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertHits(t, "ProbePath", ProbePath, probe, []string{
+		"/api/v1/.env",
+		"/api/v1/.git/config",
+		"/api/v1/actuator/env",
+		"/api/v1/.aws/credentials",
+		"/a/b/wp-admin/x",
+		"/api/v1/phpMyAdmin/",
+	})
+	assertNoHits(t, "ProbePath", ProbePath, []string{
+		"/api/v1/environment",
+		"/api/v1/actuators-list",
+		"/api/v1/orders/envelope",
+		"/api/v1/wp-admins-are-us",
+		"/api/v1/orders/server-statuses",
+	})
+}
+
+func TestUserAgentFuzzers(t *testing.T) {
+	want := Hit{RuleID: "AEG-SCANNER-001", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertHits(t, "UserAgent", UserAgent, want, []string{
+		"Fuzz Faster U Fool v2.1.0-dev",
+		"Wfuzz/3.1.0",
+		"feroxbuster/2.10.4",
+		"Hydra",
+	})
+	assertNoHits(t, "UserAgent", UserAgent, append([]string{
+		"Hydration/1.0",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+	}, legitUserAgents...))
+}

@@ -12,11 +12,14 @@ import (
 func UserAgent(ua string) (Hit, bool) {
 	for _, tok := range [...]string{
 		"sqlmap", "nikto", "nuclei", "masscan", "nmap", "zgrab", "wpscan", "dirbuster",
-		"gobuster", "ffuf", "acunetix", "nessus", "openvas",
+		"gobuster", "ffuf", "acunetix", "nessus", "openvas", "wfuzz", "feroxbuster", "hydra",
 	} {
 		if hasLetterWordFold(ua, tok) {
 			return Hit{RuleID: "AEG-SCANNER-001", Category: model.CatScanner, Severity: model.SeverityMedium}, true
 		}
+	}
+	if indexFold(ua, "fuzz faster u fool") >= 0 {
+		return Hit{RuleID: "AEG-SCANNER-001", Category: model.CatScanner, Severity: model.SeverityMedium}, true
 	}
 	return Hit{}, false
 }
@@ -55,19 +58,27 @@ func ProbePath(p string) (Hit, bool) {
 	return Hit{}, false
 }
 
-// isProbePrefix matches the probe prefixes. Those naming a directory end in
-// '/' and match as plain prefixes; the others must be followed by the end
-// of the path, '/' or '.' ("/.env.production"), so "/wp-admins-are-us"
-// stays clear.
+// isProbePrefix matches the probe names at the start of any path segment (a
+// '/' precedes the name), so "/api/v1/.env" counts as well as "/.env". Those
+// naming a directory end in '/' and match as plain prefixes; the others must
+// be followed by the end of the path, '/' or '.' ("/.env.production"), so
+// "/wp-admins-are-us" stays clear. One pass over the '/' positions, with a
+// fixed number of probe names tried at each: linear in len(p).
 func isProbePrefix(p string) bool {
-	for _, pre := range [...]string{"/.git/", "/.aws/", "/.ssh/", "/wp-login.php"} {
-		if hasPrefixFold(p, pre) {
-			return true
+	for i := 0; i < len(p); i++ {
+		if p[i] != '/' {
+			continue
 		}
-	}
-	for _, pre := range [...]string{"/wp-admin", "/phpmyadmin", "/.env", "/actuator", "/server-status"} {
-		if hasPrefixFold(p, pre) && (len(p) == len(pre) || p[len(pre)] == '/' || p[len(pre)] == '.') {
-			return true
+		rest := p[i:]
+		for _, pre := range [...]string{"/.git/", "/.aws/", "/.ssh/", "/wp-login.php"} {
+			if hasPrefixFold(rest, pre) {
+				return true
+			}
+		}
+		for _, pre := range [...]string{"/wp-admin", "/phpmyadmin", "/.env", "/actuator", "/server-status"} {
+			if hasPrefixFold(rest, pre) && (len(rest) == len(pre) || rest[len(pre)] == '/' || rest[len(pre)] == '.') {
+				return true
+			}
 		}
 	}
 	return false
