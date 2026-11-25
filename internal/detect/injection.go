@@ -817,6 +817,7 @@ func isLDAP(s string) bool {
 func isSSTI(s string) bool {
 	return strings.Contains(s, "${T(") ||
 		eachDelimited(s, "{{", "}}", isCodeExpr) ||
+		eachDelimited(s, "${", "}", isELExpr) ||
 		eachDelimited(s, "#{", "}", isHashExpr) ||
 		eachDelimited(s, "{%", "%}", isJinjaStatement) ||
 		hasERBOutput(s)
@@ -866,9 +867,45 @@ func isCodeExpr(in string) bool {
 		end++
 	}
 	switch in[:end] {
+	case "printf", "call", "define", "template", "index", "html", "js", "block", "with", "range", "slice":
+		// A Go template action: its argument starts with a field, string or
+		// variable. A bare keyword or a prose word after it is not code.
+		rest := strings.TrimLeft(in[end:], " \t")
+		return rest != "" && (end < len(in) && in[end] == '.' ||
+			len(rest) < len(in)-end && strings.ContainsRune(".\"$`", rune(rest[0])))
 	case "config", "self", "request":
 		rest := strings.TrimLeft(in[end:], " \t")
 		return rest == "" || rest[0] == '.' || rest[0] == '[' || rest[0] == '|'
+	}
+	return false
+}
+
+// isELExpr reports whether the inside of a ${ } (EL, Spring, Groovy) holds
+// code: number arithmetic (7*7, 7+7), member access (user.password) or a call.
+// A placeholder such as "${PRICE}" or a number such as "${5}" does not.
+func isELExpr(in string) bool {
+	in = strings.Trim(in, " \t")
+	i := 0
+	for i < len(in) && in[i] >= '0' && in[i] <= '9' {
+		i++
+	}
+	if i > 0 {
+		rest := strings.TrimLeft(in[i:], " ")
+		if rest == "" || (rest[0] != '*' && rest[0] != '+') {
+			return false
+		}
+		rest = strings.TrimLeft(rest[1:], " ")
+		return rest != "" && rest[0] >= '0' && rest[0] <= '9'
+	}
+	for j := 1; j < len(in); j++ {
+		if in[j] == ':' {
+			// A lookup such as ${jndi:ldap://host/a} or ${env:HOME} belongs
+			// to the JNDI rule, not to EL member access.
+			return false
+		}
+		if isIdentByte(in[j-1]) && (in[j] == '(' || in[j] == '.' && j+1 < len(in) && isASCIILetter(in[j+1])) {
+			return true
+		}
 	}
 	return false
 }

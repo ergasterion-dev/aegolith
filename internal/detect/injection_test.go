@@ -388,6 +388,36 @@ func TestSSTIPositives(t *testing.T) {
 	assertHits(t, "SSTI", SSTI, want, sstiPositives)
 }
 
+func TestSSTIGoActionsAndEL(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertHits(t, "SSTI", SSTI, want, []string{
+		`{{printf "%v" .}}`,
+		"{{ call .Func }}",
+		`{{define "x"}}{{.}}{{end}}`,
+		`{{ printf "%s" .Secret }}`,
+		"{{ range .Items }}",
+		"{{ index .Map \"k\" }}",
+		"${7*7}",
+		"${ 7 + 7 }",
+		"${user.password}",
+		"${Runtime.getRuntime()}",
+	})
+	assertNoHits(t, "SSTI", SSTI, []string{
+		"${PRICE}",
+		"${total}",
+		"${5}",
+		"${5.99}",
+		"{{ best price }}",
+		"{{name}}",
+		"{{ index }}",
+		"{{ with love }}",
+		"{{ call me }}",
+		"{{ html }}",
+		"Pay ${ 500 } now",
+		"${env:HOME.x}",
+	})
+}
+
 func TestSSTINegatives(t *testing.T) {
 	assertNoHits(t, "SSTI", SSTI, sstiNegatives)
 }

