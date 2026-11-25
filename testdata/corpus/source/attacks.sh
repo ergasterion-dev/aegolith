@@ -145,6 +145,13 @@ q $A cmdi "sleep glued to prefix"      "1;sleep 5"
 q $A cmdi "sleep after an address"     "127.0.0.1; sleep 5"
 q $A cmdi "quote-split whoami"         ";w'h'o'am'i"
 q $A cmdi "backslash-split cat"        ";c\\at /et\\c/pas\\swd"
+# Aegolith: counter-cases for the UA comment, dashed-word, prose backtick and prose line guards; sleep after a one-letter probe prefix (alpha.6).
+hdr $A cmdi "flagged command in a user-agent comment" User-Agent "Mozilla/5.0 (Linux; id -u)"
+json $A cmdi "dashed word before a system path" '{"note":"Tea & cat -cozy /etc/passwd"}'
+json $A cmdi "backticks after a semicolon"     '{"note":"x; `id`"}'
+q $A cmdi "inline code in a query value"       "Use \`ls\` to list files"
+path $A cmdi "encoded newline after a token"   "/api/v1/products/search?q=a%0d%0aid"
+q $A cmdi "sleep after a one-letter prefix"    "x; sleep 10"
 
 # --- 6. Server-side template injection -------------------------------------------------------------------------
 q $A ssti "jinja config"               "{{config.items()}}"

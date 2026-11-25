@@ -83,6 +83,12 @@
 {"name":"sleep after an address","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","127.0.0.1; sleep 5"]],"headers":{},"content_type":"","body":""}
 {"name":"quote-split whoami","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";w'h'o'am'i"]],"headers":{},"content_type":"","body":""}
 {"name":"backslash-split cat","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";c\\at /et\\c/pas\\swd"]],"headers":{},"content_type":"","body":""}
+{"name":"flagged command in a user-agent comment","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Mozilla/5.0 (Linux; id -u)"},"content_type":"","body":""}
+{"name":"dashed word before a system path","category":"cmdi","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"Tea & cat -cozy /etc/passwd\"}"}
+{"name":"backticks after a semicolon","category":"cmdi","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"x; `id`\"}"}
+{"name":"inline code in a query value","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","Use `ls` to list files"]],"headers":{},"content_type":"","body":""}
+{"name":"encoded newline after a token","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","a\r\nid"]],"headers":{},"content_type":"","body":""}
+{"name":"sleep after a one-letter prefix","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x; sleep 10"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja config","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{config.items()}}"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja rce","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{''.__class__.__mro__[1].__subclasses__()}}"]],"headers":{},"content_type":"","body":""}
 {"name":"java el","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${T(java.lang.Runtime).getRuntime().exec('id')}"]],"headers":{},"content_type":"","body":""}

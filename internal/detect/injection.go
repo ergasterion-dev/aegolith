@@ -29,16 +29,43 @@ func CmdI(v string) (Hit, bool) { return cmdI(v, true) }
 // cmdIQuery is CmdI for a URL query value, which the engine has already
 // percent-decoded once. A query string cannot carry a raw line break, so
 // every line break in the value arrived percent-encoded ("q=x%0aid") and
-// the ordinary rule applies to it, not the prose rule for a literal one.
+// the ordinary rule applies to it, not the prose rule for a literal one,
+// unless the line before the break is prose ("Dear team\nid", see
+// proseLine). A backtick span is always command substitution here.
 func cmdIQuery(v string) (Hit, bool) { return cmdI(v, false) }
 
+// cmdMode says which prose readings an isCmdI scan allows.
+type cmdMode struct {
+	// strictNewline: every line break uses the prose rule for a bare
+	// command (a literal line break in a JSON note or a form textarea).
+	strictNewline bool
+	// proseLineNewline: a line break uses the prose rule only when the
+	// line before it is prose (see proseLine); a query value.
+	proseLineNewline bool
+	// proseBacktick: a single-backtick span in a sentence is inline code
+	// (see proseBacktickAt), not command substitution.
+	proseBacktick bool
+	// encodedSemi: the value was decoded from one carrying %3b, so every
+	// ";" is opShell.
+	encodedSemi bool
+}
+
 // cmdI is CmdI; strictLiteral applies the stricter line-break rule to line
-// breaks already present in v.
+// breaks already present in v and reads prose backtick spans as inline
+// code. Without it (a query value) the line-break rule applies only after a
+// prose line. What arrives percent-encoded keeps the ordinary rules: a
+// person does not type %0a or %60 into a note.
 func cmdI(v string, strictLiteral bool) (Hit, bool) {
-	hit := isCmdI(v, strictLiteral, false)
+	hit := isCmdI(v, cmdMode{strictNewline: strictLiteral, proseLineNewline: !strictLiteral, proseBacktick: strictLiteral})
 	if !hit {
 		if d, _ := normalize.DecodeValue(v); d != v {
-			hit = isCmdI(d, strictLiteral && !hasEncodedLineBreak(v), hasEncodedSemicolon(v))
+			encLB := hasEncodedLineBreak(v)
+			hit = isCmdI(d, cmdMode{
+				strictNewline:    strictLiteral && !encLB,
+				proseLineNewline: !strictLiteral && !encLB,
+				proseBacktick:    strictLiteral && !hasEncodedBacktick(v),
+				encodedSemi:      hasEncodedSemicolon(v),
+			})
 		}
 	}
 	if hit {
@@ -47,10 +74,11 @@ func cmdI(v string, strictLiteral bool) (Hit, bool) {
 	return Hit{}, false
 }
 
-// hasEncodedLineBreak reports whether s contains %0a or %0d (any case).
-func hasEncodedLineBreak(s string) bool {
+// hasPercentEscape reports whether s contains a percent escape %XY with
+// match(X, Y); match gets the hex digits with letters lower-cased.
+func hasPercentEscape(s string, match func(hi, lo byte) bool) bool {
 	for i := strings.IndexByte(s, '%'); i >= 0 && i+2 < len(s); {
-		if s[i+1] == '0' && (s[i+2]|0x20 == 'a' || s[i+2]|0x20 == 'd') {
+		if match(s[i+1]|0x20, s[i+2]|0x20) {
 			return true
 		}
 		n := strings.IndexByte(s[i+1:], '%')
@@ -62,21 +90,22 @@ func hasEncodedLineBreak(s string) bool {
 	return false
 }
 
+// hasEncodedLineBreak reports whether s contains %0a or %0d (any case).
+func hasEncodedLineBreak(s string) bool {
+	return hasPercentEscape(s, func(hi, lo byte) bool { return hi == '0' && (lo == 'a' || lo == 'd') })
+}
+
 // hasEncodedSemicolon reports whether s contains %3b (any case): a ";"
 // still percent-encoded after transport decoding was encoded twice, which
 // a scanner does and a person typing a note does not.
 func hasEncodedSemicolon(s string) bool {
-	for i := strings.IndexByte(s, '%'); i >= 0 && i+2 < len(s); {
-		if s[i+1] == '3' && s[i+2]|0x20 == 'b' {
-			return true
-		}
-		n := strings.IndexByte(s[i+1:], '%')
-		if n < 0 {
-			break
-		}
-		i += 1 + n
-	}
-	return false
+	return hasPercentEscape(s, func(hi, lo byte) bool { return hi == '3' && lo == 'b' })
+}
+
+// hasEncodedBacktick reports whether s contains %60: a backtick a person
+// typed in markdown is sent as is inside a JSON or form value.
+func hasEncodedBacktick(s string) bool {
+	return hasPercentEscape(s, func(hi, lo byte) bool { return hi == '6' && lo == '0' })
 }
 
 // CodeI reports whether v carries code for an interpreter: PHP open tags,
@@ -218,15 +247,27 @@ const (
 	// assignment before the ";" ("127.0.0.1; sleep 5", "file.txt; sleep
 	// 10", "a=1; sleep 10") is opShell. Only sleep reads opWordSemi as
 	// prose (see sleepArgAt); every other command treats it as opShell, so
-	// "Mon; id" still matches. Accepted cost: "x; sleep 10" is clean.
+	// "Mon; id" still matches. A value that is only one ASCII letter or a
+	// number before the "; " ("x; sleep 10", "1; sleep 5") is a probe, not
+	// a note, and stays opShell (see probeTokenBefore).
 	opWordSemi
+	// opUAComment: "; " inside the parenthesised comment of a User-Agent
+	// shaped value ("Mozilla/5.0 (Linux; U; Android 4.4.2; id; ...)", see
+	// uaCommentStart). The comment is a "; "-separated list of tokens, and
+	// "id" there is the Indonesian locale tag, so a two-letter bare command
+	// with no flag is a token, as after opProseSemi. Every other command
+	// shape keeps the opShell rules ("(Linux; id -u)", "(Linux; cat
+	// /etc/passwd)", "(Linux; `id`)"). Accepted cost: "(x; id)", "(x; ls)"
+	// in a UA-shaped value are clean.
+	opUAComment
 )
 
 // operatorContext classifies the operator at s[i] (see opContext).
 // firstBlank is the index of the first space or tab in s, or -1; isCmdI
 // computes it once so the check stays linear in len(s). With
 // encodedSemi (the ";" arrived double-encoded) a ";" is always opShell.
-func operatorContext(s string, i, firstBlank int, encodedSemi bool) opContext {
+// inUAComment says s[i] is inside a User-Agent comment.
+func operatorContext(s string, i, firstBlank int, encodedSemi, inUAComment bool) opContext {
 	switch s[i] {
 	case '&':
 		if i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') && (i+1 == len(s) || s[i+1] != '&') {
@@ -236,14 +277,95 @@ func operatorContext(s string, i, firstBlank int, encodedSemi bool) opContext {
 		if encodedSemi || i+1 >= len(s) || s[i+1] != ' ' {
 			break
 		}
+		if inUAComment {
+			return opUAComment
+		}
 		if endsProseSentence(s, i, firstBlank) {
 			return opProseSemi
 		}
-		if plainTokenBefore(s, i) {
+		if plainTokenBefore(s, i) && !probeTokenBefore(s, i) {
 			return opWordSemi
 		}
 	}
 	return opShell
+}
+
+// probeTokenBefore reports whether s[:end] is a single ASCII letter or a
+// run of digits and nothing else: the "x; sleep 10" and "1; sleep 5"
+// probes. A person's note has a word ("Mon; sleep 8") or more than one
+// token ("Gate 2; sleep 10") before the "; ".
+func probeTokenBefore(s string, end int) bool {
+	if end == 1 && isASCIILetter(s[0]) {
+		return true
+	}
+	return end > 0 && digitsEnd(s[:end], 0) == end
+}
+
+// uaCommentStart returns the index after which a "(" opens a User-Agent
+// comment: the end of a leading product token ("Mozilla/5.0", "UCWEB/2.0",
+// "Opera/9.80"), a letter-led name, a "/" and a version that starts with a
+// digit, followed by a blank. It returns -1 when s does not start that way.
+// It reads at most the first token.
+func uaCommentStart(s string) int {
+	i := 0
+	for i < len(s) && (isIdentByte(s[i]) || s[i] == '.' || s[i] == '-') {
+		i++
+	}
+	if i == 0 || !isASCIILetter(s[0]) || i+1 >= len(s) || s[i] != '/' || s[i+1] < '0' || s[i+1] > '9' {
+		return -1
+	}
+	for i++; i < len(s) && s[i] != ' ' && s[i] != '\t'; i++ {
+		if isShellOperator(s[i]) || s[i] == '(' || s[i] == '$' {
+			return -1
+		}
+	}
+	if i == len(s) {
+		return -1
+	}
+	return i
+}
+
+// proseBacktickAt reports whether the backtick at s[i] opens inline code in
+// a sentence, as markdown writes it ("Use `ls` to list files", "Se også:
+// `id`.", "On LoongArch, `uname -m` returns ..."): a blank before it with a
+// letter, a non-ASCII byte or sentence punctuation (. , : ! ? ) " ') before
+// the blank, and a closing backtick on the same line at close (the next
+// backtick in s, or -1) followed by sentence text: punctuation, or blanks
+// and then a letter or a non-ASCII byte. A span after a shell operator
+// ("x; `id`", "x = `id`"), glued to a word ("x`id`"), alone ("`id`") or
+// with nothing after it ("Name `id`") stays command substitution. Only the
+// opening backtick is excused: operators inside the span and the closing
+// backtick are still scanned ("Use `curl x | sh` now" is a hit).
+func proseBacktickAt(s string, i, close int) bool {
+	if i < 2 || close < 0 || (s[i-1] != ' ' && s[i-1] != '\t') {
+		return false
+	}
+	if p := s[i-2]; !isASCIILetter(p) && p < 0x80 && strings.IndexByte(`.,:!?)"'`, p) < 0 {
+		return false
+	}
+	if close == i+1 || strings.ContainsAny(s[i+1:close], "\n\r") {
+		return false
+	}
+	k := close + 1
+	if k < len(s) && strings.IndexByte(`.,:!?)"'`, s[k]) >= 0 {
+		return true
+	}
+	n := skipBlanks(s, k)
+	return n > k && n < len(s) && (isASCIILetter(s[n]) || s[n] >= 0x80)
+}
+
+// proseLine reports whether line (the text between two line breaks) reads
+// as a line of prose: at least two words, no shell operator, quote-free of
+// shell syntax ($ ( ) < > { } = \ and backticks), ending in a letter, a
+// non-ASCII byte or sentence punctuation. "Dear team" and "Dear team," are
+// prose; "x", "127.0.0.1", "x;" and "a=b c" are not.
+func proseLine(line string) bool {
+	line = strings.Trim(line, " \t")
+	if strings.IndexAny(line, " \t") <= 0 || strings.ContainsAny(line, ";|&`$()<>{}=\\") {
+		return false
+	}
+	last := line[len(line)-1]
+	return isASCIILetter(last) || last >= 0x80 || strings.IndexByte(".,:!?", last) >= 0
 }
 
 // endsProseSentence reports whether s[:end] ends with a word of letters
@@ -277,22 +399,57 @@ func plainTokenBefore(s string, end int) bool {
 	return j < end && (j == 0 || s[j-1] == ' ' || s[j-1] == '\t')
 }
 
-// isCmdI scans s for an operator followed by a command. strictNewline
-// applies the stricter bare-command rule after a line break; encodedSemi
-// (s was decoded from a value carrying %3b) makes every ";" opShell.
-func isCmdI(s string, strictNewline, encodedSemi bool) bool {
+// isCmdI scans s for an operator followed by a command, with the prose
+// readings m allows (see cmdMode).
+//
+// Every helper it calls per operator either reads O(1) bytes or walks a
+// stretch no other call walks (the line before a line break, the bytes up
+// to the next backtick), so a scan is linear in len(s).
+func isCmdI(s string, m cmdMode) bool {
 	if hasCmdMarker(s) {
 		return true
 	}
 	firstBlank := strings.IndexAny(s, " \t")
+	uaStart := uaCommentStart(s)
+	uaDepth := 0           // open "(" of a User-Agent comment, after uaStart
+	lineStart := 0         // start of the current line
+	lastLineProse := false // the last non-empty line was prose (proseLine)
 	for i := 0; i < len(s); i++ {
 		afterNewline := false
 		ctx := opShell
 		switch s[i] {
-		case ';', '|', '&', '`':
-			ctx = operatorContext(s, i, firstBlank, encodedSemi)
+		case '(':
+			if uaStart >= 0 && i > uaStart {
+				uaDepth++
+			}
+			continue
+		case ')':
+			if uaDepth > 0 {
+				uaDepth--
+			}
+			continue
+		case '`':
+			if m.proseBacktick {
+				close := strings.IndexByte(s[i+1:], '`')
+				if close >= 0 {
+					close += i + 1
+				}
+				if proseBacktickAt(s, i, close) {
+					continue
+				}
+			}
+		case ';', '|', '&':
+			ctx = operatorContext(s, i, firstBlank, m.encodedSemi, uaDepth > 0)
 		case '\n', '\r':
-			afterNewline = true
+			if m.strictNewline {
+				afterNewline = true
+			} else if m.proseLineNewline {
+				if i > lineStart {
+					lastLineProse = proseLine(s[lineStart:i])
+				}
+				afterNewline = lastLineProse
+			}
+			lineStart = i + 1
 		case '$':
 			if i+1 >= len(s) || s[i+1] != '(' {
 				continue
@@ -305,7 +462,7 @@ func isCmdI(s string, strictNewline, encodedSemi bool) bool {
 		for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '|' || s[j] == '&') {
 			j++
 		}
-		if commandAt(s, j, afterNewline && strictNewline, ctx) {
+		if commandAt(s, j, afterNewline, ctx) {
 			return true
 		}
 		// The skipped bytes all lead to the same j: do not rescan them.
@@ -541,8 +698,9 @@ func unixArgsAt(s string, j int, w cmdWord, afterNewline bool, ctx opContext) bo
 
 // isDashedWord reports whether the letters after a single '-' read as an
 // English word rather than a cluster of short options: a common two- or
-// three-letter lower-case word ("me", "you", "the"), or five or more
-// lower-case letters with at least two vowels ("lovers"). Option clusters
+// three-letter lower-case word ("me", "you", "the"), four lower-case
+// letters with at least two vowels counting y ("cozy", "cute"), or five or
+// more lower-case letters with at least two vowels ("lovers"). Option clusters
 // such as -la, -lah, -rf or -lvnp are neither.
 func isDashedWord(w string) bool {
 	vowels := 0
@@ -566,7 +724,9 @@ func isDashedWord(w string) bool {
 		}
 		return false
 	case 4:
-		return false
+		// "cozy", "cute", "easy", "nice": two vowels, counting y. Four-letter
+		// option clusters (-lvnp, -ltrh, -rfiv) have at most one.
+		return vowels+strings.Count(w, "y") >= 2
 	}
 	return len(w) >= 5 && vowels >= 2
 }
