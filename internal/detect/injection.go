@@ -257,8 +257,13 @@ const (
 	// "id" there is the Indonesian locale tag, so a two-letter bare command
 	// with no flag is a token, as after opProseSemi. Every other command
 	// shape keeps the opShell rules ("(Linux; id -u)", "(Linux; cat
-	// /etc/passwd)", "(Linux; `id`)"). Accepted cost: "(x; id)", "(x; ls)"
-	// in a UA-shaped value are clean.
+	// /etc/passwd)", "(Linux; `id`)"). The comment must be closed: a ")"
+	// must follow the ";" somewhere in the value ("x/1 (; id" is opShell).
+	// The rule is structural, not tied to the User-Agent header: any value
+	// that starts with a product token gets it. Accepted cost: a two-letter
+	// bare command after "; " in a closed comment of a UA-shaped value is
+	// clean ("Mozilla/5.0 (x; id)", "Mozilla/5.0 (x; id; ls)", "a/1 (b;
+	// sh)").
 	opUAComment
 )
 
@@ -333,9 +338,11 @@ func uaCommentStart(s string) int {
 // backtick in s, or -1) followed by sentence text: punctuation, or blanks
 // and then a letter or a non-ASCII byte. A span after a shell operator
 // ("x; `id`", "x = `id`"), glued to a word ("x`id`"), alone ("`id`") or
-// with nothing after it ("Name `id`") stays command substitution. Only the
-// opening backtick is excused: operators inside the span and the closing
-// backtick are still scanned ("Use `curl x | sh` now" is a hit).
+// with nothing after it ("Name `id`") stays command substitution. The span
+// itself must be a name (see inlineNameSpan), so "a `sleep 10` b" and
+// "Run `wget http://x -O /tmp/x` now" stay hits. Only the opening backtick
+// is excused: operators inside the span and the closing backtick are still
+// scanned ("Use `curl x | sh` now" is a hit).
 func proseBacktickAt(s string, i, close int) bool {
 	if i < 2 || close < 0 || (s[i-1] != ' ' && s[i-1] != '\t') {
 		return false
@@ -346,6 +353,9 @@ func proseBacktickAt(s string, i, close int) bool {
 	if close == i+1 || strings.ContainsAny(s[i+1:close], "\n\r") {
 		return false
 	}
+	if !inlineNameSpan(s[i+1 : close]) {
+		return false
+	}
 	k := close + 1
 	if k < len(s) && strings.IndexByte(`.,:!?)"'`, s[k]) >= 0 {
 		return true
@@ -354,11 +364,71 @@ func proseBacktickAt(s string, i, close int) bool {
 	return n > k && n < len(s) && (isASCIILetter(s[n]) || s[n] >= 0x80)
 }
 
+// inlineNameSpan reports whether span (the text between two backticks)
+// names a command rather than running one: a word of letters, digits, '.',
+// '_' or '-' that starts with a letter, then only flags made of letters and
+// '-' ("id", "uname -m", "id --user --name", "ls -l --escape"). Any other
+// token (an argument, a number, a path, a URL, a quote, an operator), the
+// flags -c and -e, and any flag at all after sh, bash, python, perl, nc,
+// ncat or netcat make it a command. Accepted cost: a command word with
+// such flags in a prose span is clean ("a `whoami` b", "a `uname -a` b",
+// "a `ls -la` b", "a `sh` b"). Linear in len(span).
+func inlineNameSpan(span string) bool {
+	i := skipBlanks(span, 0)
+	start := i
+	if i >= len(span) || !isASCIILetter(span[i]) {
+		return false
+	}
+	for i < len(span) && (isIdentByte(span[i]) || span[i] == '.' || span[i] == '-') {
+		i++
+	}
+	switch span[start:i] {
+	case "sh", "bash", "python", "perl", "nc", "ncat", "netcat":
+		return skipBlanks(span, i) == len(span)
+	}
+	for {
+		if i < len(span) && span[i] != ' ' && span[i] != '\t' {
+			return false
+		}
+		if i = skipBlanks(span, i); i == len(span) {
+			return true
+		}
+		f := i
+		for i < len(span) && span[i] == '-' && i-f < 2 {
+			i++
+		}
+		if i == f || i >= len(span) || !isASCIILetter(span[i]) {
+			return false
+		}
+		for i < len(span) && (isASCIILetter(span[i]) || span[i] == '-') {
+			i++
+		}
+		if tok := span[f:i]; tok == "-c" || tok == "-e" {
+			return false
+		}
+	}
+}
+
+// loneProseWordAt reports whether s[j:] (after blanks) is "id" or "ls" as a
+// whole token: the two command words a line of prose in a query value may
+// end with on the next line ("Dear team" newline "id"). Other commands
+// after a prose line keep the ordinary rule ("foo bar" newline "whoami",
+// "sleep 10", "uname", "sh"). O(1).
+func loneProseWordAt(s string, j int) bool {
+	j = skipBlanks(s, j)
+	if j+2 > len(s) || (s[j:j+2] != "id" && s[j:j+2] != "ls") {
+		return false
+	}
+	return j+2 == len(s) || s[j+2] == ' ' || s[j+2] == '\t' || isShellOperator(s[j+2])
+}
+
 // proseLine reports whether line (the text between two line breaks) reads
 // as a line of prose: at least two words, no shell operator, quote-free of
 // shell syntax ($ ( ) < > { } = \ and backticks), ending in a letter, a
 // non-ASCII byte or sentence punctuation. "Dear team" and "Dear team," are
-// prose; "x", "127.0.0.1", "x;" and "a=b c" are not.
+// prose; "x", "127.0.0.1", "x;" and "a=b c" are not. In a query value only
+// "id" or "ls" alone after such a line is then a word (loneProseWordAt).
+// Accepted cost: "?q=foo%20bar%0aid" and "?q=foo%20bar%0als" are clean.
 func proseLine(line string) bool {
 	line = strings.Trim(line, " \t")
 	if strings.IndexAny(line, " \t") <= 0 || strings.ContainsAny(line, ";|&`$()<>{}=\\") {
@@ -411,6 +481,7 @@ func isCmdI(s string, m cmdMode) bool {
 	}
 	firstBlank := strings.IndexAny(s, " \t")
 	uaStart := uaCommentStart(s)
+	lastClose := strings.LastIndexByte(s, ')')
 	uaDepth := 0           // open "(" of a User-Agent comment, after uaStart
 	lineStart := 0         // start of the current line
 	lastLineProse := false // the last non-empty line was prose (proseLine)
@@ -439,7 +510,7 @@ func isCmdI(s string, m cmdMode) bool {
 				}
 			}
 		case ';', '|', '&':
-			ctx = operatorContext(s, i, firstBlank, m.encodedSemi, uaDepth > 0)
+			ctx = operatorContext(s, i, firstBlank, m.encodedSemi, uaDepth > 0 && i < lastClose)
 		case '\n', '\r':
 			if m.strictNewline {
 				afterNewline = true
@@ -447,7 +518,7 @@ func isCmdI(s string, m cmdMode) bool {
 				if i > lineStart {
 					lastLineProse = proseLine(s[lineStart:i])
 				}
-				afterNewline = lastLineProse
+				afterNewline = lastLineProse && loneProseWordAt(s, i+1)
 			}
 			lineStart = i + 1
 		case '$':

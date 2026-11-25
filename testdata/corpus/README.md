@@ -61,10 +61,10 @@ The command-injection detector reads some operators as prose, and from alpha.6 t
 | `chmod` with a mode and no file | `; chmod +x`, `; chmod 755` | `Notes; chmod 755` |
 | `type` with a `/x` switch (cmd.exe's `type` takes no switches) | `\| type /a` | `Pack of 2 \| type /a` |
 | One plain word of two or more letters, or a word and a number, then `; ` and `sleep N` at the end (alpha.5; alpha.6 catches a lone letter or number again: `x; sleep 10`, `1; sleep 5`) | `ab; sleep 10`, `x 1; sleep 5` | `Mon; sleep 8`, `Gate 2; sleep 10` |
-| Two-letter command (`id`, `ls`, `sh`) with no flag after `"; "` inside the `(...)` comment of a User-Agent shaped value (alpha.6) | `Mozilla/5.0 (x; id)` | `Mozilla/5.0 (Linux; U; Android 4.4.2; id; ...)` |
-| A four-letter word with two vowels (counting y) after a dash, then a one-segment root path, after a lone ` & ` (alpha.6) | `x & cat -cozy /flag` | `Tea & cat -cozy /club` |
-| Single-backtick span in a sentence in a JSON or form value: a blank and a letter or punctuation before it, sentence text after it (alpha.6) | ``a `id` b``, ``x: `ls`.`` | ``Use `ls` to list files``, ``Se også: `id`.`` |
-| A bare command with no flag after a line break in a query value, when the line before is two or more words of prose (alpha.6) | `?q=foo%20bar%0aid` | `Dear team` newline `id` |
+| Two-letter command (`id`, `ls`, `sh`) with no flag after `"; "` inside a closed `(...)` comment of a User-Agent shaped value, in any field (alpha.6) | `Mozilla/5.0 (x; id)`, `Mozilla/5.0 (x; id; ls)`, `a/1 (b; sh)` | `Mozilla/5.0 (Linux; U; Android 4.4.2; id; ...)` |
+| A four-letter word with two vowels (counting y) after a dash, then a one-segment root path, after a lone ` & ` (alpha.6) | `x & cat -cozy /flag`, `x & cat -easy /flag.txt` | `Tea & cat -cozy /club` |
+| Single-backtick span in a sentence in a JSON, form, header or cookie value that holds a command word with letter-only flags (no `-c`/`-e`, no flag after `sh`, `bash`, `python`, `perl`, `nc`, `ncat`, `netcat`): a blank and a letter or punctuation before it, sentence text after it (alpha.6) | ``a `id` b``, ``x: `ls`.``, ``a `whoami` b``, ``a `uname -a` b``, ``a `ls -la` b``, ``a `sh` b``, ``Note: `id` here`` | ``Use `ls` to list files``, ``Se også: `id`.`` |
+| `id` or `ls` alone after a line break in a query value, when the line before is two or more words of prose (alpha.6) | `?q=foo%20bar%0aid`, `?q=foo%20bar%0als` | `Dear team` newline `id` |
 | `${...}` member access or call on a non-sensitive name (alpha.5) | `${user.getName()}`, `${order.getTotal()}` | `${order.total}`, `${user.name}` |
 | SQLi: a comparison-free tautology with a range or decimal, or after `N% (word)` with plain `or`/`and`, `not` or `in` (alpha.6) | `1-1 or 1`, `6-7 or 8 or 1`, `9% (a) or 1`, `9% (a) or not 0` | `6-7 or 8`, `Sale 20% (today only)` |
 
