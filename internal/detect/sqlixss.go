@@ -34,8 +34,17 @@ func isSQLi(s string) bool {
 }
 
 // maxSQLiStarts caps the extra libinjection calls sqliFromKeywordStarts
-// makes on one value (one window, for a value the engine scans in windows).
+// makes on one value (one window, for a value the engine scans in windows)
+// at both ends: the first maxSQLiStarts candidates and the last
+// maxSQLiStarts are tried, at most 2*maxSQLiStarts calls.
 const maxSQLiStarts = 8
+
+// sqliStartWindow bounds how much of the value each extra libinjection call
+// in sqliFromKeywordStarts reads, from its start offset. libinjection
+// decides from the first five folded tokens, which in every injection shape
+// here fit well inside it ("1 UNION SELECT username, password FROM
+// users--" is 46 bytes).
+const sqliStartWindow = 128
 
 // sqliStart is one candidate start offset for sqliFromKeywordStarts: start
 // is where libinjection reads from, kwEnd is just past the keyword that
@@ -51,68 +60,49 @@ type sqliStart struct {
 // fingerprints a value from its first byte, so the leading words change the
 // fingerprint; read from the "1" (or from "UNION") the same text is flagged.
 //
-// Candidate starts are SQL keywords (union, select, drop, insert, update,
-// delete, or, and, waitfor, exec, declare) that begin a word after a blank,
-// a ';' or the end of an inline comment ("x 1/**/UNION/**/SELECT"). When
-// the keyword directly follows a number ("1 UNION", "1; DROP", "1 OR"),
-// libinjection reads from the number instead, which is how such a payload
-// closes a numeric context. Numbers alone are never candidates, so a run of
-// "1 1 1 ..." cannot use up the cap.
+// Candidate starts are SQL keywords that begin a word after a blank, a ';',
+// a ')' or the end of an inline comment ("x 1/**/UNION/**/SELECT",
+// "1)UNION SELECT"). When the keyword directly follows a number ("1 UNION",
+// "1; DROP", "1 OR"), libinjection reads from the number instead, which is
+// how such a payload closes a numeric context. Numbers alone are never
+// candidates.
 //
 // Prose is full of these keywords, so a suffix hit counts only in two
-// statement shapes prose does not write:
+// statement shapes prose does not write, and only keywords that can lead to
+// one are candidates:
 //
-//   - its fingerprint holds UNION followed by a SELECT-class expression
-//     ("UE"): "1 UNION SELECT password FROM users". "please union select the
-//     best one" has no such fingerprint.
-//   - the value ends in a SQL comment that truncates the rest of the query
-//     ("--" followed by no letters, or an unclosed "/*"), and SQL syntax
-//     sits between the keyword and that comment (see sqlSyntaxAt): "1 OR
-//     1=1--", "1; DROP TABLE orders;--", "1 AND SLEEP(5)--", "1; EXEC
+//   - UNION followed by SELECT, ALL or DISTINCT (see selectFollows), whose
+//     fingerprint holds UNION and a SELECT-class expression ("UE"): "1 UNION
+//     SELECT password FROM users". "please union select the best one" has no
+//     such fingerprint, and "union union union" is never a candidate.
+//   - union, select, drop, insert, update, delete, or, and, waitfor, exec or
+//     declare when the value ends in a SQL comment that truncates the rest
+//     of the query ("--" followed by no letters, or an unclosed "/*") and SQL
+//     syntax (see lastSQLSyntax) sits between the keyword and that comment:
+//     "1 OR 1=1--", "1; DROP TABLE orders;--", "1 AND SLEEP(5)--", "1; EXEC
 //     xp_cmdshell 'dir'--". Prose such as "pick 2 or 3 --", "call me at 9;
-//     drop me a line --" or "ok 1 and 2, thanks --" has none, and "Pack of
-//     2 -- fresh" has letters after the comment.
+//     drop me a line --" or "ok 1 and 2, thanks --" has no such syntax, and
+//     "Pack of 2 -- fresh" has letters after the comment.
 //
-// Without a trailing comment only UNION keywords are candidates. A
-// fingerprint shorter than three tokens (a lone "1c": "only 10 -- limited"
+// A fingerprint shorter than three tokens (a lone "1c": "only 10 -- limited"
 // read from "10") never counts, and isProseNumberComment applies as in
 // isSQLi.
 //
-// Cost: one pass over s collects the candidates, keeping only the last
-// maxSQLiStarts before the trailing comment (an injection sits at the end of
-// the value, in front of the comment that hides the rest of the query, so
-// leading padding cannot push it out); then at most maxSQLiStarts
-// libinjection calls, each on a suffix of s and linear in its length. Total
-// work is O(maxSQLiStarts * len(s)), linear in len(s). An attacker who places
-// more than maxSQLiStarts keywords between the payload and the comment
-// evades this rule; the payload itself then ends in SQL that the suffix
-// reads would flag in most shapes.
+// Cost: two passes over s (the syntax scan and the candidate scan), then
+// at most 2*maxSQLiStarts libinjection calls of at most sqliStartWindow
+// bytes each: linear in len(s) with a small fixed bound on the extra
+// libinjection work. The first maxSQLiStarts candidates and the last
+// maxSQLiStarts are tried, so padding on one side of the payload cannot push
+// it out, and keywords that cannot lead to either shape (a "union" with no
+// SELECT after it, a keyword with no SQL syntax after it) are not
+// candidates, so they cannot be used as padding at all. Hiding a payload
+// takes more than maxSQLiStarts candidates that do not trigger on BOTH
+// sides of it, each a UNION SELECT or a keyword before SQL syntax.
 func sqliFromKeywordStarts(s string) bool {
 	end, tail := trailingSQLComment(s)
-	var ring [maxSQLiStarts]sqliStart
-	n := 0
 	lastSyntax := -1
-	for i := 0; i < end; i++ {
-		c := s[i]
-		if sqlSyntaxAt(s[:end], i) {
-			lastSyntax = i
-		}
-		if i == 0 || !isBlank(s[i-1]) && s[i-1] != ';' && !strings.HasSuffix(s[:i], "*/") || !isLetter(c) {
-			continue
-		}
-		j := i
-		for j < end && isIdentByte(s[j]) {
-			j++
-		}
-		kw := s[i:j]
-		union := strings.EqualFold(kw, "union")
-		if union || tail && isSQLiStartKeyword(kw) {
-			ring[n%maxSQLiStarts] = sqliStart{start: numberBefore(s, i), kwEnd: j, union: union}
-			n++
-		}
-		i = j - 1
-	}
 	if tail {
+		lastSyntax = lastSQLSyntax(s[:end])
 		// A ';' that ends the last statement ("orders;--").
 		k := end
 		for k > 0 && isBlank(s[k-1]) {
@@ -122,15 +112,70 @@ func sqliFromKeywordStarts(s string) bool {
 			lastSyntax = max(lastSyntax, k-1)
 		}
 	}
-	for k := range min(n, maxSQLiStarts) {
-		st := ring[k]
-		sub := s[st.start:]
-		ok, fp := libinjection.IsSQLi(sub)
-		if !ok || len(fp) < 3 || isProseNumberComment(sub, fp) {
+	var ring [maxSQLiStarts]sqliStart
+	n := 0
+	for i := 1; i < end; i++ {
+		if p := s[i-1]; !isLetter(s[i]) || !isBlank(p) && p != ';' && p != ')' && !strings.HasSuffix(s[:i], "*/") {
 			continue
 		}
-		if st.union && strings.Contains(fp, "UE") || tail && lastSyntax >= st.kwEnd {
+		j := i
+		for j < end && isIdentByte(s[j]) {
+			j++
+		}
+		kw := s[i:j]
+		i = j - 1
+		union := strings.EqualFold(kw, "union") && selectFollows(s[j:end])
+		if !union && !(tail && lastSyntax >= j && isSQLiStartKeyword(kw)) {
+			continue
+		}
+		st := sqliStart{start: numberBefore(s, j-len(kw)), kwEnd: j, union: union}
+		if n < maxSQLiStarts {
+			if sqliStartMatches(s, st, tail, lastSyntax) {
+				return true
+			}
+		} else {
+			ring[n%maxSQLiStarts] = st
+		}
+		n++
+	}
+	// The last candidates, past the first maxSQLiStarts already tried.
+	for k := maxSQLiStarts; k < min(n, 2*maxSQLiStarts); k++ {
+		if sqliStartMatches(s, ring[(n-1-(k-maxSQLiStarts))%maxSQLiStarts], tail, lastSyntax) {
 			return true
+		}
+	}
+	return false
+}
+
+// sqliStartMatches runs libinjection on at most sqliStartWindow bytes from
+// st.start and applies sqliFromKeywordStarts's statement-shape guards.
+func sqliStartMatches(s string, st sqliStart, tail bool, lastSyntax int) bool {
+	sub := s[st.start:min(len(s), st.start+sqliStartWindow)]
+	ok, fp := libinjection.IsSQLi(sub)
+	if !ok || len(fp) < 3 || isProseNumberComment(sub, fp) {
+		return false
+	}
+	return st.union && strings.Contains(fp, "UE") || tail && lastSyntax >= st.kwEnd
+}
+
+// selectFollows reports whether s, the text after a UNION, starts with
+// SELECT, ALL or DISTINCT after blanks, inline comments or '(' ("UNION
+// SELECT", "UNION/**/SELECT", "UNION ALL SELECT", "UNION (SELECT"). It stops
+// at the first other byte, so it reads only the gap after this UNION.
+func selectFollows(s string) bool {
+	i := 0
+	for i < len(s) {
+		switch {
+		case isBlank(s[i]) || s[i] == '(':
+			i++
+		case strings.HasPrefix(s[i:], "/*"):
+			k := strings.Index(s[i+2:], "*/")
+			if k < 0 {
+				return false
+			}
+			i += k + 4
+		default:
+			return wordAt(s, i, "select") || wordAt(s, i, "all") || wordAt(s, i, "distinct")
 		}
 	}
 	return false
@@ -185,31 +230,144 @@ func isSQLiStartKeyword(w string) bool {
 	return false
 }
 
-// sqlSyntaxAt reports whether s[i] is SQL syntax that prose does not write:
-// a comparison operator with an operand directly on both sides ("1=1",
-// "a<>b"), a '(' directly after a name ("SLEEP(5)", "pg_sleep("), or a
-// quote that is not an apostrophe between two letters ("'dir'", but not
-// "don't"). Commas, a '(' after a blank and a spaced "=" are left to prose.
-// It looks only at s[i-1], s[i] and s[i+1].
-func sqlSyntaxAt(s string, i int) bool {
-	c := s[i]
-	prev, next := byte(' '), byte(' ')
-	if i > 0 {
-		prev = s[i-1]
+// lastSQLSyntax returns the index of the last byte of SQL syntax in s that
+// prose does not write, or -1:
+//
+//   - a comparison operator (a run of = < > !) with an operand directly on
+//     both sides that are both numbers ("1=1", "2>1"), both single-quoted
+//     strings ("'a'='a'") or the same name ("x=x"). "2=fine" and "size=2"
+//     are how prose writes a key and value.
+//   - a '(' directly after a name ("SLEEP(5)", "pg_sleep(").
+//   - a closing single quote of a quoted word with no blank and at least one
+//     non-digit in it ("'dir'", "'0:0:5'"); an apostrophe between two letters
+//     ("don't", "I'd") neither opens nor closes one. Double quotes never
+//     count: prose quotes words with them ("say \"yes\"", "\"2\"").
+//
+// Commas, a '(' after a blank and a spaced "=" are left to prose. One pass;
+// operand checks look at most maxOperand bytes to each side, so the scan is
+// linear.
+func lastSQLSyntax(s string) int {
+	last := -1
+	open := -1 // index of a pending opening single quote
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'':
+			prevLetter := i > 0 && isLetter(s[i-1])
+			nextLetter := i+1 < len(s) && isLetter(s[i+1])
+			switch {
+			case prevLetter && nextLetter:
+				// apostrophe inside a word
+			case open >= 0:
+				if !nextLetter && isQuotedWord(s[open+1:i]) {
+					last = i
+				}
+				open = -1
+			case !prevLetter:
+				open = i
+			}
+		case c == '(':
+			if i > 0 && isIdentByte(s[i-1]) {
+				last = i
+			}
+		case isCmpByte(c) && (i == 0 || !isCmpByte(s[i-1])):
+			j := i
+			for j < len(s) && isCmpByte(s[j]) {
+				j++
+			}
+			if comparesLikeSQL(s, i, j) {
+				last = j - 1
+			}
+			i = j - 1
+		}
 	}
-	if i+1 < len(s) {
-		next = s[i+1]
-	}
-	switch c {
-	case '=', '<', '>':
-		return !isBlank(prev) && !isBlank(next)
-	case '(':
-		return isIdentByte(prev)
-	case '\'', '"':
-		return !isLetter(prev) || !isLetter(next)
-	}
-	return false
+	return last
 }
+
+// maxOperand bounds how far comparesLikeSQL looks for an operand.
+const maxOperand = 64
+
+// comparesLikeSQL reports whether the comparison operator s[i:j] has, directly
+// on both sides, two numbers, two single-quoted strings or the same name.
+func comparesLikeSQL(s string, i, j int) bool {
+	if i == 0 || j >= len(s) {
+		return false
+	}
+	lk, l := operandBefore(s, i)
+	rk, r := operandAfter(s, j)
+	if lk == 0 || lk != rk {
+		return false
+	}
+	return lk != 'n' || strings.EqualFold(l, r)
+}
+
+// operandBefore classifies the operand ending at s[i-1]: '1' for a number,
+// 's' for a single-quoted string, 'n' for a name, 0 for anything else. It
+// returns the operand text too.
+func operandBefore(s string, i int) (byte, string) {
+	lo := max(0, i-maxOperand)
+	if s[i-1] == '\'' {
+		k := strings.LastIndexByte(s[lo:i-1], '\'')
+		if k < 0 {
+			return 0, ""
+		}
+		return 's', s[lo+k : i]
+	}
+	k := i
+	for k > lo && isIdentByte(s[k-1]) {
+		k--
+	}
+	return operandKind(s[k:i]), s[k:i]
+}
+
+// operandAfter is operandBefore for the operand starting at s[j].
+func operandAfter(s string, j int) (byte, string) {
+	hi := min(len(s), j+maxOperand)
+	if s[j] == '\'' {
+		k := strings.IndexByte(s[j+1:hi], '\'')
+		if k < 0 {
+			return 0, ""
+		}
+		return 's', s[j : j+k+2]
+	}
+	k := j
+	for k < hi && isIdentByte(s[k]) {
+		k++
+	}
+	return operandKind(s[j:k]), s[j:k]
+}
+
+func operandKind(w string) byte {
+	if w == "" {
+		return 0
+	}
+	for i := 0; i < len(w); i++ {
+		if w[i] < '0' || w[i] > '9' {
+			return 'n'
+		}
+	}
+	return '1'
+}
+
+// isQuotedWord reports whether w, the text between two single quotes, is a
+// single non-empty token with at least one non-digit ("dir", "0:0:5").
+func isQuotedWord(w string) bool {
+	if w == "" {
+		return false
+	}
+	nonDigit := false
+	for i := 0; i < len(w); i++ {
+		if isBlank(w[i]) {
+			return false
+		}
+		if w[i] < '0' || w[i] > '9' {
+			nonDigit = true
+		}
+	}
+	return nonDigit
+}
+
+func isCmpByte(c byte) bool { return c == '=' || c == '<' || c == '>' || c == '!' }
 
 func isLetter(c byte) bool { return c|0x20 >= 'a' && c|0x20 <= 'z' }
 

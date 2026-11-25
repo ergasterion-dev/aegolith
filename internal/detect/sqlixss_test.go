@@ -278,6 +278,15 @@ var sqliAfterWordsPositives = []string{
 	"note 1 WAITFOR DELAY '0:0:5'--",
 	"note 1; DELETE FROM users;--",
 	"note 1/**/UNION/**/SELECT/**/1,2--",
+	// Review fix: keywords after the payload must not hide it, and ')' is a
+	// boundary before a keyword.
+	"please send 1 UNION SELECT password FROM users# union union union union union union union union",
+	"please send 1 UNION SELECT password FROM users-- x union union union union union union union union",
+	"please send 1 UNION SELECT password FROM users/* c */ union union union union union union union union",
+	"please send 1)UNION SELECT password FROM users--",
+	"union select a seat union select a seat union select a seat union select a seat union select a seat " +
+		"union select a seat union select a seat union select a seat union select a seat x 1 UNION SELECT password FROM users--",
+	"note 1 OR 'a'='a' or 1 or 1 or 1 or 1 or 1 or 1 or 1 or 1 or 1 or 1--",
 	"x union all select a, b from c union select d from e union select f from g-- -",
 }
 
@@ -315,6 +324,10 @@ var sqliAfterWordsNegatives = []string{
 	"call 1; delete my old address, please --",
 	"room 1 or 2 or 3 /* note",
 	"ages 3 and up (kids) --",
+	// Review fix: a quoted number and a number compared with a word.
+	`I'd say 1 and "2" --`,
+	"pack 1 and 2=fine --",
+	`pick 1 or "yes" --`,
 }
 
 func TestSQLiAfterLeadingWords(t *testing.T) {
@@ -357,9 +370,10 @@ func TestSQLiStartsLinear(t *testing.T) {
 	}
 	const size = 200 << 10
 	lim := wallLimit(50*time.Millisecond, 2*time.Second)
-	for _, unit := range []string{"select 1 union ", "1 or ", "1 or 1=1-- ", "union "} {
+	for _, unit := range []string{"select 1 union ", "1 or ", "1 or 1=1-- ", "union ", "union select ", "x union all ",
+		"drop me ", "a or ", "1 or x(", "x 1 and 'y' "} {
 		in := strings.Repeat(unit, size/len(unit))
-		for _, v := range []string{in, in + "--"} {
+		for _, v := range []string{in, in + "--", in + "1=1--"} {
 			if d := bestOf(3, func() { SQLi(v) }); d > lim {
 				t.Errorf("%q x %d: SQLi took %v, want under %v", unit, len(v)/len(unit), d, lim)
 			}
