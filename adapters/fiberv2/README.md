@@ -8,7 +8,7 @@ module stays free of Fiber.
 ## Install
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.4
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.5
 ```
 
 ## Usage
@@ -72,7 +72,7 @@ inspection (default 1 MiB, so 2 MiB+1), matching what the engine inspects of
 an over-cap body. A body over `MaxBodyBytes` raises `AEG-PROTO-003`, which
 blocks by default and stops the inspection there, so enforce mode is
 unaffected and a padded body is refused. (Core `v0.1.0-alpha.1` still monitored it;
-this adapter release pins core `v0.1.0-alpha.4`. With the older core, set
+this adapter release pins core `v0.1.0-alpha.5`. With the older core, set
 `RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}`.)
 If you set it back to monitor, an attack placed after `2 x MaxBodyBytes` of
 padding reaches the handler. Fiber's default `BodyLimit` (4 MiB) is larger than `max_body_bytes`,
@@ -83,7 +83,7 @@ so set `fiber.Config{BodyLimit: ...}` at or below it as well.
 Since alpha.4 the copy is always `2 x MaxBodyBytes+1` for an over-cap body, in
 enforce mode too (one extra copy of at most `MaxBodyBytes`), and monitor mode
 inspects up to that size. A JSON or multipart body cut only by the cap does
-not raise `AEG-PROTO-020` (this adapter release pins core alpha.4, which has that fix).
+not raise `AEG-PROTO-020` (this adapter release pins core alpha.5, which has that fix).
 
 The handler still receives the complete, unmodified body.
 

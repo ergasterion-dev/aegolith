@@ -40,7 +40,7 @@ Things it deliberately is not: a CRS clone, a ModSecurity-rule engine, a rate li
 You need Go 1.25 or later. The core module depends on the standard library and [libinjection-go](https://github.com/corazawaf/libinjection-go) only.
 
 ```sh
-go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.4
+go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.5
 ```
 
 (This is an alpha release; see [Status](#status-and-roadmap).)
@@ -88,7 +88,7 @@ func main() {
 The Fiber adapter is its own Go module, so the core never pulls Fiber:
 
 ```sh
-go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.4
+go get github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.5
 ```
 
 ```go
@@ -278,10 +278,10 @@ Each rule's known gaps and false-positive shapes are in the [threat model](docs/
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **132 attacks and 118 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 25 attacks and 86 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **137 attacks and 130 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 30 attacks and 98 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 128 of 132 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 129 of 132 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 133 of 137 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 134 of 137 blocked, and every legitimate request must fit the policy.
 
 Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-25:
 
@@ -291,21 +291,21 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | xss | 17 | 17 | 17 |
 | lfi | 11 | 11 | 11 |
 | rfi | 3 | 3 | 3 |
-| cmdi | 15 | 15 | 15 |
+| cmdi | 19 | 19 | 19 |
 | ssti | 9 | 9 | 9 |
 | log4shell | 3 | 4 | 4 |
 | ssrf | 5 | 5 | 5 |
 | xxe | 3 | 3 | 3 |
 | nosqli | 2 | 2 | 3 |
-| codei | 7 | 7 | 7 |
+| codei | 8 | 8 | 8 |
 | protocol | 6 | 6 | 7 |
 | scanner | 13 | 13 | 13 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **128** | **129** | **132** |
-| **False positives** | **0** | **0** | **118** |
+| **Attacks** | **133** | **134** | **137** |
+| **False positives** | **0** | **0** | **130** |
 
-**What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4):
+**What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.5):
 
 | Attack | Generic | API-aware | Why |
 |---|---|---|---|
@@ -318,7 +318,7 @@ The corpus came from the same team that tuned the rules, so these numbers show t
 
 ## Performance
 
-Measured on a developer laptop, not a server. Reproduce with the commands below. **The figures below are from alpha.3 and were not re-measured for alpha.4** (the machine was loaded); the alpha.4 detectors add work per value (see the [changelog](CHANGELOG.md)), so run `make bench` and `make perf` yourself before relying on them.
+Measured on a developer laptop, not a server. Reproduce with the commands below. **The figures below are from alpha.3 and were not re-measured for alpha.4 or alpha.5** (the machine was loaded); the alpha.4 detectors add work per value (see the [changelog](CHANGELOG.md)), so run `make bench` and `make perf` yourself before relying on them.
 
 | | |
 |---|---|
@@ -373,8 +373,8 @@ make corpus     # the tables above
 
 Aegolith v0.1 is **alpha**. What that means:
 
-- **Alpha release (`v0.1.0-alpha.4`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 128 and 129 of the 132 corpus attacks with no false positives on 118 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Alpha release (`v0.1.0-alpha.5`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
+- **Tuned on one corpus.** It blocks 133 and 134 of the 137 corpus attacks with no false positives on 130 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 

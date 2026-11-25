@@ -45,9 +45,9 @@ Both gates pass with these attacks still allowed. They are reported, not hidden:
 | misc / xpath injection | missed | missed | `' or name()='username' or 'x'='y`: libinjection does not flag it and there is no XPath detector in v0.1. |
 | log4shell / obfuscated jndi | missed | blocked | The lookup is in `X-Api-Version`, which is scanned only when listed in `inspect_headers` (the API-aware policy lists it; the generic configuration scans `User-Agent` and `Referer` only). |
 
-### alpha.4 notes
+### alpha.4 and alpha.5 notes
 
-The alpha.4 detectors and their false-positive costs are in the [threat model](../../docs/threat-model.md#detector-coverage-added-in-alpha4-and-what-it-costs). The four misses above are unchanged. Counts: generic 128 of 132, API-aware 129 of 132, 0 of 118 legitimate requests blocked.
+The alpha.4 detectors and their false-positive costs are in the [threat model](../../docs/threat-model.md#detector-coverage-added-in-alpha4-and-what-it-costs); the alpha.5 changes (one-word prefix before `sleep N`, `${...}` member access, a Java object in a path) are in [Changes in alpha.5](../../docs/threat-model.md#changes-in-alpha5-and-what-they-cost). The four misses above are unchanged. Counts at alpha.5: generic 133 of 137, API-aware 134 of 137, 0 of 130 legitimate requests blocked. alpha.5 added legitimate near misses for the sleep prefix, `${...}` placeholders and long file keys, and one route (`GET /api/v1/files/:key`) to the example policy.
 
 ### Accepted recall trade-offs (not in the corpus)
 
@@ -60,5 +60,7 @@ The command-injection detector reads some operators as prose, so that real custo
 | Two-letter command (`id`, `ls`, `sh`) with no flag after `"; "` that ends a sentence of two or more words | `see you; id` | the same, as a sign-off |
 | `chmod` with a mode and no file | `; chmod +x`, `; chmod 755` | `Notes; chmod 755` |
 | `type` with a `/x` switch (cmd.exe's `type` takes no switches) | `\| type /a` | `Pack of 2 \| type /a` |
+| One plain word or number, then `; ` and `sleep N` at the end (alpha.5) | `x; sleep 10`, `1; sleep 5` | `Mon; sleep 8`, `Gate 2; sleep 10` |
+| `${...}` member access or call on a non-sensitive name (alpha.5) | `${user.getName()}`, `${order.getTotal()}` | `${order.total}`, `${user.name}` |
 
 A real flag after the ` & ` restores the full rules (`x & id -u`, `x & ping -c 3 10.0.0.1`, `x & curl -s http://...`, `x & ls -la /tmp`). So do shell-only operators (`&&`, `\|`, a backtick, `$(`, and `;` after anything that is not a prose sentence). netcat with an IPv4 address is always caught.
