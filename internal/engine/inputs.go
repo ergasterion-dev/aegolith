@@ -196,7 +196,7 @@ func (s *state) checkBody() {
 	case mt == "application/x-www-form-urlencoded":
 		s.pairs(model.LocBody, model.LocBody, "form", string(body), "form")
 	case strings.HasPrefix(mt, "multipart/"):
-		s.checkMultipart(body, ct)
+		s.checkMultipart(body, ct, s.bodyCut(body))
 	case s.e.proto.AllowXML && (mt == "application/xml" || mt == "text/xml"):
 		s.scanWindows(model.LocBody, "body", string(body), detect.XXE, "")
 	case strings.HasPrefix(mt, "text/"):
@@ -268,7 +268,7 @@ func (s *state) checkJSON(body []byte, cut bool) {
 	switch {
 	case errors.Is(err, normalize.ErrLimit): // only depth can trip it here
 		s.protoMatch(ruleLimit, model.LocBody, "body", "")
-	case cut && errors.Is(err, normalize.ErrTruncated):
+	case cut && errors.Is(err, normalize.ErrIncomplete):
 		// Cut short by an inspection cap: nothing to report, but the part
 		// after the last complete value is still scanned raw.
 	case errors.Is(err, normalize.ErrMalformed):
@@ -305,8 +305,11 @@ func (s *state) bodyCut(body []byte) bool {
 // raise AEG-PROTO-010 and are still inspected, under the scan budget. A
 // parse failure is AEG-PROTO-020; the parts read before it are inspected.
 // With these bounds ParseMultipart can neither truncate a value nor hit its
-// part limit, so neither case is handled here.
-func (s *state) checkMultipart(body []byte, ct string) {
+// part limit, so neither case is handled here. cut reports that body is
+// only a prefix of the request body (see bodyCut): a failure caused only by
+// the input ending inside the last part is then the cut, not a malformed
+// body, and raises nothing.
+func (s *state) checkMultipart(body []byte, ct string, cut bool) {
 	lim := s.e.lim
 	lim.MaxFields, lim.MaxValueLen = len(body)+1, len(body)+1
 	parts, err := normalize.ParseMultipart(body, ct, lim)
@@ -331,7 +334,7 @@ func (s *state) checkMultipart(body []byte, ct string) {
 		}
 		s.value(model.LocBody, model.LocBody, field, p.Name, p.Value, true)
 	}
-	if err != nil {
+	if err != nil && !(cut && errors.Is(err, normalize.ErrIncomplete)) {
 		s.protoMatch(ruleMalformed, model.LocBody, "body", "")
 	}
 }

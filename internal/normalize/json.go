@@ -16,11 +16,16 @@ var ErrLimit = errors.New("normalize: limit exceeded")
 // ErrMalformed means the JSON body has a syntax error.
 var ErrMalformed = errors.New("normalize: malformed JSON")
 
-// ErrTruncated means the JSON body ended before its top-level value was
-// complete and had no syntax error up to that point: what a body cut short
-// looks like. errors.Is(ErrTruncated, ErrMalformed) is true, so callers that
-// do not care about the difference treat it as malformed.
-var ErrTruncated = fmt.Errorf("%w: unexpected end of input", ErrMalformed)
+// ErrIncomplete means a body parse failed only because the input ended
+// early, with no syntax error before that point: what a body cut short
+// looks like. WalkJSON (ErrTruncated) and ParseMultipart wrap it, so
+// callers that know the body was cut can tell that from a real error.
+var ErrIncomplete = errors.New("normalize: unexpected end of input")
+
+// ErrTruncated is WalkJSON's error for JSON that ends before its top-level
+// value is complete. It wraps both ErrMalformed (callers that do not care
+// about the difference treat it as malformed) and ErrIncomplete.
+var ErrTruncated = fmt.Errorf("%w: %w", ErrMalformed, ErrIncomplete)
 
 // JSONValue is one string, number or boolean value (or one object key) found
 // in a JSON document. Path is dotted with arrays as "[]" (for example

@@ -1603,3 +1603,46 @@ func TestTruncatedJSONNotMalformed(t *testing.T) {
 		}
 	}
 }
+
+// G8: a multipart body cut at the inspection cap (2 x MaxBodyBytes) does not
+// raise AEG-PROTO-020, whether the cut falls inside a part's content or
+// inside its header block; a genuinely malformed multipart body still does.
+func TestTruncatedMultipartNotMalformed(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	const ct = "multipart/form-data; boundary=XB"
+	field := func(name, v string) string {
+		return "--XB\r\nContent-Disposition: form-data; name=\"" + name + "\"\r\n\r\n" + v + "\r\n"
+	}
+	file := func(n int) string {
+		return "--XB\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n" + strings.Repeat("z", n) + "\r\n"
+	}
+	attack := field("q", "1 UNION SELECT password FROM users")
+	has := func(d aegolith.Decision, id string) bool { _, ok := find(d, id); return ok }
+
+	inContent := attack + file(3<<20) + "--XB--\r\n"
+	// Cut inside the header block of the part after a padding field: the
+	// cap falls 10 bytes into "Content-Disposition".
+	pad := 2<<20 - len(attack) - len(field("p", "")) - len("--XB\r\n") - 10
+	inHeader := attack + field("p", strings.Repeat("a", pad)) + file(1<<20) + "--XB--\r\n"
+	if !strings.HasPrefix(inHeader[2<<20-10:], "Content-Di") {
+		t.Fatalf("cut not inside the header: %q", inHeader[2<<20-12:2<<20+2])
+	}
+	for name, body := range map[string]string{"cut in content": inContent, "cut in header": inHeader} {
+		d := fw.Inspect(withBody("POST", "/u", ct, body))
+		mustHave(t, d, "AEG-PROTO-003", "body")
+		mustHave(t, d, "AEG-SQLI-001", "")
+		if has(d, "AEG-PROTO-020") {
+			t.Errorf("%s: cap-truncated multipart raised PROTO-020: %v", name, ruleIDs(d))
+		}
+	}
+
+	// Genuinely malformed: a bad header in the first part of an over-cap
+	// body, and an incomplete body received whole (not cut).
+	badHeader := "--XB\r\nno colon here\r\n\r\nx\r\n" + file(3<<20) + "--XB--\r\n"
+	whole := attack + file(10)
+	for name, body := range map[string]string{"bad header, over cap": badHeader, "incomplete whole": whole} {
+		if d := fw.Inspect(withBody("POST", "/u", ct, body)); !has(d, "AEG-PROTO-020") {
+			t.Errorf("%s: missing PROTO-020: %v", name, ruleIDs(d))
+		}
+	}
+}

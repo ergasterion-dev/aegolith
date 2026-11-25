@@ -442,3 +442,33 @@ func TestWalkJSONTruncated(t *testing.T) {
 		}
 	}
 }
+
+// Every prefix of a valid multipart body either parses or fails with
+// ErrIncomplete (the input ended inside the last part, content or header
+// block); real errors do not wrap ErrIncomplete.
+func TestParseMultipartIncomplete(t *testing.T) {
+	const ct = "multipart/form-data; boundary=XB"
+	lim := model.Limits{MaxFields: 100, MaxValueLen: 1 << 20}
+	for _, full := range []string{
+		"--XB\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhello\r\n--XB\r\nContent-Disposition: form-data; name=\"f\"; filename=\"x\"\r\n\r\n" +
+			strings.Repeat("z", 64) + "\r\n--XB\r\nContent-Disposition: form-data; name=\"q\"\r\n\r\nvalue\r\n--XB--\r\n",
+		"preamble\r\n--XB\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n--XB--\r\n",
+	} {
+		for i := 1; i <= len(full); i++ {
+			_, err := ParseMultipart([]byte(full[:i]), ct, lim)
+			if err != nil && !errors.Is(err, ErrIncomplete) {
+				t.Errorf("prefix %d %q: %v, want nil or ErrIncomplete", i, full[:i], err)
+			}
+		}
+	}
+	for name, body := range map[string]string{
+		"bad header first part":            "--XB\r\nno colon\r\n\r\nx\r\n--XB\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n--XB--\r\n",
+		"bad header, then incomplete last": "--XB\r\nno colon\r\n\r\nx\r\n--XB\r\nContent-Disp",
+		"bad header in complete last":      "--XB\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n--XB\r\nno colon\r\n\r\ny",
+	} {
+		_, err := ParseMultipart([]byte(body), ct, lim)
+		if err == nil || errors.Is(err, ErrIncomplete) {
+			t.Errorf("%s: %v, want a malformed error without ErrIncomplete", name, err)
+		}
+	}
+}
