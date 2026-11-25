@@ -391,16 +391,38 @@ func TestCmdISleepPrefix(t *testing.T) {
 		"Mon; sleep 8 &",
 		"Mon; sleep 8; id",
 		"Mon%3B%20sleep%208%20%7C",
+		// The token before "; " is not a plain word or number.
+		"127.0.0.1; sleep 10",
+		"127.0.0.1; sleep 5",
+		"8.8.8.8; sleep 10",
+		"ping -c 1 127.0.0.1; sleep 10",
+		"file.txt; sleep 10",
+		"a=1; sleep 10",
+		"$x; sleep 10",
+		"x-y; sleep 10",
+		"a:b; sleep 10",
+		"/tmp; sleep 10",
+		"127.0.0.1;  sleep 10",
+		"127.0.0.1; sleep  10",
+		// A semicolon that still arrives percent-encoded after transport
+		// decoding was encoded twice: that is a scanner, not a person.
+		"foo%3B%20sleep%2010",
+		"Mon%3B%20sleep%208",
+		"Mon%3b sleep 8",
 	})
 	assertNoHits(t, "CmdI", CmdI, []string{
 		"Mon; sleep 8",
 		"Gate 2; sleep 10",
 		"Good night; sleep 8",
 		"Tired & sleep 8",
-		"Mon%3B%20sleep%208",
-		// Accepted trade-off: "; " after a number reads like "Gate 2; sleep
-		// 10", so "1; sleep 5" is clean too. "1;sleep 5" (no blank) is not.
+		"Café; sleep 8",
+		// Accepted trade-off: one plain token then "; sleep N" at the end
+		// reads like "Mon; sleep 8", so these are clean. An extra blank
+		// does not change the verdict. "1;sleep 5" (no blank) is a hit.
 		"1; sleep 5",
+		"x; sleep 10",
+		"x;  sleep 10",
+		"x; sleep  10",
 	})
 	// Other commands keep their rules after a one-word prefix.
 	assertHits(t, "CmdI", CmdI, want, []string{
@@ -512,7 +534,7 @@ func TestSSTIGoActionsAndEL(t *testing.T) {
 	})
 }
 
-func TestSSTIELBenignMemberAccess(t *testing.T) {
+func TestSSTIELMemberAccess(t *testing.T) {
 	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
 	assertNoHits(t, "SSTI", SSTI, []string{
 		"${order.total}",
@@ -524,6 +546,11 @@ func TestSSTIELBenignMemberAccess(t *testing.T) {
 		"${total}",
 		"Your total is ${order.total} today",
 		"${cart.items.count}",
+		"${order.key}",
+		"${license.key}",
+		"${student.class}",
+		"${t.title}",
+		"${item.t}",
 	})
 	assertHits(t, "SSTI", SSTI, want, []string{
 		"${7*7}",
@@ -535,6 +562,18 @@ func TestSSTIELBenignMemberAccess(t *testing.T) {
 		"${java.lang.Runtime}",
 		"${System.getenv()}",
 		"${request.session.id}",
+		`${"id".execute()}`,
+		`${"freemarker.template.utility.Execute"?new()("id")}`,
+		`${ex("id")}`,
+		"${__import__('os').popen('id').read()}",
+		"${self.__init__.__globals__}",
+		"${pageContext.servletContext.classLoader}",
+		"${user.pass}",
+		"${user.pwd}",
+		"${db.credentials}",
+		"${app.apiKey}",
+		"${x?api.getClass()}",
+		"${obj.getClassLoader()}",
 	})
 }
 

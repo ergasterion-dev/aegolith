@@ -75,6 +75,7 @@
 {"name":"sleep between pipes","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x| sleep 10 |"]],"headers":{},"content_type":"","body":""}
 {"name":"sleep after and-and","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","a && sleep 10"]],"headers":{},"content_type":"","body":""}
 {"name":"sleep glued to prefix","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1;sleep 5"]],"headers":{},"content_type":"","body":""}
+{"name":"sleep after an address","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","127.0.0.1; sleep 5"]],"headers":{},"content_type":"","body":""}
 {"name":"quote-split whoami","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";w'h'o'am'i"]],"headers":{},"content_type":"","body":""}
 {"name":"backslash-split cat","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";c\\at /et\\c/pas\\swd"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja config","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{config.items()}}"]],"headers":{},"content_type":"","body":""}

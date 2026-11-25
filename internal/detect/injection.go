@@ -35,10 +35,10 @@ func cmdIQuery(v string) (Hit, bool) { return cmdI(v, false) }
 // cmdI is CmdI; strictLiteral applies the stricter line-break rule to line
 // breaks already present in v.
 func cmdI(v string, strictLiteral bool) (Hit, bool) {
-	hit := isCmdI(v, strictLiteral)
+	hit := isCmdI(v, strictLiteral, false)
 	if !hit {
 		if d, _ := normalize.DecodeValue(v); d != v {
-			hit = isCmdI(d, strictLiteral && !hasEncodedLineBreak(v))
+			hit = isCmdI(d, strictLiteral && !hasEncodedLineBreak(v), hasEncodedSemicolon(v))
 		}
 	}
 	if hit {
@@ -51,6 +51,23 @@ func cmdI(v string, strictLiteral bool) (Hit, bool) {
 func hasEncodedLineBreak(s string) bool {
 	for i := strings.IndexByte(s, '%'); i >= 0 && i+2 < len(s); {
 		if s[i+1] == '0' && (s[i+2]|0x20 == 'a' || s[i+2]|0x20 == 'd') {
+			return true
+		}
+		n := strings.IndexByte(s[i+1:], '%')
+		if n < 0 {
+			break
+		}
+		i += 1 + n
+	}
+	return false
+}
+
+// hasEncodedSemicolon reports whether s contains %3b (any case): a ";"
+// still percent-encoded after transport decoding was encoded twice, which
+// a scanner does and a person typing a note does not.
+func hasEncodedSemicolon(s string) bool {
+	for i := strings.IndexByte(s, '%'); i >= 0 && i+2 < len(s); {
+		if s[i+1] == '3' && s[i+2]|0x20 == 'b' {
 			return true
 		}
 		n := strings.IndexByte(s[i+1:], '%')
@@ -194,30 +211,36 @@ const (
 	// address or another absolute path is prose there. A two-letter
 	// command needs a short flag (-u, -la, -lah).
 	opProseAmp
-	// opWordSemi: "; " directly after a word or number that does not end
-	// a prose sentence ("Mon; sleep 8", "Gate 2; sleep 10"). Only sleep
-	// reads it as prose (see sleepArgAt); every other command treats it
-	// as opShell, so "Mon; id" still matches.
+	// opWordSemi: "; " directly after a token made only of letters,
+	// digits or non-ASCII bytes, starting at the start of the value or
+	// after a blank, that does not end a prose sentence ("Mon; sleep 8",
+	// "Gate 2; sleep 10", "Café; sleep 8"). An address, a file name or an
+	// assignment before the ";" ("127.0.0.1; sleep 5", "file.txt; sleep
+	// 10", "a=1; sleep 10") is opShell. Only sleep reads opWordSemi as
+	// prose (see sleepArgAt); every other command treats it as opShell, so
+	// "Mon; id" still matches. Accepted cost: "x; sleep 10" is clean.
 	opWordSemi
 )
 
 // operatorContext classifies the operator at s[i] (see opContext).
 // firstBlank is the index of the first space or tab in s, or -1; isCmdI
-// computes it once so the check stays linear in len(s).
-func operatorContext(s string, i, firstBlank int) opContext {
+// computes it once so the check stays linear in len(s). With
+// encodedSemi (the ";" arrived double-encoded) a ";" is always opShell.
+func operatorContext(s string, i, firstBlank int, encodedSemi bool) opContext {
 	switch s[i] {
 	case '&':
 		if i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') && (i+1 == len(s) || s[i+1] != '&') {
 			return opProseAmp
 		}
 	case ';':
-		if i+1 < len(s) && s[i+1] == ' ' && i > 0 {
-			if endsProseSentence(s, i, firstBlank) {
-				return opProseSemi
-			}
-			if c := s[i-1]; isASCIILetter(c) || c >= '0' && c <= '9' || c >= 0x80 {
-				return opWordSemi
-			}
+		if encodedSemi || i+1 >= len(s) || s[i+1] != ' ' {
+			break
+		}
+		if endsProseSentence(s, i, firstBlank) {
+			return opProseSemi
+		}
+		if plainTokenBefore(s, i) {
+			return opWordSemi
 		}
 	}
 	return opShell
@@ -237,9 +260,27 @@ func endsProseSentence(s string, end, firstBlank int) bool {
 	return j < end && firstBlank >= 0 && firstBlank < j
 }
 
+// plainTokenBefore reports whether s[:end] ends with a non-empty token of
+// only letters, digits or non-ASCII bytes that starts at the start of s or
+// after a blank. The backward walk covers only the run of such bytes
+// directly before s[end] (an operator ends it), so the walks of one isCmdI
+// scan are disjoint and linear together.
+func plainTokenBefore(s string, end int) bool {
+	j := end
+	for j > 0 {
+		c := s[j-1]
+		if !isASCIILetter(c) && (c < '0' || c > '9') && c < 0x80 {
+			break
+		}
+		j--
+	}
+	return j < end && (j == 0 || s[j-1] == ' ' || s[j-1] == '\t')
+}
+
 // isCmdI scans s for an operator followed by a command. strictNewline
-// applies the stricter bare-command rule after a line break.
-func isCmdI(s string, strictNewline bool) bool {
+// applies the stricter bare-command rule after a line break; encodedSemi
+// (s was decoded from a value carrying %3b) makes every ";" opShell.
+func isCmdI(s string, strictNewline, encodedSemi bool) bool {
 	if hasCmdMarker(s) {
 		return true
 	}
@@ -249,7 +290,7 @@ func isCmdI(s string, strictNewline bool) bool {
 		ctx := opShell
 		switch s[i] {
 		case ';', '|', '&', '`':
-			ctx = operatorContext(s, i, firstBlank)
+			ctx = operatorContext(s, i, firstBlank, encodedSemi)
 		case '\n', '\r':
 			afterNewline = true
 		case '$':
@@ -1003,11 +1044,13 @@ func isCodeExpr(in string) bool {
 	return false
 }
 
-// isELExpr reports whether the inside of a ${ } (EL, Spring, Groovy) holds
-// code: number arithmetic (7*7, 7+7), or member access (user.password) or a
-// call that names something sensitive (see elSensitive). Plain data paths such
-// as "${order.total}", a placeholder such as "${PRICE}" or a number such as
-// "${5}" are not code.
+// isELExpr reports whether the inside of a ${ } (EL, Spring, Groovy,
+// FreeMarker) holds code: number arithmetic (7*7, 7+7), a dunder walk, a
+// string literal used as an object ("id".execute()), FreeMarker ?new or
+// ?api, a call with a string literal argument (ex("id")), or member access
+// (user.password) or a call that names something sensitive (see
+// elSensitive). Plain data paths such as "${order.total}", a placeholder
+// such as "${PRICE}" or a number such as "${5}" are not code.
 func isELExpr(in string) bool {
 	in = strings.Trim(in, " \t")
 	i := 0
@@ -1022,29 +1065,49 @@ func isELExpr(in string) bool {
 		rest = strings.TrimLeft(rest[1:], " ")
 		return rest != "" && rest[0] >= '0' && rest[0] <= '9'
 	}
+	if strings.Contains(in, "__") {
+		return true // a dunder walk: ${self.__init__}, ${__import__('os')}
+	}
+	access := false
 	for j := 1; j < len(in); j++ {
-		if in[j] == ':' {
+		c, p := in[j], in[j-1]
+		if c == ':' && !access {
 			// A lookup such as ${jndi:ldap://host/a} or ${env:HOME} belongs
 			// to the JNDI rule, not to EL member access.
 			return false
 		}
-		if isIdentByte(in[j-1]) && (in[j] == '(' || in[j] == '.' && j+1 < len(in) && isASCIILetter(in[j+1])) {
-			return hasSensitiveName(in)
+		switch {
+		case (c == '.' || c == '?' || c == '(') && (p == '"' || p == '\''):
+			return true // a string literal used as an object: ${"id".execute()}
+		case c == '?' && (hasPrefixFold(in[j+1:], "new") || hasPrefixFold(in[j+1:], "api")):
+			return true // FreeMarker ?new / ?api
+		case c == '(' && isIdentByte(p) && j+1 < len(in) && (in[j+1] == '"' || in[j+1] == '\''):
+			return true // a call with a string literal: ${ex("id")}
+		case isIdentByte(p) && (c == '(' || c == '.' && j+1 < len(in) && isASCIILetter(in[j+1])):
+			access = true
 		}
 	}
-	return false
+	return access && hasSensitiveName(in)
 }
 
 // elSensitive holds the lower-cased names that make member access or a call
 // inside ${ } attack-shaped: credentials, reflection, process and web-context
 // objects, and the Java package roots.
 var elSensitive = map[string]bool{
-	"password": true, "passwd": true, "secret": true, "token": true, "key": true,
-	"env": true, "class": true, "getclass": true, "forname": true,
-	"runtime": true, "getruntime": true, "system": true, "process": true,
-	"exec": true, "session": true, "request": true, "response": true,
-	"java": true, "javax": true, "t": true,
+	"password": true, "passwd": true, "pass": true, "pwd": true,
+	"secret": true, "token": true, "credential": true, "credentials": true,
+	"apikey": true, "env": true, "getclass": true, "forname": true,
+	"classloader": true, "getclassloader": true, "newinstance": true,
+	"getmethod": true, "invoke": true, "runtime": true, "getruntime": true,
+	"system": true, "process": true, "exec": true, "execute": true,
+	"popen": true, "eval": true, "import": true, "scriptengine": true,
+	"session": true, "request": true, "response": true, "pagecontext": true,
+	"java": true, "javax": true,
 }
+
+// maxELName bounds the identifier length hasSensitiveName looks up (longer
+// than any elSensitive name), so each lookup is O(1).
+const maxELName = 16
 
 // hasSensitiveName reports whether any identifier in in is in elSensitive.
 // Single linear pass.
@@ -1058,7 +1121,7 @@ func hasSensitiveName(in string) bool {
 		for j < len(in) && isIdentByte(in[j]) {
 			j++
 		}
-		if j-i <= 10 && elSensitive[strings.ToLower(in[i:j])] {
+		if j-i <= maxELName && elSensitive[strings.ToLower(in[i:j])] {
 			return true
 		}
 		i = j

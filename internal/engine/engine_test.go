@@ -297,8 +297,8 @@ func TestPathJavaSerialized(t *testing.T) {
 		"/api/v1/probe/" + strings.ReplaceAll(obj, "=", "%3D"),
 	} {
 		for name, e := range map[string]*Engine{"generic": generic, "api-aware": aware} {
-			if !codei(get(e, p)) {
-				t.Errorf("%s %q: no AEG-CODEI-002: %+v", name, p, get(e, p).Matches)
+			if d := get(e, p); !codei(d) {
+				t.Errorf("%s %q: no AEG-CODEI-002: %+v", name, p, d.Matches)
 			}
 		}
 	}

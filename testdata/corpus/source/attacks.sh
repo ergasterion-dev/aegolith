@@ -136,6 +136,7 @@ q $A cmdi "sleep after semicolon"      "; sleep 10"
 q $A cmdi "sleep between pipes"        "x| sleep 10 |"
 q $A cmdi "sleep after and-and"        "a && sleep 10"
 q $A cmdi "sleep glued to prefix"      "1;sleep 5"
+q $A cmdi "sleep after an address"     "127.0.0.1; sleep 5"
 q $A cmdi "quote-split whoami"         ";w'h'o'am'i"
 q $A cmdi "backslash-split cat"        ";c\\at /et\\c/pas\\swd"
 
