@@ -30,7 +30,196 @@ func isSQLi(s string) bool {
 	if ok, fp := libinjection.IsSQLi(s); ok && !isProseNumberComment(s, fp) {
 		return true
 	}
-	return hasStackedCopyProgram(s)
+	return hasStackedCopyProgram(s) || sqliFromKeywordStarts(s)
+}
+
+// maxSQLiStarts caps the extra libinjection calls sqliFromKeywordStarts
+// makes on one value (one window, for a value the engine scans in windows).
+const maxSQLiStarts = 8
+
+// sqliStart is one candidate start offset for sqliFromKeywordStarts: start
+// is where libinjection reads from, kwEnd is just past the keyword that
+// made it a candidate.
+type sqliStart struct {
+	start, kwEnd int
+	union        bool
+}
+
+// sqliFromKeywordStarts finds a quote-free SQL injection that plain words in
+// front of it hide from libinjection, e.g. "please send 1 UNION SELECT
+// password FROM users--" or "milk 1; DROP TABLE orders;--". libinjection
+// fingerprints a value from its first byte, so the leading words change the
+// fingerprint; read from the "1" (or from "UNION") the same text is flagged.
+//
+// Candidate starts are SQL keywords (union, select, drop, insert, update,
+// delete, or, and, waitfor, exec, declare) that begin a word after a blank,
+// a ';' or the end of an inline comment ("x 1/**/UNION/**/SELECT"). When
+// the keyword directly follows a number ("1 UNION", "1; DROP", "1 OR"),
+// libinjection reads from the number instead, which is how such a payload
+// closes a numeric context. Numbers alone are never candidates, so a run of
+// "1 1 1 ..." cannot use up the cap.
+//
+// Prose is full of these keywords, so a suffix hit counts only in two
+// statement shapes prose does not write:
+//
+//   - its fingerprint holds UNION followed by a SELECT-class expression
+//     ("UE"): "1 UNION SELECT password FROM users". "please union select the
+//     best one" has no such fingerprint.
+//   - the value ends in a SQL comment that truncates the rest of the query
+//     ("--" followed by no letters, or an unclosed "/*"), and SQL syntax
+//     sits between the keyword and that comment (see sqlSyntaxAt): "1 OR
+//     1=1--", "1; DROP TABLE orders;--", "1 AND SLEEP(5)--", "1; EXEC
+//     xp_cmdshell 'dir'--". Prose such as "pick 2 or 3 --", "call me at 9;
+//     drop me a line --" or "ok 1 and 2, thanks --" has none, and "Pack of
+//     2 -- fresh" has letters after the comment.
+//
+// Without a trailing comment only UNION keywords are candidates. A
+// fingerprint shorter than three tokens (a lone "1c": "only 10 -- limited"
+// read from "10") never counts, and isProseNumberComment applies as in
+// isSQLi.
+//
+// Cost: one pass over s collects the candidates, keeping only the last
+// maxSQLiStarts before the trailing comment (an injection sits at the end of
+// the value, in front of the comment that hides the rest of the query, so
+// leading padding cannot push it out); then at most maxSQLiStarts
+// libinjection calls, each on a suffix of s and linear in its length. Total
+// work is O(maxSQLiStarts * len(s)), linear in len(s). An attacker who places
+// more than maxSQLiStarts keywords between the payload and the comment
+// evades this rule; the payload itself then ends in SQL that the suffix
+// reads would flag in most shapes.
+func sqliFromKeywordStarts(s string) bool {
+	end, tail := trailingSQLComment(s)
+	var ring [maxSQLiStarts]sqliStart
+	n := 0
+	lastSyntax := -1
+	for i := 0; i < end; i++ {
+		c := s[i]
+		if sqlSyntaxAt(s[:end], i) {
+			lastSyntax = i
+		}
+		if i == 0 || !isBlank(s[i-1]) && s[i-1] != ';' && !strings.HasSuffix(s[:i], "*/") || !isLetter(c) {
+			continue
+		}
+		j := i
+		for j < end && isIdentByte(s[j]) {
+			j++
+		}
+		kw := s[i:j]
+		union := strings.EqualFold(kw, "union")
+		if union || tail && isSQLiStartKeyword(kw) {
+			ring[n%maxSQLiStarts] = sqliStart{start: numberBefore(s, i), kwEnd: j, union: union}
+			n++
+		}
+		i = j - 1
+	}
+	if tail {
+		// A ';' that ends the last statement ("orders;--").
+		k := end
+		for k > 0 && isBlank(s[k-1]) {
+			k--
+		}
+		if k > 0 && s[k-1] == ';' {
+			lastSyntax = max(lastSyntax, k-1)
+		}
+	}
+	for k := range min(n, maxSQLiStarts) {
+		st := ring[k]
+		sub := s[st.start:]
+		ok, fp := libinjection.IsSQLi(sub)
+		if !ok || len(fp) < 3 || isProseNumberComment(sub, fp) {
+			continue
+		}
+		if st.union && strings.Contains(fp, "UE") || tail && lastSyntax >= st.kwEnd {
+			return true
+		}
+	}
+	return false
+}
+
+// trailingSQLComment reports whether s ends in a SQL comment that cuts off
+// the rest of a query: a "--" followed by no letters ("--", "-- -", "--+")
+// or a "/*" that never closes. end is where that comment starts, or len(s).
+func trailingSQLComment(s string) (end int, ok bool) {
+	end = len(s)
+	if i := strings.LastIndex(s, "--"); i >= 0 && !hasLetter(s[i+2:]) {
+		end, ok = i, true
+	}
+	if i := strings.LastIndex(s, "/*"); i >= 0 && i < end && !strings.Contains(s[i+2:], "*/") {
+		end, ok = i, true
+	}
+	return end, ok
+}
+
+// numberBefore returns the start of a number token that directly precedes
+// the word at s[i], separated by blanks and at most one ';' ("1 UNION",
+// "1; DROP"), or i when there is none. It only walks back over the gap
+// between the word and the token before it, so the walks of successive
+// words never overlap.
+func numberBefore(s string, i int) int {
+	k := i
+	for k > 0 && isBlank(s[k-1]) {
+		k--
+	}
+	if k > 0 && s[k-1] == ';' {
+		k--
+		for k > 0 && isBlank(s[k-1]) {
+			k--
+		}
+	}
+	m := k
+	for m > 0 && s[m-1] >= '0' && s[m-1] <= '9' {
+		m--
+	}
+	if m == k || m > 0 && !isBlank(s[m-1]) && s[m-1] != ';' {
+		return i
+	}
+	return m
+}
+
+func isSQLiStartKeyword(w string) bool {
+	for _, k := range [...]string{"union", "select", "drop", "insert", "update", "delete", "or", "and", "waitfor", "exec", "declare"} {
+		if strings.EqualFold(w, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// sqlSyntaxAt reports whether s[i] is SQL syntax that prose does not write:
+// a comparison operator with an operand directly on both sides ("1=1",
+// "a<>b"), a '(' directly after a name ("SLEEP(5)", "pg_sleep("), or a
+// quote that is not an apostrophe between two letters ("'dir'", but not
+// "don't"). Commas, a '(' after a blank and a spaced "=" are left to prose.
+// It looks only at s[i-1], s[i] and s[i+1].
+func sqlSyntaxAt(s string, i int) bool {
+	c := s[i]
+	prev, next := byte(' '), byte(' ')
+	if i > 0 {
+		prev = s[i-1]
+	}
+	if i+1 < len(s) {
+		next = s[i+1]
+	}
+	switch c {
+	case '=', '<', '>':
+		return !isBlank(prev) && !isBlank(next)
+	case '(':
+		return isIdentByte(prev)
+	case '\'', '"':
+		return !isLetter(prev) || !isLetter(next)
+	}
+	return false
+}
+
+func isLetter(c byte) bool { return c|0x20 >= 'a' && c|0x20 <= 'z' }
+
+func hasLetter(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if isLetter(s[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // isProseNumberComment reports whether a libinjection hit with fingerprint

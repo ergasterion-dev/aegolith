@@ -3,6 +3,7 @@
 # relicensed here under the Apache License 2.0 as part of Aegolith (see LICENSE at the repository root).
 # Copied verbatim except for scrubbing: internal hostnames, a brand e-mail domain, a personal e-mail local part and a
 # phone number were replaced with example values. The request shapes and payloads are unchanged.
+# Aegolith additions (not in the original suite) are marked "Aegolith:" below.
 # Aegolith does not run this script against a server: testdata/corpus/gen.sh sources it with the request helpers
 # redefined so that each case becomes one JSON line in attacks.jsonl or legit.jsonl.
 # Coraza/OWASP CRS attack + false-positive suite. Runs INSIDE the `client` pod of coraza-test-stack.yaml (busybox sh + curl).
@@ -70,6 +71,13 @@ form $A sqli "sqli in login form"      "email=admin@example.in' OR 1=1--"
 hdr $A sqli "sqli in cookie"           Cookie "session=1' OR '1'='1"
 hdr $A sqli "sqli in user-agent"       User-Agent "Mozilla' UNION SELECT 1--"
 hdr $A sqli "sqli in referer"          Referer "https://x.com/?id=1' OR '1'='1"
+# Aegolith: quote-free SQL injection after leading words, in an unknown path, and after long padding (G1).
+q $A sqli "union after leading words"  "please send 1 UNION SELECT password FROM users--"
+q $A sqli "stacked drop after a word"  "milk 1; DROP TABLE orders;--"
+json $A sqli "union after words in json" '{"search":"b b b b b b 1 UNION SELECT password FROM users--"}'
+path $A sqli "union in unknown path"   "/api/v1/probe/1%20UNION%20SELECT%20username,%20password%20FROM%20users--"
+PAD="$(printf '%020000d' 0 | tr 0 a)"
+json $A sqli "union after json padding" '{"search":"'"$PAD"' 1 UNION SELECT password FROM users--"}'
 
 # --- 2. Cross-site scripting -----------------------------------------------------------------------------------
 q $A xss "script tag"                  "<script>alert(1)</script>"

@@ -261,3 +261,117 @@ func TestCopyProgramAfterEarlierStatement(t *testing.T) {
 		}
 	}
 }
+
+// G1: a quote-free SQL injection after leading words. libinjection reads
+// the value from its first byte, so plain words in front of the payload
+// change its fingerprint and hide it.
+var sqliAfterWordsPositives = []string{
+	"please send 1 UNION SELECT password FROM users--",
+	"milk 1; DROP TABLE orders;--",
+	"b b b b b b 1 UNION SELECT password FROM users--",
+	"please UNION SELECT password FROM users",
+	"see 1 1 1 1 1 1 1 1 1 1 1 UNION SELECT 1--",
+	"note 1 OR 1=1--",
+	"note 1 AND SLEEP(5)--",
+	"note 1; EXEC xp_cmdshell 'dir'--",
+	"note 1 OR 'a'='a'--",
+	"note 1 WAITFOR DELAY '0:0:5'--",
+	"note 1; DELETE FROM users;--",
+	"note 1/**/UNION/**/SELECT/**/1,2--",
+	"x union all select a, b from c union select d from e union select f from g-- -",
+}
+
+// Prose that reads like a G1 suffix (plan Review Focus) and near misses
+// whose suffix libinjection does flag on its own.
+var sqliAfterWordsNegatives = []string{
+	"please union select the best one",
+	"select a seat",
+	"1 or 2 tickets",
+	"order by price",
+	"drop me a line",
+	"O'Brien union select",
+	"select * from menu",
+	"Pack of 2 -- fresh",
+	"only 10 -- limited",
+	"room 1 or 2 or 3",
+	"pick 2 or 3 --",
+	"call me at 9; drop me a line --",
+	"call me at 9; drop me a line",
+	"please select 1 from menu",
+	"sort 1 order by price",
+	"pick 1 and max(3) people",
+	"want 1 and 2 and 3 --",
+	"we deliver 1 or 2 bags; drop by any time",
+	"Thanks -- 2 or 3 more please",
+	"Tea, 2 or 3 cups; and milk --",
+	"Size (1 or 2) --",
+	"ok 1 and 2, thanks --",
+	"rooms 1, 2 or 3 --",
+	"items: 1 or 2 = fine --",
+	"Gate 2; drop it at the door, thanks --",
+	"Gate 2; drop it, don't knock --",
+	"pick 2 or 3 (any) -- ",
+	"Hi; 2 and (maybe) 3 --",
+	"call 1; delete my old address, please --",
+	"room 1 or 2 or 3 /* note",
+	"ages 3 and up (kids) --",
+}
+
+func TestSQLiAfterLeadingWords(t *testing.T) {
+	const payload = "1 UNION SELECT password FROM users--"
+	padded := []string{
+		strings.Repeat("a", 20000) + " " + payload,
+		strings.Repeat("b ", 10000) + payload,
+	}
+	for _, v := range sqliAfterWordsPositives {
+		if _, ok := SQLi(v); !ok {
+			t.Errorf("SQLi(%q) = no hit, want hit", v)
+		}
+		if !hasRule(ScanText(v), "AEG-SQLI-001") {
+			t.Errorf("ScanText(%q) has no AEG-SQLI-001", v)
+		}
+	}
+	for _, v := range padded {
+		if !hasRule(ScanText(v), "AEG-SQLI-001") {
+			t.Errorf("ScanText(%d bytes of padding + payload) has no AEG-SQLI-001", len(v)-len(payload))
+		}
+	}
+}
+
+func TestSQLiProseStaysClean(t *testing.T) {
+	for _, v := range append(append([]string(nil), sqliAfterWordsNegatives...), legitNegatives...) {
+		if hit, ok := SQLi(v); ok {
+			t.Errorf("SQLi(%q) = %+v, want no hit", v, hit)
+		}
+		if hasRule(ScanText(v), "AEG-SQLI-001") {
+			t.Errorf("ScanText(%q) has AEG-SQLI-001, want none", v)
+		}
+	}
+}
+
+// TestSQLiStartsLinear checks the extra libinjection starts stay bounded on
+// long values made only of start tokens.
+func TestSQLiStartsLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wall-clock bound; skipped under -short")
+	}
+	const size = 200 << 10
+	lim := wallLimit(50*time.Millisecond, 2*time.Second)
+	for _, unit := range []string{"select 1 union ", "1 or ", "1 or 1=1-- ", "union "} {
+		in := strings.Repeat(unit, size/len(unit))
+		for _, v := range []string{in, in + "--"} {
+			if d := bestOf(3, func() { SQLi(v) }); d > lim {
+				t.Errorf("%q x %d: SQLi took %v, want under %v", unit, len(v)/len(unit), d, lim)
+			}
+		}
+	}
+}
+
+func hasRule(hits []Hit, id string) bool {
+	for _, h := range hits {
+		if h.RuleID == id {
+			return true
+		}
+	}
+	return false
+}

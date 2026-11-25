@@ -378,6 +378,26 @@ func TestInspectLongValuesWindowed(t *testing.T) {
 	mustHave(t, d, "AEG-PROTO-011", "body")
 }
 
+// G1b and G1c: a quote-free SQL injection after leading text is caught in
+// the decoded path of an unknown route and after padding in a long value
+// (inside one of the overlapping windows), not only reported as long.
+func TestInspectSQLiAfterLeadingText(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeEnforce})
+	d := fw.Inspect(get("/api/v1/probe/1%20UNION%20SELECT%20username,%20password%20FROM%20users--"))
+	mustHave(t, d, "AEG-SQLI-001", "")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("path: %v", ruleIDs(d))
+	}
+
+	body := `{"note":"` + strings.Repeat("a", 20000) + ` 1 UNION SELECT password FROM users--"}`
+	d = fw.Inspect(postJSON("/api/v1/cart/items", body))
+	mustHave(t, d, "AEG-PROTO-011", "body.note")
+	mustHave(t, d, "AEG-SQLI-001", "body.note")
+	if d.Action != aegolith.ActionBlock {
+		t.Fatalf("padded body: %v", ruleIDs(d))
+	}
+}
+
 // Ruling 3 and fix-round ruling 4: pairs beyond MaxFields raise
 // AEG-PROTO-010 and are still scanned.
 func TestInspectQueryAndFormFieldLimit(t *testing.T) {
