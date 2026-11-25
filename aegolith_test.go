@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1551,5 +1552,54 @@ func TestDecisionRouteAndDuration(t *testing.T) {
 	}
 	if d := fw.Inspect(nil); d.Err == nil || d.Duration < 0 {
 		t.Fatalf("nil request: %+v", d)
+	}
+}
+
+// G8: a JSON body cut short only by the inspection cap is not malformed.
+// The engine inspects at most 2 x MaxBodyBytes of an over-cap body; when
+// the body handed to it is longer than that (the adapter's truncation
+// sentinel) or shorter than its Content-Length (an adapter that buffered
+// only a prefix), an unexpected end of the JSON is the cut, not a syntax
+// error, so AEG-PROTO-020 is not raised. The raw scan still runs, and a
+// genuine syntax error, or an incomplete body received whole, still is.
+func TestTruncatedJSONNotMalformed(t *testing.T) {
+	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor})
+	pad := strings.Repeat("a", 1<<20)
+	attack := `"q":"1 UNION SELECT password FROM users",`
+	has := func(d aegolith.Decision, id string) bool { _, ok := find(d, id); return ok }
+
+	// Over 2 x MaxBodyBytes: cut by the engine.
+	cut := postJSON("/s", `{`+attack+`"p1":"`+pad+`","p2":"`+pad+`","p3":"`+pad+`"}`)
+	d := fw.Inspect(cut)
+	mustHave(t, d, "AEG-PROTO-003", "body")
+	mustHave(t, d, "AEG-SQLI-001", "")
+	if has(d, "AEG-PROTO-020") {
+		t.Fatalf("cap-truncated JSON raised PROTO-020: %v", ruleIDs(d))
+	}
+
+	// A prefix shorter than Content-Length (an adapter that copied
+	// MaxBodyBytes+1 bytes of a longer body).
+	full := `{` + attack + `"p1":"` + pad + `","p2":"` + pad[:1<<19] + `"}`
+	prefix := postJSON("/s", full[:1<<20+1])
+	prefix.Header.Set("Content-Length", strconv.Itoa(len(full)))
+	d = fw.Inspect(prefix)
+	mustHave(t, d, "AEG-SQLI-001", "")
+	if has(d, "AEG-PROTO-020") {
+		t.Fatalf("Content-Length-truncated JSON raised PROTO-020: %v", ruleIDs(d))
+	}
+
+	// Genuinely malformed: a syntax error inside the inspected part of an
+	// over-cap body, an incomplete body received whole (no Content-Length,
+	// or one equal to the body), and a small incomplete body.
+	bad := postJSON("/s", `{"a":1,,"p1":"`+pad+`","p2":"`+pad+`","p3":"`+pad+`"}`)
+	whole := postJSON("/s", full[:1<<20+1])
+	exact := postJSON("/s", full[:1<<20+1])
+	exact.Header.Set("Content-Length", strconv.Itoa(1<<20+1))
+	small := postJSON("/s", `{"a":"x`)
+	small.Header.Set("Content-Length", "9999")
+	for name, r := range map[string]*aegolith.Request{"syntax error": bad, "incomplete whole": whole, "incomplete exact CL": exact, "small incomplete": small} {
+		if d := fw.Inspect(r); !has(d, "AEG-PROTO-020") {
+			t.Errorf("%s: missing PROTO-020: %v", name, ruleIDs(d))
+		}
 	}
 }

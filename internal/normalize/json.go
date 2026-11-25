@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/ergasterion-dev/aegolith/internal/model"
@@ -14,6 +15,12 @@ var ErrLimit = errors.New("normalize: limit exceeded")
 
 // ErrMalformed means the JSON body has a syntax error.
 var ErrMalformed = errors.New("normalize: malformed JSON")
+
+// ErrTruncated means the JSON body ended before its top-level value was
+// complete and had no syntax error up to that point: what a body cut short
+// looks like. errors.Is(ErrTruncated, ErrMalformed) is true, so callers that
+// do not care about the difference treat it as malformed.
+var ErrTruncated = fmt.Errorf("%w: unexpected end of input", ErrMalformed)
 
 // JSONValue is one string, number or boolean value (or one object key) found
 // in a JSON document. Path is dotted with arrays as "[]" (for example
@@ -41,7 +48,8 @@ type jsonFrame struct {
 // start of every object or array. Object keys and scalar values count
 // toward lim.MaxFields; container starts do not (the body size bounds them). Nesting beyond
 // lim.MaxDepth or more than lim.MaxFields counted items yields ErrLimit; a
-// syntax error yields ErrMalformed. Values emitted before an error stay
+// syntax error yields ErrMalformed (ErrTruncated, which wraps it, when the
+// input just ends early). Values emitted before an error stay
 // emitted. It uses an explicit stack, so depth cannot exhaust the call stack.
 func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 	if len(bytes.TrimSpace(body)) == 0 {
@@ -110,6 +118,9 @@ func WalkJSON(body []byte, lim model.Limits, fn func(JSONValue)) error {
 		if err != nil {
 			if err == io.EOF && len(stack) == 0 && topSet {
 				return nil
+			}
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return ErrTruncated
 			}
 			return ErrMalformed
 		}

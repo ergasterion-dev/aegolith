@@ -5,6 +5,7 @@ import (
 	"maps"
 	"mime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ergasterion-dev/aegolith/internal/detect"
@@ -191,7 +192,7 @@ func (s *state) checkBody() {
 	ct := s.req.Header.Get("Content-Type")
 	switch mt := mediaType(ct); {
 	case mt == "application/json" || strings.HasSuffix(mt, "+json"):
-		s.checkJSON(body)
+		s.checkJSON(body, s.bodyCut(body))
 	case mt == "application/x-www-form-urlencoded":
 		s.pairs(model.LocBody, model.LocBody, "form", string(body), "form")
 	case strings.HasPrefix(mt, "multipart/"):
@@ -218,7 +219,11 @@ func (s *state) checkBody() {
 // nothing after that point goes unseen. Known limitation: that raw scan
 // reports hits on the field "body", so field-scoped exclusions do not
 // apply to it (only to the fields walked before the stop).
-func (s *state) checkJSON(body []byte) {
+//
+// cut reports that body is only a prefix of the request body (see bodyCut):
+// an unexpected end of the JSON is then the cut, not a syntax error, so it
+// does not raise AEG-PROTO-020; the raw scan still runs.
+func (s *state) checkJSON(body []byte, cut bool) {
 	lim := s.e.lim
 	lim.MaxFields = len(body) + 1 // every counted item takes at least one byte
 	fields := 0
@@ -263,12 +268,34 @@ func (s *state) checkJSON(body []byte) {
 	switch {
 	case errors.Is(err, normalize.ErrLimit): // only depth can trip it here
 		s.protoMatch(ruleLimit, model.LocBody, "body", "")
+	case cut && errors.Is(err, normalize.ErrTruncated):
+		// Cut short by an inspection cap: nothing to report, but the part
+		// after the last complete value is still scanned raw.
 	case errors.Is(err, normalize.ErrMalformed):
 		s.protoMatch(ruleMalformed, model.LocBody, "body", "")
 	default:
 		return
 	}
 	s.scan(model.LocBody, "body", string(body))
+}
+
+// bodyCut reports whether body, what checkBody inspects, is only a prefix
+// of the request body: either the engine cut it at bodyInspectLimit, or an
+// adapter handed over a prefix of an over-cap body (longer than
+// MaxBodyBytes, so AEG-PROTO-003 already reports it) shorter than its
+// Content-Length. A body within MaxBodyBytes is never treated as cut, so a
+// small incomplete body (or one whose decoded form is shorter than its
+// compressed Content-Length) is still malformed.
+func (s *state) bodyCut(body []byte) bool {
+	n := int64(len(s.req.Body))
+	if n > int64(len(body)) {
+		return true
+	}
+	if n <= s.e.lim.MaxBodyBytes {
+		return false
+	}
+	cl, err := strconv.ParseInt(strings.TrimSpace(s.req.Header.Get("Content-Length")), 10, 64)
+	return err == nil && cl > n
 }
 
 // checkMultipart inspects non-file parts like form fields (quoted-printable

@@ -424,3 +424,21 @@ func TestParseMultipartErrors(t *testing.T) {
 		t.Fatal("missing boundary should error")
 	}
 }
+
+// An input that just ends early is ErrTruncated (which is also
+// ErrMalformed); a syntax error is ErrMalformed only.
+func TestWalkJSONTruncated(t *testing.T) {
+	lim := model.DefaultLimits()
+	for _, in := range []string{`{"a":"x`, `{"a":1,`, `[1,2`, `{"a":tr`, `{"a"`, `{`} {
+		err := WalkJSON([]byte(in), lim, func(JSONValue) {})
+		if !errors.Is(err, ErrTruncated) || !errors.Is(err, ErrMalformed) {
+			t.Errorf("%q: %v, want ErrTruncated", in, err)
+		}
+	}
+	for _, in := range []string{`{"a":1,,"b":2}`, `{"a":1}x`, `{"a":1]`, `{"a":tx}`} {
+		err := WalkJSON([]byte(in), lim, func(JSONValue) {})
+		if !errors.Is(err, ErrMalformed) || errors.Is(err, ErrTruncated) {
+			t.Errorf("%q: %v, want ErrMalformed only", in, err)
+		}
+	}
+}
