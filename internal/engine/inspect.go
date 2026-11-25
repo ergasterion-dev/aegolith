@@ -194,10 +194,11 @@ func (s *state) capped(v string) string {
 //     malformed JSON or a depth overflow adds 2x: 8x. A JSON key is
 //     scanned once (scanKey): at most 3x. Form, multipart, XML and text
 //     values are not expanded: at most 2x, plus 1x for a form pair whose
-//     key holds a quote (the whole pair is checked again): at most 3x;
+//     key ends with the quote its value starts with (the whole pair is
+//     checked again): at most 3x;
 //   - a byte of any other input (path, query, cookies, scanned headers) is
 //     charged at most 3x (2x for a value; key bytes and the whole-pair
-//     check of a quoted key add at most 1x each).
+//     check of a quote-split pair add at most 1x each).
 //
 // So no request whose body is within MaxBodyBytes and whose other inputs
 // total at most 256 KiB can exhaust it. Beyond that it can (a documented
@@ -271,17 +272,30 @@ func (s *state) scanWindows(loc model.Location, field, v string, extra func(stri
 
 // scanKey runs the SQL injection detector on a key name: a key reaches the
 // backend too (a dynamic column name, an ORDER BY or a filter built from
-// form keys). Only the first MaxValueLen bytes are read (capped), charged
-// against the scan budget like a value window; once the budget is spent no
-// key is scanned. The match names the key in its field and carries no
-// snippet, so nothing beyond the (sanitised, length-capped) field name is
-// reported. The other text detectors are not run on keys: names are short
-// identifiers, and their rules are tuned for free-text values.
+// form keys). Only the first MaxValueLen bytes are read (capped); a longer
+// key raises AEG-PROTO-011 (monitor, no snippet) on its field, so padding a
+// key past the cap to push an injection out of sight leaves a signal. The
+// match names the key in its field and carries no snippet, so nothing
+// beyond the (sanitised, length-capped) field name is reported. The other
+// text detectors are not run on keys: names are short identifiers, and
+// their rules are tuned for free-text values.
 func (s *state) scanKey(loc model.Location, field, key string) {
 	if s.stop || s.exhausted || key == "" {
 		return
 	}
-	k := s.capped(key)
+	if len(key) > s.e.lim.MaxValueLen {
+		s.protoMatch(ruleValueTooLong, loc, field, "")
+	}
+	s.keySQLi(loc, field, s.capped(key))
+}
+
+// keySQLi charges k (at most MaxValueLen bytes) against the scan budget
+// like a value window and runs detect.KeySQLi on it; once the budget is
+// spent nothing more is scanned.
+func (s *state) keySQLi(loc model.Location, field, k string) {
+	if s.stop || s.exhausted || k == "" {
+		return
+	}
 	if int64(len(k)) > s.budget {
 		s.exhausted = true
 		s.protoMatch(ruleValueTooLong, loc, field, "")

@@ -209,9 +209,57 @@ func TestKeyNames(t *testing.T) {
 		"user%27s%20note=I%27m%20fine%2C%201%20or%202%20is%20ok",
 		"O%27Brien=Tom%27s%20order%3D2%20and%20Sam%27s",
 		"rock%20%27n%27%20roll=it%27s%20%271%27%20or%20%272%27",
+		"guest%27s+note=1+or+2",
+		"it%27s+size=5+or+6",
+		"driver%27s+licence=yes+or+no",
+		// The key ends with a quote but the value does not start with one:
+		// "'quoted'=1 or 2" reads as SQL only as a whole pair.
+		"%27quoted%27=1+or+2",
+		"%27quoted%27=10+and+20",
 	} {
 		if d := e.Inspect(get(q)); len(d.Matches) != 0 {
 			t.Errorf("query %q: %+v", q, d.Matches)
 		}
+	}
+	// The pair check still catches quote-split injections.
+	for _, q := range []string{"1'%20OR%20'1'='1=x", "x'%20OR%20'a'='a", "1\"%20OR%20\"1\"=\"1"} {
+		if _, ok := find(e.Inspect(get(q)), "AEG-SQLI-001"); !ok {
+			t.Errorf("query %q: no AEG-SQLI-001", q)
+		}
+	}
+}
+
+// TestLongKeySignal: a key longer than MaxValueLen is scanned only up to
+// the cap, so an injection padded past it is not seen; the key still raises
+// AEG-PROTO-011 (monitor) on its field, with no snippet.
+func TestLongKeySignal(t *testing.T) {
+	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true})
+	pad := strings.Repeat("a", model.DefaultLimits().MaxValueLen)
+	for _, tc := range []struct {
+		name string
+		req  *model.Request
+	}{
+		{"query key", &model.Request{Method: "GET", RawPath: "/a", RawQuery: pad + "%27%20OR%20%271%27%3D%271=x", Header: http.Header{}}},
+		{"json key", &model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {"application/json"}},
+			Body: []byte(`{"` + pad + `' OR '1'='1":1}`)}},
+	} {
+		d := e.Inspect(tc.req)
+		n := 0
+		for _, m := range d.Matches {
+			if m.RuleID == "AEG-PROTO-011" {
+				n++
+				if m.Snippet != "" || m.Action != model.ActionMonitor || !strings.Contains(m.Field, "aaaa") {
+					t.Errorf("%s: %+v", tc.name, m)
+				}
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s: %d AEG-PROTO-011 matches, want 1: %+v", tc.name, n, d.Matches)
+		}
+	}
+	// A key at the cap is not reported.
+	d := e.Inspect(&model.Request{Method: "GET", RawPath: "/a", RawQuery: pad + "=x", Header: http.Header{}})
+	if len(d.Matches) != 0 {
+		t.Errorf("key at the cap: %+v", d.Matches)
 	}
 }

@@ -135,11 +135,14 @@ func (s *state) pairs(loc, specLoc model.Location, prefix, raw, limitField strin
 			}
 			s.scanKey(loc, field, kv.Key)
 			// A pair splits on its first '=', so an unencoded injection such
-			// as ?1' OR '1'='1=x leaves "1' OR '1'" in the key and the rest
-			// in the value, neither of which reads as SQL alone. When the key
-			// holds a quote, the whole decoded pair is checked as well.
-			if strings.ContainsAny(kv.Key, `'"`) && kv.Value != "" {
-				s.scanKey(loc, field, s.capped(kv.Key)+"="+s.capped(kv.Value))
+			// as ?1' OR '1'='1=x leaves "1' OR '1'" in the key and "'1=x" in
+			// the value, neither of which reads as SQL alone: the '=' sat
+			// between two quoted operands. Only that shape, a key that ends
+			// with a quote and a value that starts with the same quote, is
+			// checked again as the whole decoded pair; prose keys with an
+			// apostrophe (children's size=6-7 or 8) never take this path.
+			if !s.stop && !s.exhausted && splitAtQuotedEquals(kv.Key, kv.Value) {
+				s.keySQLi(loc, field, s.capped(s.capped(kv.Key)+"="+s.capped(kv.Value)))
 			}
 			if h, ok := detect.Session(s.capped(kv.Key), s.capped(kv.Value)); ok {
 				s.hit(h, loc, field, kv.Key+"="+kv.Value)
@@ -147,6 +150,13 @@ func (s *state) pairs(loc, specLoc model.Location, prefix, raw, limitField strin
 			s.value(loc, specLoc, field, kv.Key, kv.Value, true)
 		}
 	}
+}
+
+// splitAtQuotedEquals reports whether a pair looks split at an '=' that
+// joined two quoted SQL operands: the key ends with ' or " and the value
+// starts with the same quote.
+func splitAtQuotedEquals(k, v string) bool {
+	return k != "" && v != "" && (k[len(k)-1] == '\'' || k[len(k)-1] == '"') && v[0] == k[len(k)-1]
 }
 
 func (s *state) checkQuery() {
