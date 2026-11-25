@@ -97,16 +97,32 @@ func TestProbePathUnderPrefix(t *testing.T) {
 		"/api/v1/.git/config",
 		"/api/v1/actuator/env",
 		"/api/v1/.aws/credentials",
+		"/api/v1/.ssh/id_rsa",
+		"/api/v1/wp-login.php",
+		"/api/v1/.env.production",
+		"/api/v1/Actuator/HeapDump",
+		"/api/v1/actuator/jolokia/list",
+	})
+	// Only dot names, wp-login.php and actuator with a known endpoint match
+	// below the first segment; the other names are root-only.
+	assertNoHits(t, "ProbePath", ProbePath, []string{
+		"/api/v1/devices/actuator/5",
+		"/api/v1/devices/actuator",
+		"/api/v1/devices/actuator/envelope",
+		"/api/server-status",
+		"/api/v1/wp-admin/x",
 		"/a/b/wp-admin/x",
 		"/api/v1/phpMyAdmin/",
-	})
-	assertNoHits(t, "ProbePath", ProbePath, []string{
 		"/api/v1/environment",
 		"/api/v1/actuators-list",
 		"/api/v1/orders/envelope",
 		"/api/v1/wp-admins-are-us",
 		"/api/v1/orders/server-statuses",
 	})
+	// A PHP file under such a directory is still reconnaissance by its
+	// extension.
+	backup := Hit{RuleID: "AEG-SCANNER-003", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertHits(t, "ProbePath", ProbePath, backup, []string{"/api/v1/wp-admin/install.php"})
 }
 
 func TestUserAgentFuzzers(t *testing.T) {

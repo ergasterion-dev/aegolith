@@ -58,12 +58,19 @@ func ProbePath(p string) (Hit, bool) {
 	return Hit{}, false
 }
 
-// isProbePrefix matches the probe names at the start of any path segment (a
-// '/' precedes the name), so "/api/v1/.env" counts as well as "/.env". Those
-// naming a directory end in '/' and match as plain prefixes; the others must
-// be followed by the end of the path, '/' or '.' ("/.env.production"), so
-// "/wp-admins-are-us" stays clear. One pass over the '/' positions, with a
-// fixed number of probe names tried at each: linear in len(p).
+// isProbePrefix matches the probe names. The dotfile directories and files
+// (/.env, /.git/, /.aws/, /.ssh/) and /wp-login.php match at the start of
+// any path segment (a '/' precedes the name), so "/api/v1/.env" counts as
+// well as "/.env": no API names a route that way. /wp-admin, /phpmyadmin,
+// /server-status and /actuator match at the start of the path only, since
+// an API may have its own "/api/server-status" or "/api/v1/devices/actuator/5"
+// route. Below the first segment, actuator counts only when a known Spring
+// Boot endpoint follows it ("/api/v1/actuator/env"; see actuatorEndpoint).
+// Names that are directories end in '/' and match as plain prefixes; the
+// others must be followed by the end of the path, '/' or '.'
+// ("/.env.production"), so "/wp-admins-are-us" stays clear. One pass over
+// the '/' positions, with a fixed number of names tried at each: linear in
+// len(p).
 func isProbePrefix(p string) bool {
 	for i := 0; i < len(p); i++ {
 		if p[i] != '/' {
@@ -75,10 +82,38 @@ func isProbePrefix(p string) bool {
 				return true
 			}
 		}
-		for _, pre := range [...]string{"/wp-admin", "/phpmyadmin", "/.env", "/actuator", "/server-status"} {
-			if hasPrefixFold(rest, pre) && (len(rest) == len(pre) || rest[len(pre)] == '/' || rest[len(pre)] == '.') {
-				return true
+		if namedSegment(rest, "/.env") {
+			return true
+		}
+		if i == 0 {
+			for _, pre := range [...]string{"/wp-admin", "/phpmyadmin", "/actuator", "/server-status"} {
+				if namedSegment(rest, pre) {
+					return true
+				}
 			}
+			continue
+		}
+		if hasPrefixFold(rest, "/actuator/") && actuatorEndpoint(rest[len("/actuator/"):]) {
+			return true
+		}
+	}
+	return false
+}
+
+// namedSegment reports whether rest starts with pre (case-insensitively)
+// followed by the end, '/' or '.'.
+func namedSegment(rest, pre string) bool {
+	return hasPrefixFold(rest, pre) && (len(rest) == len(pre) || rest[len(pre)] == '/' || rest[len(pre)] == '.')
+}
+
+// actuatorEndpoint reports whether rest, the text after "/actuator/", starts
+// with a Spring Boot actuator endpoint followed by the end of the path or
+// '/'.
+func actuatorEndpoint(rest string) bool {
+	for _, ep := range [...]string{"env", "heapdump", "mappings", "configprops", "beans", "threaddump", "loggers",
+		"jolokia", "gateway", "health", "info", "metrics", "prometheus"} {
+		if hasPrefixFold(rest, ep) && (len(rest) == len(ep) || rest[len(ep)] == '/') {
+			return true
 		}
 	}
 	return false
