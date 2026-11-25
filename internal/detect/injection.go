@@ -996,8 +996,10 @@ func isCodeExpr(in string) bool {
 }
 
 // isELExpr reports whether the inside of a ${ } (EL, Spring, Groovy) holds
-// code: number arithmetic (7*7, 7+7), member access (user.password) or a call.
-// A placeholder such as "${PRICE}" or a number such as "${5}" does not.
+// code: number arithmetic (7*7, 7+7), or member access (user.password) or a
+// call that names something sensitive (see elSensitive). Plain data paths such
+// as "${order.total}", a placeholder such as "${PRICE}" or a number such as
+// "${5}" are not code.
 func isELExpr(in string) bool {
 	in = strings.Trim(in, " \t")
 	i := 0
@@ -1019,8 +1021,39 @@ func isELExpr(in string) bool {
 			return false
 		}
 		if isIdentByte(in[j-1]) && (in[j] == '(' || in[j] == '.' && j+1 < len(in) && isASCIILetter(in[j+1])) {
+			return hasSensitiveName(in)
+		}
+	}
+	return false
+}
+
+// elSensitive holds the lower-cased names that make member access or a call
+// inside ${ } attack-shaped: credentials, reflection, process and web-context
+// objects, and the Java package roots.
+var elSensitive = map[string]bool{
+	"password": true, "passwd": true, "secret": true, "token": true, "key": true,
+	"env": true, "class": true, "getclass": true, "forname": true,
+	"runtime": true, "getruntime": true, "system": true, "process": true,
+	"exec": true, "session": true, "request": true, "response": true,
+	"java": true, "javax": true, "t": true,
+}
+
+// hasSensitiveName reports whether any identifier in in is in elSensitive.
+// Single linear pass.
+func hasSensitiveName(in string) bool {
+	for i := 0; i < len(in); {
+		if !isIdentByte(in[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(in) && isIdentByte(in[j]) {
+			j++
+		}
+		if j-i <= 10 && elSensitive[strings.ToLower(in[i:j])] {
 			return true
 		}
+		i = j
 	}
 	return false
 }

@@ -500,6 +500,32 @@ func TestSSTIGoActionsAndEL(t *testing.T) {
 	})
 }
 
+func TestSSTIELBenignMemberAccess(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertNoHits(t, "SSTI", SSTI, []string{
+		"${order.total}",
+		"${user.name}",
+		"${file.txt}",
+		"${price}",
+		"${a.b.c}",
+		"${amount(usd)}",
+		"${total}",
+		"Your total is ${order.total} today",
+		"${cart.items.count}",
+	})
+	assertHits(t, "SSTI", SSTI, want, []string{
+		"${7*7}",
+		"${user.password}",
+		"${env.SECRET}",
+		"${user.getClass()}",
+		"${T(java.lang.Runtime).getRuntime()}",
+		"${''.class.forName('x')}",
+		"${java.lang.Runtime}",
+		"${System.getenv()}",
+		"${request.session.id}",
+	})
+}
+
 func TestSSTINegatives(t *testing.T) {
 	assertNoHits(t, "SSTI", SSTI, sstiNegatives)
 }
