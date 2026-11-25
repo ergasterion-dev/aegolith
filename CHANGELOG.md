@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.0-alpha.3
+
+- **New field type `uuid_lenient`** (`aegolith.TypeUUIDLenient`), accepted wherever `uuid` is (path params, query values, JSON body fields). Besides the canonical `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` form it accepts the encodings Go's `github.com/google/uuid` `Parse` takes: 32 hex digits without dashes, the canonical form in `{` `}` and `urn:uuid:` plus the canonical form (hex and prefix in any ASCII case). Everything else is `AEG-SCHEMA-001`, including whitespace, NUL bytes, other brackets and nested braces (`Parse` accepts any two bytes around a 38-byte value; `uuid_lenient` does not). It is opt-in: use it only where the handler parses ids leniently.
+- `uuid` is unchanged: canonical form only.
+- The "unknown type" error from `New` now lists the known type names.
+
 ## v0.1.0-alpha.2
 
 Behaviour changes since alpha.1 (read before upgrading):

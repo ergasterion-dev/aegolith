@@ -103,6 +103,12 @@ const (
 	TypeEmail  = policy.TypeEmail
 	TypePhone  = policy.TypePhone
 	TypeURL    = policy.TypeURL
+
+	// TypeUUIDLenient ("uuid_lenient") accepts the canonical form plus the
+	// forms Go's github.com/google/uuid Parse also takes: 32 hex digits,
+	// braces and a "urn:uuid:" prefix. Declare it only where the handler
+	// parses the id that leniently; TypeUUID stays canonical-only.
+	TypeUUIDLenient = policy.TypeUUIDLenient
 )
 
 // DefaultLimits returns the default inspection limits: 1 MiB body, JSON

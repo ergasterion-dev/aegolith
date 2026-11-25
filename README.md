@@ -40,7 +40,7 @@ Things it deliberately is not: a CRS clone, a ModSecurity-rule engine, a rate li
 You need Go 1.25 or later. The core module depends on the standard library and [libinjection-go](https://github.com/corazawaf/libinjection-go) only.
 
 ```sh
-go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.2
+go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.3
 ```
 
 (This is an alpha release; see [Status](#status-and-roadmap).)
@@ -154,7 +154,7 @@ flowchart LR
 | **Protocol** | Method allow-list, content-type allow-list (for requests with a body), body size, CR/LF/NUL in path or headers, encoded and double-encoded traversal, `Transfer-Encoding` with anything but `chunked`, or with `Content-Length`. |
 | **Route match** | Matches method and path template (`/orders/:id`, trailing `*`) on the raw path. No policy means every input is untyped and gets every detector. |
 | **Normalize** | Percent-decodes once and notes double encoding, walks JSON without building a tree, parses query strings, forms, cookies and multipart parts. Bounded in depth, field count and value length. |
-| **Typed validation** | Declared fields are checked against their type. `uuid`, `int`, `number`, `bool`, `enum` and `phone` values that pass are not scanned: they cannot carry an injection. |
+| **Typed validation** | Declared fields are checked against their type. `uuid`, `uuid_lenient`, `int`, `number`, `bool`, `enum` and `phone` values that pass are not scanned: they cannot carry an injection. |
 | **Detectors** | libinjection for SQLi and XSS, curated rules for command, code, LDAP, template, JNDI and CRLF injection, file and URL abuse, NoSQL and prototype-pollution keys, scanner paths and user agents. Linear in the value's length. |
 | **Decision** | Applies rule-action overrides, then exclusions, then the mode. Deterministic for a given config and request (apart from `Decision.Duration`, the time the inspection took). |
 
@@ -188,7 +188,9 @@ fw, err := aegolith.New(aegolith.Config{
 func ptr(f float64) *float64 { return &f }
 ```
 
-Field types: `uuid`, `int`, `number`, `bool`, `enum`, `string` (optional `max_len`, `pattern`), `email`, `phone`, `text` (free text, full detector set) and `url` (an absolute http(s) URL; also gets the SSRF rules). `min` and `max` bound `int` and `number`.
+Field types: `uuid`, `uuid_lenient`, `int`, `number`, `bool`, `enum`, `string` (optional `max_len`, `pattern`), `email`, `phone`, `text` (free text, full detector set) and `url` (an absolute http(s) URL; also gets the SSRF rules). `min` and `max` bound `int` and `number`.
+
+`uuid` accepts only the canonical form, `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, hex digits in any case. If a handler parses ids with Go's `github.com/google/uuid` `Parse`, it also accepts 32 hex digits without dashes, the canonical form in braces (`{...}`) and a `urn:uuid:` prefix, so a strict `uuid` field blocks ids the application would take. Declare such a field `uuid_lenient` (`aegolith.TypeUUIDLenient`): it accepts exactly those four forms (hex and the `urn:uuid:` prefix in any ASCII case) and nothing else, so whitespace, NUL bytes, other brackets, nested braces and partial or over-long values are still `AEG-SCHEMA-001`. It is stricter than `Parse` in one respect: `Parse` takes any two bytes around a 38-byte value, while `uuid_lenient` requires `{` and `}`. In a config file it is `{ "type": "uuid_lenient" }`, like any other type. Use it only where the handler itself parses leniently (see the [threat model](docs/threat-model.md#what-it-does-not-protect-against)).
 
 Field paths, in exclusions and in match results: `path.<param>`, `query.<name>`, `body.<json.path>` (arrays as `items[]`), `form.<name>`, `header.<lowercase name>`, `cookie.<name>`. A route key is `"METHOD /template"`, as declared.
 
@@ -371,7 +373,7 @@ make corpus     # the tables above
 
 Aegolith v0.1 is **alpha**. What that means:
 
-- **Alpha release (`v0.1.0-alpha.1`).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
+- **Alpha release (`v0.1.0-alpha.3`).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
 - **Tuned on one corpus.** It blocks 103 and 104 of the 107 corpus attacks with no false positives on 91 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).

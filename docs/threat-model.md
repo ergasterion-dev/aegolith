@@ -29,7 +29,7 @@ Aegolith inspects the request (method, path, query, headers it knows how to read
 | Protocol abuse | `AEG-PROTO-*` | methods, content types, CR/LF/NUL, encoded and double-encoded traversal, request-smuggling header combinations |
 | Wrong shape | `AEG-SCHEMA-*`, `AEG-ROUTE-001` | with route policies: a value that does not match its declared type, an undeclared field, an unknown route |
 
-Route policies make the strongest guarantee: a value that validates as a `uuid`, `int`, `number`, `bool`, `enum` or `phone` cannot carry an injection, so it is not scanned and cannot false-positive. The rule table in the [README](../README.md#rules) lists every rule and its default action.
+Route policies make the strongest guarantee: a value that validates as a `uuid`, `uuid_lenient`, `int`, `number`, `bool`, `enum` or `phone` cannot carry an injection, so it is not scanned and cannot false-positive. The rule table in the [README](../README.md#rules) lists every rule and its default action.
 
 ## What it does not protect against
 
@@ -40,6 +40,7 @@ These are out of scope by design, not bugs. Put the right tool in front of or be
 - **Business-logic flaws.** Buying a negative quantity that the type allows, race conditions, price tampering the schema permits.
 - **Authorization bugs.** Aegolith does not know who the caller is or what they may touch (IDOR, missing checks).
 - **Attacks hidden in fields declared with the wrong type.** A field you declare `uuid` is trusted to be a UUID. If you declare a free-text field `string` or `enum` with a loose `pattern`, the guarantee is only as good as the declaration. A `string` field is still scanned (defence in depth), but a pattern such as `.*` buys nothing.
+- **Lenient UUID declared where the handler is strict, or the reverse.** `uuid_lenient` accepts non-canonical encodings of an id (32 hex digits, `{...}`, `urn:uuid:`), which only makes sense for ids the application itself parses that leniently (for example with Go's `github.com/google/uuid` `Parse`). Every accepted form is still made only of hex digits, `-`, `{`, `}` and the prefix letters, so it cannot carry an injection, but a handler that does its own strict check or compares the raw string would see a value Aegolith let through and the application rejects or mis-handles. Use `uuid_lenient` only where the handler uses a lenient parser; keep `uuid` everywhere else. Declaring `uuid` on a lenient handler is the opposite mistake: a false positive on ids the application accepts.
 - **Response-side leaks.** Responses are never inspected.
 - **Anything the backend does after decoding in a way Aegolith cannot see.** Aegolith inspects the bytes it is given. A handler that decodes the raw body itself (see Content-Encoding below) can see data Aegolith did not.
 - **A compromised host or dependency.** It is a library in your process, not a sandbox.
@@ -131,7 +132,7 @@ Both corpus gates pass with these requests still allowed (see [`testdata/corpus/
 
 - A corpus of 107 attacks and 91 legitimate requests, run twice (no policy, and a policy that types the fields) with no exclusions. See the [README](../README.md#corpus-results).
 - Per-detector unit tests with the false-positive shapes beside each rule, including the accepted-recall negatives above.
-- Fuzz targets for `Inspect`, the JSON walker and the value decoder (`make fuzz-quick`).
+- Fuzz targets for `Inspect`, the JSON walker, the value decoder and the `uuid_lenient` grammar (checked against an independent regular expression) (`make fuzz-quick`).
 - Linear-time and scan-budget tests for adversarial inputs (long values, invalid UTF-8, deep or wide JSON), and a latency budget run (`make perf`).
 - `go test -race` across both modules.
 

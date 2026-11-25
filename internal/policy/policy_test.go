@@ -20,6 +20,12 @@ func TestCompileErrors(t *testing.T) {
 		{"empty table", nil, ""},
 		{"duplicate", []Route{{Method: "GET", Path: "/a"}, {Method: "get", Path: "/a"}}, "duplicate"},
 		{"same path other method", []Route{{Method: "GET", Path: "/a"}, {Method: "POST", Path: "/a"}}, ""},
+		{"uuid_lenient ok", []Route{{Method: "GET", Path: "/a/:id", PathParams: map[string]FieldSpec{"id": {Type: "uuid_lenient"}},
+			Query: map[string]FieldSpec{"q": {Type: "uuid_lenient"}}, Body: map[string]FieldSpec{"b": {Type: "uuid_lenient"}}}}, ""},
+		{"uuid-lenient is unknown", []Route{{Method: "GET", Path: "/a", Query: map[string]FieldSpec{"x": {Type: "uuid-lenient"}}}}, "unknown type"},
+		{"UUID_LENIENT is unknown", []Route{{Method: "GET", Path: "/a", Query: map[string]FieldSpec{"x": {Type: "UUID_LENIENT"}}}}, "unknown type"},
+		{"uuid_lenient with space is unknown", []Route{{Method: "GET", Path: "/a", Query: map[string]FieldSpec{"x": {Type: "uuid_lenient "}}}}, "unknown type"},
+		{"uuid_loose is unknown", []Route{{Method: "GET", Path: "/a", Query: map[string]FieldSpec{"x": {Type: "uuid_loose"}}}}, "unknown type"},
 		{"unknown type", []Route{{Method: "POST", Path: "/a", Body: map[string]FieldSpec{"x": {Type: "integer"}}}}, "unknown type"},
 		{"empty type", []Route{{Method: "GET", Path: "/a", Query: map[string]FieldSpec{"x": {}}}}, "unknown type"},
 		{"bad pattern", []Route{{Method: "GET", Path: "/a", Query: map[string]FieldSpec{"x": {Type: "string", Pattern: "a("}}}}, "pattern"},
@@ -301,6 +307,10 @@ func TestValidateTypes(t *testing.T) {
 		{"uuid json non-string", FieldSpec{Type: "uuid"}, []c{
 			{"4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b", false, false},
 		}},
+		{"uuid_lenient json non-string", FieldSpec{Type: "uuid_lenient"}, []c{
+			{"4b8e2f1a-9c3d-4e5f-8a7b-1c2d3e4f5a6b", false, false},
+			{"4b8e2f1a9c3d4e5f8a7b1c2d3e4f5a6b", false, false},
+		}},
 		{"enum", FieldSpec{Type: "enum", Enum: []string{"asc", "desc"}}, []c{
 			{"asc", true, true},
 			{"desc", true, true},
@@ -435,7 +445,7 @@ func TestValidateTypes(t *testing.T) {
 func TestValidateLinearTime(t *testing.T) {
 	// Every validator must stay fast on large adversarial input.
 	big := strings.Repeat("1", 1<<20)
-	for _, typ := range []string{"uuid", "int", "number", "bool", "email", "phone", "url"} {
+	for _, typ := range []string{"uuid", "uuid_lenient", "int", "number", "bool", "email", "phone", "url"} {
 		if Validate(FieldSpec{Type: typ}, big, true) {
 			t.Errorf("%s accepted a 1 MiB value", typ)
 		}

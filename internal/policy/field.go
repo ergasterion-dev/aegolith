@@ -22,6 +22,12 @@ const (
 	TypeEmail  = "email"
 	TypePhone  = "phone"
 	TypeURL    = "url"
+
+	// TypeUUIDLenient also accepts the other encodings Go's
+	// github.com/google/uuid Parse takes: 32 hex digits without dashes,
+	// the canonical form in braces and "urn:uuid:" plus the canonical form.
+	// Use it only where the handler parses the id that leniently.
+	TypeUUIDLenient = "uuid_lenient"
 )
 
 // Hard caps that keep every validator linear and cheap whatever the input.
@@ -49,18 +55,18 @@ type FieldSpec struct {
 	re *regexp.Regexp // compiled Pattern, set by Compile
 }
 
-func knownType(t string) bool {
-	switch t {
-	case TypeUUID, TypeInt, TypeNumber, TypeBool, TypeEnum, TypeString, TypeText, TypeEmail, TypePhone, TypeURL:
-		return true
-	}
-	return false
+// knownTypes lists every type name, in the order error messages show it.
+var knownTypes = []string{
+	TypeUUID, TypeUUIDLenient, TypeInt, TypeNumber, TypeBool, TypeEnum,
+	TypeString, TypeText, TypeEmail, TypePhone, TypeURL,
 }
+
+func knownType(t string) bool { return slices.Contains(knownTypes, t) }
 
 // compile checks the spec and returns a copy with its Pattern compiled.
 func (s FieldSpec) compile() (FieldSpec, error) {
 	if !knownType(s.Type) {
-		return s, fmt.Errorf("unknown type %q", s.Type)
+		return s, fmt.Errorf("unknown type %q (known: %s)", s.Type, strings.Join(knownTypes, ", "))
 	}
 	if s.Min != nil && s.Max != nil && *s.Min > *s.Max {
 		return s, fmt.Errorf("min %v > max %v", *s.Min, *s.Max)
@@ -121,6 +127,8 @@ func Validate(spec FieldSpec, value string, isString bool) bool {
 	switch spec.Type {
 	case TypeUUID:
 		return isUUID(value)
+	case TypeUUIDLenient:
+		return isUUIDLenient(value)
 	case TypeInt:
 		if !isIntLiteral(value) {
 			return false
@@ -216,6 +224,54 @@ func isUUID(s string) bool {
 			if !isHex(s[i]) {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+// isUUIDLenient accepts the four encodings github.com/google/uuid v1.6.0
+// Parse accepts, hex digits in any case, and nothing else:
+//
+//	xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx          canonical (36 bytes)
+//	xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx              32 hex digits
+//	{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}        braced (38 bytes)
+//	urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  prefix in any ASCII case (45 bytes)
+//
+// It is stricter than Parse in one place: Parse skips the first and last
+// byte of a 38-byte value without checking them, so "(uuid)" or "'uuid'"
+// parse; here they must be '{' and '}'.
+func isUUIDLenient(s string) bool {
+	switch len(s) {
+	case 36:
+		return isUUID(s)
+	case 32:
+		for i := range 32 {
+			if !isHex(s[i]) {
+				return false
+			}
+		}
+		return true
+	case 38:
+		return s[0] == '{' && s[37] == '}' && isUUID(s[1:37])
+	case 45:
+		return isURNUUIDPrefix(s[:9]) && isUUID(s[9:])
+	}
+	return false
+}
+
+// isURNUUIDPrefix reports whether p is "urn:uuid:" in any ASCII case.
+func isURNUUIDPrefix(p string) bool {
+	const want = "urn:uuid:"
+	if len(p) != len(want) {
+		return false
+	}
+	for i := range len(want) {
+		c := p[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != want[i] {
+			return false
 		}
 	}
 	return true

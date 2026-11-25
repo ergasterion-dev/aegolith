@@ -57,7 +57,8 @@ func (s *state) checkRoute() {
 // typed validates a declared value. A mismatch is AEG-SCHEMA-001 (block).
 // Valid string-like values (string, text, email, url) are still scanned as
 // defense in depth; url values also get the SSRF rules. Fully constrained
-// types (uuid, int, number, bool, enum, phone) skip the detectors.
+// types (uuid, uuid_lenient, int, number, bool, enum, phone) skip the
+// detectors.
 func (s *state) typed(loc model.Location, field string, spec policy.FieldSpec, v string, isString bool) {
 	if s.stop {
 		return
