@@ -650,7 +650,9 @@ func TestCmdIAlpha6AcceptedMisses(t *testing.T) {
 		// listed command, then the end, a blank or punctuation: read as a
 		// dollar amount in prose ("costs $(approx) 5").
 		"a $(foo) b",
-		"x $(reboot)",
+		"$(foo)",
+		// A line break inside a substitution ends the scan.
+		"$(echo\nhi)",
 	})
 	// Query value: a prose line, a line break, then "id" or "ls" alone.
 	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{"foo bar\nid", "foo bar\nid\n", "foo bar\nls"})
@@ -669,7 +671,6 @@ func TestCmdISubstitutionEcho(t *testing.T) {
 		"$(echo hi)",
 		";echo `id`",
 		"x$(foo)",
-		"$(foo)",
 		"$((1+2))",
 		"x$((7*7))y",
 		"a $(foo bar) b",
@@ -680,10 +681,28 @@ func TestCmdISubstitutionEcho(t *testing.T) {
 		"x;echo $((3+4))",
 		"Mozilla/5.0 (Linux; echo $(id))",
 		"see you; echo $HOME",
+		"x; echo \"hi\"",
+		"; echo ${PATH}",
+		"; echo $?",
+		// Fix round 1: listed commands in the prose dollar shape, and blank
+		// padding before the closing parenthesis.
+		"x $(reboot)",
+		"x $(halt)",
+		"a $(hostname) b",
+		"x $(hostname)",
+		"see $(env) now",
+		"q $(printenv)",
+		"x $(Reboot)",
+		"x $(poweroff)",
+		"x $(shutdown)",
+		"$(hostname)",
+		"$(echo" + strings.Repeat(" ", 130) + ")",
+		"$(reboot" + strings.Repeat(" ", 130) + ")",
+		"$((1" + strings.Repeat(" ", 130) + "+2))",
 	}
 	assertHits(t, "CmdI", CmdI, want, hits)
 	assertHits(t, "cmdIQuery", cmdIQuery, want, hits)
-	clean := []string{
+	prose := []string{
 		"costs $(approx) 5",
 		"It costs $(approx) 5 dollars",
 		"Price ($5)",
@@ -700,18 +719,50 @@ func TestCmdISubstitutionEcho(t *testing.T) {
 		"hello; echo of silence",
 		"Echo; Echo $5",
 		"see you; echo \"hi\"",
+		// Fix round 1: numeric amounts after "$(".
+		"Total $(5)",
+		"US$(10)",
+		"Balance shows $(45.00), please refund",
+		"Net: $(1,234.56)",
+		"$(45.00)",
+		"$(1,234.56)",
+		// A single word in the prose dollar shape after "(" or at the start.
+		"($(approx) 5)",
+		"$(amount) due",
+		"(about $(approx))",
+		// A jQuery call on one bare name reads the same way.
+		"$(document).ready(fn) not firing",
+		// A one-word "; " prefix: a quote after echo is prose quoting, and
+		// "$5" is an amount.
+		"Mon; echo \"hi\"",
+		"Yes; echo \"same\"",
+		"Ok; echo $5 back",
+		"Mon; echo hi",
+	}
+	adversarial := []string{
 		strings.Repeat("$(", 4096),
 		strings.Repeat("$((", 2730),
 		"$(" + strings.Repeat("a", 8192),
 		"$(a" + strings.Repeat(" b", 4096),
+		"$(a" + strings.Repeat(" ", 8192),
 	}
-	assertNoHits(t, "CmdI", CmdI, clean)
-	assertNoHits(t, "cmdIQuery", cmdIQuery, clean)
-	for _, v := range clean[:16] {
+	for _, set := range [][]string{prose, adversarial} {
+		assertNoHits(t, "CmdI", CmdI, set)
+		assertNoHits(t, "cmdIQuery", cmdIQuery, set)
+	}
+	for _, v := range prose {
 		if hits := ScanText(v); containsRule(hits, want.RuleID) {
 			t.Errorf("ScanText(%q) = %+v, want no %s", v, hits, want.RuleID)
 		}
 	}
+	// Accepted costs, flagged as code-like text (threat model, "Changes in
+	// alpha.6"; corpus README).
+	assertHits(t, "CmdI", CmdI, want, []string{
+		"$(this.el).hide() not working",
+		"$((a+b)) is the sum",
+		"costs $(about 5)",
+		"around $(approx. 50)",
+	})
 }
 
 func TestCodeIPositives(t *testing.T) {
@@ -862,6 +913,8 @@ func TestInjectionAdversarialTime(t *testing.T) {
 		"subst2": "$(" + strings.Repeat("a ", 4096),
 		"subst3": strings.Repeat("$((1", 2048),
 		"subst4": strings.Repeat("x $(a", 1638),
+		"subst5": "$(a" + strings.Repeat(" ", 8192),
+		"subst6": strings.Repeat("$(a ", 2048),
 		"echo":   strings.Repeat(";echo ", 1365),
 	}
 	fns := []func(string) (Hit, bool){CmdI, cmdIQuery, CodeI, LDAP, SSTI, JNDI, CRLF}

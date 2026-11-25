@@ -548,29 +548,34 @@ func isCmdI(s string, m cmdMode) bool {
 	return false
 }
 
-// maxSubst bounds how far substitutionAt looks for the closing parenthesis
-// of a "$(" or "$((" substitution. Commix's probes close within a few dozen
-// bytes. The bound keeps each call O(1), so "$($($(..." and a long unclosed
-// "$(" stay linear.
+// maxSubst bounds how many non-blank bytes substitutionAt reads looking for
+// the closing parenthesis of a "$(" or "$((" substitution. Commix's probes
+// close within a few dozen bytes. Blanks do not count against the bound
+// ("$(echo" then 130 blanks then ")" is still read), but every scan stops at
+// the next "(" or line break, so the stretches two scans walk never overlap
+// and "$($($(...", a long unclosed "$(" and blank padding stay linear.
 const maxSubst = 128
 
 // substitutionAt reports whether the "$(" at s[i] opens a shell command or
 // arithmetic substitution of any word, not only a listed command: commix's
 // default probe "$(echo IPTSZG)" and "$((46+17))".
 //
-//   - "$((": the body is an identifier or a digit run, then only identifier
-//     bytes, digits, blanks and + - * / %, closed by "))".
-//   - "$(": an identifier or a digit run, then any bytes but "(" and a line
-//     break up to a ")".
+//   - "$((": the body starts with an identifier byte or a digit, then holds
+//     only identifier bytes, digits, blanks and + - * / %, closed by "))".
+//   - "$(": a word that starts with a letter or "_" (never a digit: "$(5)",
+//     "US$(10)", "$(45.00)" and the accounting negative "$(1,234.56)" are
+//     amounts), then any bytes but "(" and a line break up to a ")".
 //
-// Both must close within maxSubst bytes. A dollar amount in prose stays
-// clear: "$(" after a blank holding a single word of letters, closed by ")"
-// and followed by the end, a blank or sentence punctuation ("costs $(approx)
-// 5"); a listed command there is still caught by commandAt ("a $(id) b").
-// "Price ($5)" and "$5 (usd)" have no "$(". Accepted cost: code-like text
-// with a substitution is flagged (a tldr line "$(pwd)", jQuery
-// "$(document).ready", a fenced shell block); natural language does not
-// write "$(word" with a closing parenthesis.
+// A dollar amount in prose stays clear (see proseDollarWord): "costs
+// $(approx) 5", "($(approx) 5)", "$(amount) due". "Price ($5)" and "$5
+// (usd)" have no "$(". A line break inside ends the scan ("$(echo" newline
+// "hi)" is missed). Accepted costs, flagged as code-like text: a closed
+// "$(...)" or "$((...))" in shell snippets (tldr-style command lines, fenced
+// shell blocks, inline code spans holding a substitution), jQuery calls
+// with more than one bare name ("$(this.el).hide() not working"; a single
+// name such as "$(document).ready(fn)" has the prose shape), arithmetic written in shell syntax
+// ("$((a+b)) is the sum"), and prose amounts with two tokens or a dot inside
+// ("costs $(about 5)", "around $(approx. 50)").
 func substitutionAt(s string, i int) bool {
 	j := i + 2
 	if j < len(s) && s[j] == '(' {
@@ -578,42 +583,62 @@ func substitutionAt(s string, i int) bool {
 		if k >= len(s) || !isIdentByte(s[k]) {
 			return false
 		}
-		for ; k < len(s) && k-i <= maxSubst; k++ {
+		for n := 0; k < len(s) && n <= maxSubst; k++ {
 			c := s[k]
-			if c == ')' {
+			switch {
+			case c == ')':
 				return k+1 < len(s) && s[k+1] == ')'
-			}
-			if !isIdentByte(c) && c != ' ' && c != '\t' && strings.IndexByte("+-*/%", c) < 0 {
+			case c == ' ' || c == '\t':
+				continue
+			case !isIdentByte(c) && strings.IndexByte("+-*/%", c) < 0:
 				return false
 			}
+			n++
 		}
 		return false
 	}
-	k := j
-	for k < len(s) && isIdentByte(s[k]) && k-i <= maxSubst {
-		k++
-	}
-	if k == j {
+	if j >= len(s) || (!isASCIILetter(s[j]) && s[j] != '_') {
 		return false
 	}
+	k := j
+	for k < len(s) && isIdentByte(s[k]) && k-j <= maxSubst {
+		k++
+	}
 	word := s[j:k]
-	for ; k < len(s) && k-i <= maxSubst; k++ {
+	for n := k - j; k < len(s) && n <= maxSubst; k++ {
 		switch s[k] {
 		case ')':
 			return !proseDollarWord(s, i, word, k)
 		case '(', '\n', '\r':
 			return false
+		case ' ', '\t':
+			continue
 		}
+		n++
 	}
 	return false
 }
 
+// substCmds are commands that count inside "$(...)" even in the prose
+// dollar shape, on top of cmdWords: "x $(reboot)", "a $(hostname) b". They
+// are matched only there (not after ";" or "|", where "env" and "hostname"
+// are common words), case-insensitively. Read-only.
+var substCmds = [...]string{"reboot", "halt", "poweroff", "shutdown", "env", "printenv", "hostname"}
+
 // proseDollarWord reports whether the "$(word)" at s[i] with its ")" at
-// close reads as a dollar amount in prose ("costs $(approx) 5"): a blank
-// before the "$", nothing but the letters of word inside, and after the ")"
-// the end of the value, a blank or sentence punctuation.
+// close reads as a dollar amount in prose: the "$" at the start of the
+// value or after a blank or "(", nothing but the letters of word inside,
+// and after the ")" the end of the value, a blank or sentence punctuation
+// ("costs $(approx) 5", "($(approx) 5)", "$(amount) due"). A listed command
+// (cmdWords, substCmds, any case) is never prose: "x $(reboot)", "a
+// $(hostname) b". Other commands there are caught by commandAt ("a $(id)
+// b"). Accepted cost: an unlisted letter-only word in that shape is clean
+// ("a $(foo) b", "$(foo)").
 func proseDollarWord(s string, i int, word string, close int) bool {
-	if i == 0 || (s[i-1] != ' ' && s[i-1] != '\t') || close != i+2+len(word) {
+	if i > 0 && s[i-1] != ' ' && s[i-1] != '\t' && s[i-1] != '(' {
+		return false
+	}
+	if close != i+2+len(word) {
 		return false
 	}
 	for k := 0; k < len(word); k++ {
@@ -621,16 +646,30 @@ func proseDollarWord(s string, i int, word string, close int) bool {
 			return false
 		}
 	}
+	for _, c := range substCmds {
+		if strings.EqualFold(word, c) {
+			return false
+		}
+	}
+	for _, w := range cmdWords {
+		if strings.EqualFold(word, w.name) {
+			return false
+		}
+	}
 	n := close + 1
-	return n == len(s) || s[n] == ' ' || s[n] == '\t' || strings.IndexByte(".,:;!?", s[n]) >= 0
+	return n == len(s) || s[n] == ' ' || s[n] == '\t' || strings.IndexByte(".,:;!?)", s[n]) >= 0
 }
 
 // echoProbeAt reports whether s[j:] is echo with an argument that starts
-// with "$", a backtick or a quote ("; echo $HOME", "|| echo `id`", "&& echo
-// 'x'"): commix's echo probe after a shell operator. ctx is what the
-// operator proves: after a lone " & " (opProseAmp) it never matches ("Tom &
-// echo \"hi\""), and after a prose sentence's "; " (opProseSemi) a quote is
-// prose quoting, so only "$" or a backtick counts. "Echo Park; echo of the
+// with a variable or substitution ("$" then a letter, "_", "{", "(" or
+// "?"), a backtick or a quote ("; echo $HOME", "|| echo `id`", "&& echo
+// 'x'"): commix's echo probe after a shell operator. "$5" is an amount, not
+// a variable ("Ok; echo $5 back" is clear). ctx is what the operator
+// proves: after a lone " & " (opProseAmp) it never matches ("Tom & echo
+// \"hi\""), and after a prose sentence's "; " (opProseSemi) or "; " after one
+// plain word (opWordSemi) a quote is prose quoting, so only "$" or a
+// backtick counts ("see you; echo \"hi\"", "Mon; echo \"hi\"" and "Yes; echo
+// \"same\"" are clear; "x; echo \"hi\"" is not). "Echo Park; echo of the
 // past" stays clear: echo must be lower case and the argument must start
 // with one of those bytes. O(1) apart from the blanks after echo.
 func echoProbeAt(s string, j int, ctx opContext) bool {
@@ -643,10 +682,16 @@ func echoProbeAt(s string, j int, ctx opContext) bool {
 		return false
 	}
 	switch s[n] {
-	case '$', '`':
+	case '`':
 		return true
+	case '$':
+		if n+1 >= len(s) {
+			return false
+		}
+		c := s[n+1]
+		return isASCIILetter(c) || strings.IndexByte("_{(?", c) >= 0
 	case '\'', '"':
-		return ctx != opProseSemi
+		return ctx != opProseSemi && ctx != opWordSemi
 	}
 	return false
 }

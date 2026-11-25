@@ -155,6 +155,7 @@ q $A cmdi "sleep after a one-letter prefix"    "x; sleep 10"
 q $A cmdi "echo with arithmetic substitution"  ';echo QWZRTY$((12+30))$(echo QWZRTY)QWZRTY'
 json $A cmdi "substitution of an unlisted word" '{"note":"x$(hostname)"}'
 q $A cmdi "echo of a variable after a pipe"    '| echo $HOME'
+q $A cmdi "listed command in a dollar-amount shape" 'see you $(reboot) soon'
 
 # --- 6. Server-side template injection -------------------------------------------------------------------------
 q $A ssti "jinja config"               "{{config.items()}}"

@@ -92,6 +92,7 @@
 {"name":"echo with arithmetic substitution","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";echo QWZRTY$((12+30))$(echo QWZRTY)QWZRTY"]],"headers":{},"content_type":"","body":""}
 {"name":"substitution of an unlisted word","category":"cmdi","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"x$(hostname)\"}"}
 {"name":"echo of a variable after a pipe","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","| echo $HOME"]],"headers":{},"content_type":"","body":""}
+{"name":"listed command in a dollar-amount shape","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","see you $(reboot) soon"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja config","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{config.items()}}"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja rce","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{''.__class__.__mro__[1].__subclasses__()}}"]],"headers":{},"content_type":"","body":""}
 {"name":"java el","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${T(java.lang.Runtime).getRuntime().exec('id')}"]],"headers":{},"content_type":"","body":""}
