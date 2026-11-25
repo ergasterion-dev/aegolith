@@ -67,15 +67,11 @@ binary data and normally blocks it (`AEG-LFI-001`). A handler that decodes
 `c.Request().Body()` itself sees data Aegolith did not. For an API, reject
 request `Content-Encoding` other than `identity` before this middleware.
 
-**Cap the body.** A body over `Limits.MaxBodyBytes` (default 1 MiB) makes
-the engine raise `AEG-PROTO-003`. The rule blocks by default, so in enforce
-mode a padded body is refused, and only `MaxBodyBytes+1` bytes are copied.
-When the rule does not block (a monitor-mode firewall, or the rule set to
-monitor), up to `2 x MaxBodyBytes+1` bytes are copied and the engine
-inspects the first `2 x MaxBodyBytes`, so an attack after up to
-`MaxBodyBytes` of padding is still seen; the adapter finds out which case
-applies with one probe inspection when it is built (skipped for a
-`MaxBodyBytes` over 32 MiB, which keeps the `MaxBodyBytes+1` copy). (Core `v0.1.0-alpha.1` still monitored it;
+**Cap the body.** Up to `2 x Limits.MaxBodyBytes+1` bytes are copied for
+inspection (default 1 MiB, so 2 MiB+1), matching what the engine inspects of
+an over-cap body. A body over `MaxBodyBytes` raises `AEG-PROTO-003`, which
+blocks by default and stops the inspection there, so enforce mode is
+unaffected and a padded body is refused. (Core `v0.1.0-alpha.1` still monitored it;
 this adapter release pins core `v0.1.0-alpha.3`. With the older core, set
 `RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}`.)
 If you set it back to monitor, an attack placed after `2 x MaxBodyBytes` of

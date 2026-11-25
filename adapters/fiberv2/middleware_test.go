@@ -200,7 +200,7 @@ func TestFiberGzipBodyInspected(t *testing.T) {
 func TestFiberGzipOverLimitPrefixOnly(t *testing.T) {
 	var zb bytes.Buffer
 	zw := gzip.NewWriter(&zb)
-	big := jsonBody(3 << 20)
+	big := []byte(`{"pad":"` + strings.Repeat("a", 3<<20) + `"}`)
 	_, _ = zw.Write(big)
 	_ = zw.Close()
 	var saw atomic.Int64
@@ -732,6 +732,10 @@ func TestRouteFoldCachedPerApp(t *testing.T) {
 	}
 }
 
+// padBody is a JSON body of about n bytes holding one long string value
+// (cheap to inspect, unlike jsonBody's many small values).
+func padBody(n int) []byte { return []byte(`{"pad":"` + strings.Repeat("a", n) + `"}`) }
+
 // overCapBody is a ~1.5 MiB JSON body (over the 1 MiB default cap, within
 // the engine's 2 x cap inspection limit) with an attack after the padding.
 func overCapBody() []byte {
@@ -782,10 +786,9 @@ func TestFiberMonitorInspectsOverCapBody(t *testing.T) {
 	}
 }
 
-// In enforce mode (AEG-PROTO-003 blocks) the same request is still refused
-// and only MaxBodyBytes+1 bytes are copied; in monitor mode a body longer
-// than 2 x MaxBodyBytes is copied only up to 2 x MaxBodyBytes+1 (the extra
-// byte tells the engine it was cut).
+// The copy is bounded at 2 x MaxBodyBytes+1 whatever the mode (the extra
+// byte tells the engine the body was cut), and in enforce mode an over-cap
+// body is still refused by AEG-PROTO-003.
 func TestFiberOverCapCopyBounded(t *testing.T) {
 	const limit = 1 << 20
 	for _, c := range []struct {
@@ -795,9 +798,9 @@ func TestFiberOverCapCopyBounded(t *testing.T) {
 		wantCode int
 		wantCopy int64
 	}{
-		{"enforce", aegolith.Config{Mode: aegolith.ModeEnforce}, overCapBody(), 403, limit + 1},
-		{"enforce 3x", aegolith.Config{Mode: aegolith.ModeEnforce}, jsonBody(3 * limit), 403, limit + 1},
-		{"monitor 3x", aegolith.Config{Mode: aegolith.ModeMonitor}, jsonBody(3 * limit), 200, 2*limit + 1},
+		{"enforce", aegolith.Config{Mode: aegolith.ModeEnforce}, overCapBody(), 403, int64(len(overCapBody()))},
+		{"enforce 3x", aegolith.Config{Mode: aegolith.ModeEnforce}, padBody(3 * limit), 403, 2*limit + 1},
+		{"monitor 3x", aegolith.Config{Mode: aegolith.ModeMonitor}, padBody(3 * limit), 200, 2*limit + 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var saw atomic.Int64
@@ -816,22 +819,18 @@ func TestFiberOverCapCopyBounded(t *testing.T) {
 	}
 }
 
-// bodyCopyLimit: 2 x MaxBodyBytes+1 only when the probe shows AEG-PROTO-003
-// does not block; MaxBodyBytes+1 for a nil firewall, an enforcing one, a
-// limit too large to probe, and without overflow at MaxInt64.
+// bodyCopyLimit: 2 x MaxBodyBytes+1 in every mode, without overflow.
 func TestBodyCopyLimit(t *testing.T) {
 	small := aegolith.Limits{MaxBodyBytes: 4096}
-	big := aegolith.Limits{MaxBodyBytes: maxProbeBody + 1}
 	for _, c := range []struct {
 		name string
 		fw   *aegolith.Firewall
 		want int64
 	}{
-		{"nil", nil, 1<<20 + 1},
-		{"enforce", newFW(t, aegolith.Config{Limits: small}), 4097},
+		{"nil", nil, 2<<20 + 1},
+		{"enforce", newFW(t, aegolith.Config{Limits: small}), 8193},
 		{"monitor", newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: small}), 8193},
-		{"proto-003 monitor", newFW(t, aegolith.Config{Limits: small, RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionMonitor}}), 8193},
-		{"monitor over probe cap", newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: big}), maxProbeBody + 2},
+		{"huge", newFW(t, aegolith.Config{Limits: aegolith.Limits{MaxBodyBytes: 1 << 62}}), 1<<63 - 1},
 		{"maxint64", newFW(t, aegolith.Config{Mode: aegolith.ModeMonitor, Limits: aegolith.Limits{MaxBodyBytes: 1<<63 - 1}}), 1<<63 - 1},
 	} {
 		if got := bodyCopyLimit(c.fw); got != c.want {

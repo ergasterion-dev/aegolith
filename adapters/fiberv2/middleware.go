@@ -3,7 +3,6 @@
 package fiberv2
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -57,21 +56,16 @@ const maxRequestIDLen = 64
 // Body: the engine inspects what the handler would see. c.Body() applies the
 // request's Content-Encoding (gzip, deflate, br), so a compressed attack body
 // is inspected decompressed; codings Fiber does not decode (x-gzip, zstd)
-// stay compressed. A body longer than Limits().MaxBodyBytes raises
-// AEG-PROTO-003, which blocks by default (core releases after
-// v0.1.0-alpha.1; that release monitors it). While that rule blocks, at most
-// MaxBodyBytes+1 bytes are copied for inspection. When it does not (a
-// monitor-mode firewall, or Config.RuleActions setting it to monitor), the
-// engine inspects up to 2 x MaxBodyBytes of an over-cap body, so up to
-// 2 x MaxBodyBytes+1 bytes are copied (the extra byte tells the engine the
-// body was cut) and an attack placed after padding is still seen; only what
-// lies beyond 2 x MaxBodyBytes goes unseen. New finds out which case
-// applies by inspecting one over-cap probe request (MaxBodyBytes+1 bytes)
-// at construction, done only when MaxBodyBytes is at most 32 MiB; above
-// that, or if the probe is inconclusive, the MaxBodyBytes+1 copy is kept.
+// stay compressed. At most 2 x Limits().MaxBodyBytes+1 bytes of it are
+// copied for inspection, matching the engine's inspection limit for an
+// over-cap body (the extra byte tells it the body was cut). A body longer
+// than MaxBodyBytes raises AEG-PROTO-003, which blocks by default and stops
+// the inspection before the body is read, so enforce decisions do not
+// change; when the rule does not block (monitor mode, or Config.RuleActions
+// setting it to monitor), an attack placed after up to MaxBodyBytes of
+// padding is still seen, and only what lies past 2 x MaxBodyBytes is not.
 // Still set fiber.Config.BodyLimit at or below MaxBodyBytes. The handler
-// still sees the complete, unmodified body. Fiber/fasthttp itself inflates the whole body on
-// c.Body(); fiber.Config.BodyLimit caps the compressed size.
+// still sees the complete, unmodified body.
 //
 // fasthttp does not neutralise the Transfer-Encoding/Content-Length
 // smuggling variants the way net/http does, so the AEG-PROTO smuggling rules
@@ -181,61 +175,18 @@ func engineHeader(c *fiber.Ctx) http.Header {
 	return h
 }
 
-// maxProbeBody bounds the one-time probe New makes: a firewall whose
-// MaxBodyBytes is larger is not probed and keeps the MaxBodyBytes+1 copy.
-const maxProbeBody = 32 << 20
-
 // bodyCopyLimit returns how many bytes of a request body to copy for
-// inspection: 2 x MaxBodyBytes+1 when an over-cap body is not blocked by
-// AEG-PROTO-003 (the engine then inspects up to 2 x MaxBodyBytes of it, and
-// the extra byte tells it the body was cut), else MaxBodyBytes+1 (enough for
-// the engine to raise AEG-PROTO-003, which then stops the inspection).
+// inspection: the engine's limit for an over-cap body (2 x MaxBodyBytes)
+// plus one byte that tells it the body was cut, guarded against overflow.
+// It does not depend on the mode: Fiber already holds the whole body, so
+// the cost is one bounded copy, and when AEG-PROTO-003 blocks the engine
+// stops on it before the body is parsed, so enforce decisions are the same.
 func bodyCopyLimit(fw *aegolith.Firewall) int64 {
 	maxBody := fw.Limits().MaxBodyBytes
-	if maxBody == math.MaxInt64 {
-		maxBody = math.MaxInt64 - 1 // keep maxBody+1 from overflowing
+	if maxBody > (math.MaxInt64-1)/2 {
+		return math.MaxInt64
 	}
-	if maxBody <= maxProbeBody && overCapInspected(fw, maxBody) {
-		return 2*maxBody + 1
-	}
-	return maxBody + 1
-}
-
-// overCapInspected reports whether fw lets an over-cap body through
-// AEG-PROTO-003 rather than blocking on it. The public API of the core this
-// module pins does not expose the mode or the rule's resolved action, so the
-// answer is read from a decision: one request carrying a body of
-// maxBody+1 bytes and nothing else to object to (an empty JSON object padded
-// with spaces, so the engine walks it in microseconds). The rule fails to
-// block when it matched and either its action is not block or the firewall
-// did not block (monitor mode). Anything else (no match, an internal error,
-// a panic) answers false: the bounded MaxBodyBytes+1 copy is kept.
-func overCapInspected(fw *aegolith.Firewall, maxBody int64) (ok bool) {
-	if fw == nil || maxBody < 2 {
-		return false
-	}
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	body := bytes.Repeat([]byte{' '}, int(maxBody)+1)
-	body[0], body[1] = '{', '}'
-	d := fw.Inspect(&aegolith.Request{
-		Method:  http.MethodPost,
-		RawPath: "/",
-		Header:  http.Header{"Content-Type": {"application/json"}, "Host": {"localhost"}},
-		Body:    body,
-	})
-	if d.Err != nil {
-		return false
-	}
-	for _, m := range d.Matches {
-		if m.RuleID == "AEG-PROTO-003" {
-			return m.Action != aegolith.ActionBlock || d.Action != aegolith.ActionBlock
-		}
-	}
-	return false
+	return 2*maxBody + 1
 }
 
 // inspectBody returns a copy of at most maxCopy bytes of what the handler
