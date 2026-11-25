@@ -525,6 +525,9 @@ func isCmdI(s string, m cmdMode) bool {
 			if i+1 >= len(s) || s[i+1] != '(' {
 				continue
 			}
+			if substitutionAt(s, i) {
+				return true
+			}
 			i++
 		default:
 			continue
@@ -536,8 +539,114 @@ func isCmdI(s string, m cmdMode) bool {
 		if commandAt(s, j, afterNewline, ctx) {
 			return true
 		}
+		if (s[i] == ';' || s[i] == '|' || s[i] == '&') && echoProbeAt(s, j, ctx) {
+			return true
+		}
 		// The skipped bytes all lead to the same j: do not rescan them.
 		i = j - 1
+	}
+	return false
+}
+
+// maxSubst bounds how far substitutionAt looks for the closing parenthesis
+// of a "$(" or "$((" substitution. Commix's probes close within a few dozen
+// bytes. The bound keeps each call O(1), so "$($($(..." and a long unclosed
+// "$(" stay linear.
+const maxSubst = 128
+
+// substitutionAt reports whether the "$(" at s[i] opens a shell command or
+// arithmetic substitution of any word, not only a listed command: commix's
+// default probe "$(echo IPTSZG)" and "$((46+17))".
+//
+//   - "$((": the body is an identifier or a digit run, then only identifier
+//     bytes, digits, blanks and + - * / %, closed by "))".
+//   - "$(": an identifier or a digit run, then any bytes but "(" and a line
+//     break up to a ")".
+//
+// Both must close within maxSubst bytes. A dollar amount in prose stays
+// clear: "$(" after a blank holding a single word of letters, closed by ")"
+// and followed by the end, a blank or sentence punctuation ("costs $(approx)
+// 5"); a listed command there is still caught by commandAt ("a $(id) b").
+// "Price ($5)" and "$5 (usd)" have no "$(". Accepted cost: code-like text
+// with a substitution is flagged (a tldr line "$(pwd)", jQuery
+// "$(document).ready", a fenced shell block); natural language does not
+// write "$(word" with a closing parenthesis.
+func substitutionAt(s string, i int) bool {
+	j := i + 2
+	if j < len(s) && s[j] == '(' {
+		k := j + 1
+		if k >= len(s) || !isIdentByte(s[k]) {
+			return false
+		}
+		for ; k < len(s) && k-i <= maxSubst; k++ {
+			c := s[k]
+			if c == ')' {
+				return k+1 < len(s) && s[k+1] == ')'
+			}
+			if !isIdentByte(c) && c != ' ' && c != '\t' && strings.IndexByte("+-*/%", c) < 0 {
+				return false
+			}
+		}
+		return false
+	}
+	k := j
+	for k < len(s) && isIdentByte(s[k]) && k-i <= maxSubst {
+		k++
+	}
+	if k == j {
+		return false
+	}
+	word := s[j:k]
+	for ; k < len(s) && k-i <= maxSubst; k++ {
+		switch s[k] {
+		case ')':
+			return !proseDollarWord(s, i, word, k)
+		case '(', '\n', '\r':
+			return false
+		}
+	}
+	return false
+}
+
+// proseDollarWord reports whether the "$(word)" at s[i] with its ")" at
+// close reads as a dollar amount in prose ("costs $(approx) 5"): a blank
+// before the "$", nothing but the letters of word inside, and after the ")"
+// the end of the value, a blank or sentence punctuation.
+func proseDollarWord(s string, i int, word string, close int) bool {
+	if i == 0 || (s[i-1] != ' ' && s[i-1] != '\t') || close != i+2+len(word) {
+		return false
+	}
+	for k := 0; k < len(word); k++ {
+		if !isASCIILetter(word[k]) {
+			return false
+		}
+	}
+	n := close + 1
+	return n == len(s) || s[n] == ' ' || s[n] == '\t' || strings.IndexByte(".,:;!?", s[n]) >= 0
+}
+
+// echoProbeAt reports whether s[j:] is echo with an argument that starts
+// with "$", a backtick or a quote ("; echo $HOME", "|| echo `id`", "&& echo
+// 'x'"): commix's echo probe after a shell operator. ctx is what the
+// operator proves: after a lone " & " (opProseAmp) it never matches ("Tom &
+// echo \"hi\""), and after a prose sentence's "; " (opProseSemi) a quote is
+// prose quoting, so only "$" or a backtick counts. "Echo Park; echo of the
+// past" stays clear: echo must be lower case and the argument must start
+// with one of those bytes. O(1) apart from the blanks after echo.
+func echoProbeAt(s string, j int, ctx opContext) bool {
+	if ctx == opProseAmp || !strings.HasPrefix(s[j:], "echo") {
+		return false
+	}
+	k := j + 4
+	n := skipBlanks(s, k)
+	if n == k || n >= len(s) {
+		return false
+	}
+	switch s[n] {
+	case '$', '`':
+		return true
+	case '\'', '"':
+		return ctx != opProseSemi
 	}
 	return false
 }

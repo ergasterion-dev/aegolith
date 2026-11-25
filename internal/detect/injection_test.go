@@ -646,9 +646,72 @@ func TestCmdIAlpha6AcceptedMisses(t *testing.T) {
 		"a `ls -la` b",
 		"ab; sleep 10",
 		"x 1; sleep 5",
+		// "$(" after a blank holding one letter-only word that is not a
+		// listed command, then the end, a blank or punctuation: read as a
+		// dollar amount in prose ("costs $(approx) 5").
+		"a $(foo) b",
+		"x $(reboot)",
 	})
 	// Query value: a prose line, a line break, then "id" or "ls" alone.
 	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{"foo bar\nid", "foo bar\nid\n", "foo bar\nls"})
+}
+
+// TestCmdISubstitutionEcho covers the alpha.6 recall rules: a "$(" or
+// "$((" substitution of any word (commix's default probe), and echo after a
+// shell operator with a "$", backtick or quote argument. Prose dollar
+// amounts and the word "echo" in prose stay clear.
+func TestCmdISubstitutionEcho(t *testing.T) {
+	want := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	hits := []string{
+		";echo IPTSZG$((46+17))$(echo IPTSZG)IPTSZG",
+		"||echo TVGLAW$((25+16))$(echo TVGLAW)TVGLAW|",
+		"%3Becho%20IPTSZG%24%28%2846%2B17%29%29%24%28echo%20IPTSZG%29IPTSZG",
+		"$(echo hi)",
+		";echo `id`",
+		"x$(foo)",
+		"$(foo)",
+		"$((1+2))",
+		"x$((7*7))y",
+		"a $(foo bar) b",
+		"; echo $HOME",
+		"| echo 'x'",
+		"&& echo \"pwned\"",
+		"||echo `whoami`",
+		"x;echo $((3+4))",
+		"Mozilla/5.0 (Linux; echo $(id))",
+		"see you; echo $HOME",
+	}
+	assertHits(t, "CmdI", CmdI, want, hits)
+	assertHits(t, "cmdIQuery", cmdIQuery, want, hits)
+	clean := []string{
+		"costs $(approx) 5",
+		"It costs $(approx) 5 dollars",
+		"Price ($5)",
+		"$5 (usd)",
+		"$ (5)",
+		"Pay $(5",
+		"$()",
+		"$( )",
+		"Total: $ (approx.)",
+		"Echo Park; echo of the past",
+		"echo \"hi\"",
+		"The echo 'rang' out",
+		"Tom & echo \"hi\"",
+		"hello; echo of silence",
+		"Echo; Echo $5",
+		"see you; echo \"hi\"",
+		strings.Repeat("$(", 4096),
+		strings.Repeat("$((", 2730),
+		"$(" + strings.Repeat("a", 8192),
+		"$(a" + strings.Repeat(" b", 4096),
+	}
+	assertNoHits(t, "CmdI", CmdI, clean)
+	assertNoHits(t, "cmdIQuery", cmdIQuery, clean)
+	for _, v := range clean[:16] {
+		if hits := ScanText(v); containsRule(hits, want.RuleID) {
+			t.Errorf("ScanText(%q) = %+v, want no %s", v, hits, want.RuleID)
+		}
+	}
 }
 
 func TestCodeIPositives(t *testing.T) {
@@ -794,6 +857,12 @@ func TestInjectionAdversarialTime(t *testing.T) {
 		"ticks2":  "a `" + strings.Repeat("x ", 4096),
 		"uacmt":   "Mozilla/5.0 (" + strings.Repeat("U; id; ", 1170),
 		"proseln": strings.Repeat("Dear team\n", 819),
+		// alpha.6 substitution and echo rules.
+		"subst":  strings.Repeat("$(", 4096),
+		"subst2": "$(" + strings.Repeat("a ", 4096),
+		"subst3": strings.Repeat("$((1", 2048),
+		"subst4": strings.Repeat("x $(a", 1638),
+		"echo":   strings.Repeat(";echo ", 1365),
 	}
 	fns := []func(string) (Hit, bool){CmdI, cmdIQuery, CodeI, LDAP, SSTI, JNDI, CRLF}
 	if testing.Short() {
