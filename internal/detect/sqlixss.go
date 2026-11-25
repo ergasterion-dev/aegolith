@@ -42,35 +42,113 @@ func isSQLi(s string) bool {
 //   - the fingerprint has no SQL keyword, function, string, comment or ';'
 //     token: only names, numbers, operators, parentheses and AND/OR ("n",
 //     "1", "o", "(", ")", "&"). "5 % (select 1)" folds to "1o(E1" and stays.
+//     A '#' is libinjection's comment token, so it never gets this far.
+//   - every '%' reads as a percent sign (see percentSignsOnly): it ends the
+//     value, or is followed by ',', '.' or ')', or by a word or "(word" after
+//     at most blanks. "1%1 or 1", "1 % 1 or 1 like 1", "1%(1) or 1" and
+//     "1%x xor 1" (modulo between operands) stay.
+//   - the value has no word that libinjection reads as a SQL comparison or
+//     arithmetic operator (see hasSQLOperatorWord: like, rlike, regexp,
+//     xor, div, mod, between, sounds, null).
 //   - the value has no comment opener ("--", "/*"), no ';' and no quote other
 //     than an apostrophe inside a word ("l'acidité", "d'AVOINE").
-//   - the value has no SQL syntax lastSQLSyntax finds: no "1=1", no "x(" and
-//     no quoted word. "80% cotton or 1=1" and "1%1 or 1=1" stay.
+//   - the value has no SQL syntax lastSQLSyntax finds: no "1=1", "2>1",
+//     "1<>2", "x(" or quoted word. "80% cotton or 1=1" and "1%1 or 1=1" stay.
 //   - libinjection does not flag the value with every '%' read as a blank.
 //
-// Accepted cost: a numeric tautology built from '%' and AND/OR alone, with
-// no comparison ("1%1 or 1"), is not flagged; it reads the same as "6-7 or
-// 8" (see isBareNumberPhrase). One extra libinjection call, only for a value
-// that holds a '%' and passes the cheaper checks: linear.
+// Accepted cost: a value that starts with "N% (word)" or "N% word" and then
+// writes a tautology with "or"/"and" and no comparison or operator word
+// ("9% (a) or 1", "9% (a) or not 0", "9% (a) or 1 in (1)") is not flagged;
+// it has the shape of "Sale 20% (today only)". One extra libinjection call,
+// only for a value that holds a '%' and passes the cheaper checks: linear.
 func isProsePercent(s, fp string) bool {
-	if strings.IndexByte(s, '%') < 0 || !onlyArithmeticTokens(fp) || hasSQLPunctuation(s) || lastSQLSyntax(s) >= 0 {
+	if strings.IndexByte(s, '%') < 0 || !onlyArithmeticTokens(fp) || !percentSignsOnly(s) ||
+		hasSQLOperatorWord(s) || hasSQLPunctuation(s) || lastSQLSyntax(s) >= 0 {
 		return false
 	}
 	ok, _ := libinjection.IsSQLi(strings.ReplaceAll(s, "%", " "))
 	return !ok
 }
 
+// percentSignsOnly reports whether every '%' in s is written the way prose
+// writes a percent sign: at the end of the value, directly before ',', '.'
+// or ')', or after blanks before a word ("20% WOOL", "79,4 %, sucre"), or
+// before '(' and a word with blanks allowed around the '(' ("20% (today",
+// "10%(x"). A digit after the '%' ("1%1", "1 % 1", "1%(1)") is modulo, and
+// so is a word glued to the '%' ("1%x"). A "word" starts with an ASCII
+// letter or a non-ASCII byte. Each '%' looks ahead over blanks only, and a
+// blank run is skipped at most twice per '%', so the scan is linear.
+func percentSignsOnly(s string) bool {
+	skip := func(i int) int {
+		for i < len(s) && isBlank(s[i]) {
+			i++
+		}
+		return i
+	}
+	for i := strings.IndexByte(s, '%'); i >= 0; {
+		j := i + 1
+		switch {
+		case j == len(s) || s[j] == ',' || s[j] == '.' || s[j] == ')':
+		default:
+			k := skip(j)
+			if k < len(s) && s[k] == '(' {
+				k = skip(k + 1)
+			} else if k == j {
+				return false // glued to the '%': "1%x", "1%1"
+			}
+			if k < len(s) && !isWordByte(s[k]) {
+				return false
+			}
+		}
+		n := strings.IndexByte(s[j:], '%')
+		if n < 0 {
+			break
+		}
+		i = j + n
+	}
+	return true
+}
+
+// hasSQLOperatorWord reports whether s holds, as a whole ASCII word, one of
+// the words libinjection folds to a comparison or arithmetic operator and
+// that prose rarely writes next to a percentage: like, rlike, regexp, xor,
+// div, mod, between, sounds, null. "1%(1) or 1 like 1" folds to "1&1" with
+// no '=' anywhere. Common English words that are also SQL operators (not,
+// in, is) are not on the list; see isProsePercent's accepted cost. One pass.
+func hasSQLOperatorWord(s string) bool {
+	for i := 0; i < len(s); {
+		if !isLetter(s[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && isIdentByte(s[j]) {
+			j++
+		}
+		if i == 0 || !isIdentByte(s[i-1]) {
+			switch strings.ToLower(s[i:j]) {
+			case "like", "rlike", "regexp", "xor", "div", "mod", "between", "sounds", "null":
+				return true
+			}
+		}
+		i = j
+	}
+	return false
+}
+
 // isBareNumberPhrase reports whether a "1&1" hit is a bare list of numbers
 // and ranges joined by "or"/"and", such as a size "6-7 or 8": every word is
 // a number that starts with a digit, may hold '.', ',' and one inner '-'
-// ("6-7", "1.5-2"), or the word "or" or "and" between two of them.
-// libinjection folds "6-7" to a number and reads the phrase like "1 or 1=1";
-// a comparison, a comment, a quote, a leading sign ("-1 or 1") or "||"
-// keeps it flagged.
+// ("6-7", "1.5-2"), or the word "or" or "and" between two of them, and at
+// least one number is a range or has a decimal separator. libinjection
+// folds "6-7" to a number and reads the phrase like "1 or 1=1"; a
+// comparison, a comment, a quote, a leading sign ("-1 or 1"), "||", or
+// plain integers only ("99 or 1 or 1") keep it flagged.
 //
-// Accepted cost: "1-1 or 1", a tautology with no comparison, has the same
-// shape as "6-7 or 8" and is not flagged. A typed numeric field still rejects
-// it through its schema. One pass over s.
+// Accepted cost: a tautology with no comparison that has a range or a
+// decimal in it ("1-1 or 1", "6-7 or 8 or 1", "1.0-1 or 1") has the same
+// shape as "6-7 or 8" and is not flagged. A typed numeric field still
+// rejects it through its schema. One pass over s.
 func isBareNumberPhrase(s, fp string) bool {
 	if fp != "1&1" {
 		return false
@@ -79,6 +157,7 @@ func isBareNumberPhrase(s, fp string) bool {
 	if len(words) < 3 || len(words)%2 == 0 {
 		return false
 	}
+	shaped := false
 	for i, w := range words {
 		if i%2 == 1 {
 			if !strings.EqualFold(w, "or") && !strings.EqualFold(w, "and") {
@@ -89,8 +168,9 @@ func isBareNumberPhrase(s, fp string) bool {
 		if !isPlainNumberOrRange(w) {
 			return false
 		}
+		shaped = shaped || strings.ContainsAny(w, "-.,")
 	}
-	return true
+	return shaped
 }
 
 // isPlainNumberOrRange reports whether w is digits with optional '.' and ','

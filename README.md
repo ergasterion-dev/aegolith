@@ -278,16 +278,16 @@ Each rule's known gaps and false-positive shapes are in the [threat model](docs/
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **140 attacks and 136 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 33 attacks and 104 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **142 attacks and 136 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 35 attacks and 104 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 136 of 140 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 137 of 140 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 138 of 142 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 139 of 142 blocked, and every legitimate request must fit the policy.
 
 Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-25:
 
 | Category | Generic blocked | API-aware blocked | Total |
 |---|---|---|---|
-| sqli | 35 | 35 | 35 |
+| sqli | 37 | 37 | 37 |
 | xss | 17 | 17 | 17 |
 | lfi | 11 | 11 | 11 |
 | rfi | 3 | 3 | 3 |
@@ -302,7 +302,7 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | scanner | 13 | 13 | 13 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **136** | **137** | **140** |
+| **Attacks** | **138** | **139** | **142** |
 | **False positives** | **0** | **0** | **136** |
 
 **What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.5):
@@ -374,7 +374,7 @@ make corpus     # the tables above
 Aegolith v0.1 is **alpha**. What that means:
 
 - **Alpha release (`v0.1.0-alpha.5`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 136 and 137 of the 140 corpus attacks with no false positives on 136 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Tuned on one corpus.** It blocks 138 and 139 of the 142 corpus attacks with no false positives on 136 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 

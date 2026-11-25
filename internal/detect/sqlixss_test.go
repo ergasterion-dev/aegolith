@@ -481,6 +481,47 @@ var sqliPercentAndRangePositives = []string{
 	"6-7 or 8--",
 	"6-7 or 8=8",
 	"6-7 || 8",
+	// Fix round 1: comparison-free forms. Plain integers joined by or/and
+	// (libinjection flags "99 or 1 or 1"; "1 or 1" alone it never flagged),
+	// modulo between operands, and SQL operator words.
+	"99 or 1 or 1",
+	"1%1 or 1",
+	"1 % 1 or 1",
+	"1%(1) or 1",
+	"1%1 or 2>1",
+	"1%1 or 2<1",
+	"1%1 or 1<>2",
+	"1%1 or 2>=1",
+	"1%1 or 2!=1",
+	"1-1 or 2<>1",
+	"1-1 or 1 between 0 and 2",
+	"1 % 1 or 1 like 1",
+	"1%(1) or 1 like 1",
+	"1% (1) or 1 rlike 1",
+	"1%x or 1 like 1",
+	"1%(1) or not 0",
+	"1%(1) or 1 in (1)",
+	"1%(1) xor 1",
+	"1%1 or 1 regexp 1",
+	"1%1 xor 1",
+	"1%1 or 1 div 1",
+	"1%1 or 1 is not null",
+	"1%1 or not 0",
+	"1%1 or 1 in (1)",
+	"9% (a) or 1 like 1",
+	"9% (a) xor 1",
+}
+
+// sqliPercentAndRangeAcceptedMisses are attack-shaped values the two guards
+// deliberately let through (the documented recall cost): a comparison-free
+// tautology with a range or decimal, or after "N% (word)" with plain or/and,
+// not or in. If one of them starts to hit, update the threat model.
+var sqliPercentAndRangeAcceptedMisses = []string{
+	"1-1 or 1",
+	"6-7 or 8 or 1",
+	"9% (a) or 1",
+	"9% (a) or not 0",
+	"9% (a) or 1 in (1)",
 }
 
 func TestSQLiPercentAndRange(t *testing.T) {
@@ -498,6 +539,11 @@ func TestSQLiPercentAndRange(t *testing.T) {
 		}
 		if !hasRule(ScanText(v), "AEG-SQLI-001") {
 			t.Errorf("ScanText(%q) has no AEG-SQLI-001", v)
+		}
+	}
+	for _, v := range sqliPercentAndRangeAcceptedMisses {
+		if hit, ok := SQLi(v); ok {
+			t.Errorf("SQLi(%q) = %+v: an accepted miss now hits; update the threat model", v, hit)
 		}
 	}
 }

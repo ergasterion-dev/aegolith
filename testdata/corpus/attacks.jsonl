@@ -31,6 +31,8 @@
 {"name":"modulo before a subquery","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","5 % (select 1)"]],"headers":{},"content_type":"","body":""}
 {"name":"percent then tautology","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","80% cotton or 1=1"]],"headers":{},"content_type":"","body":""}
 {"name":"range then tautology","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","6-7 or 8=8"]],"headers":{},"content_type":"","body":""}
+{"name":"integers ored together","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","99 or 1 or 1"]],"headers":{},"content_type":"","body":""}
+{"name":"modulo then like","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1%(1) or 1 like 1"]],"headers":{},"content_type":"","body":""}
 {"name":"script tag","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<script>alert(1)</script>"]],"headers":{},"content_type":"","body":""}
 {"name":"img onerror","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<img src=x onerror=alert(1)>"]],"headers":{},"content_type":"","body":""}
 {"name":"svg onload","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<svg/onload=alert(document.cookie)>"]],"headers":{},"content_type":"","body":""}
