@@ -102,6 +102,10 @@
 {"name":"php eval","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","eval(base64_decode('cGhwaW5mbygpOw=='))"]],"headers":{},"content_type":"","body":""}
 {"name":"node child_process","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","require('child_process').exec('id')"]],"headers":{},"content_type":"","body":""}
 {"name":"prototype pollution","category":"codei","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"__proto__\":{\"isAdmin\":true}}"}
+{"name":"sqli in json key","category":"sqli","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"1' OR '1'='1\":1}"}
+{"name":"sqli in query key","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["1' OR '1'='1","x"]],"headers":{},"content_type":"","body":""}
+{"name":"proto bracket query key","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["__proto__[isAdmin]","true"]],"headers":{},"content_type":"","body":""}
+{"name":"constructor dot query key","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["a.constructor.prototype.isAdmin","true"]],"headers":{},"content_type":"","body":""}
 {"name":"java deserialization b64","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ=="]],"headers":{},"content_type":"","body":""}
 {"name":"crlf header injection","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x%0d%0aSet-Cookie:%20admin=true"]],"headers":{},"content_type":"","body":""}
 {"name":"crlf in path","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products%0d%0aX-Injected:%201","query":[],"headers":{},"content_type":"","body":""}

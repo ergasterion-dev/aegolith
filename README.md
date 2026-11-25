@@ -251,7 +251,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-ROUTE-001` | route | monitor | No declared route matches (when routes are configured). Set by `unknown_route`. |
 | `AEG-SCHEMA-001` | schema | block | A declared field fails its type, or is an object or array where a scalar is declared. |
 | `AEG-SCHEMA-002` | schema | monitor | A field the matched route does not declare. Set by the route's or config's `unknown_fields`. |
-| `AEG-SQLI-001` | sqli | block | SQL injection (libinjection), or stacked statements that copy to or from a program. |
+| `AEG-SQLI-001` | sqli | block | SQL injection (libinjection), or stacked statements that copy to or from a program. Also run on JSON, query and form key names (the match names the key and carries no snippet). |
 | `AEG-XSS-001` | xss | block | Cross-site scripting (libinjection), including `javascript:` URLs. |
 | `AEG-CMDI-001` | cmdi | block | A shell operator followed by a command used as a shell is used, an absolute system path, reverse-shell or Shellshock markers. |
 | `AEG-CODEI-001` | codei | block | PHP open tags, `eval`/`assert` of `base64_decode`, Node `child_process` access. |
@@ -268,7 +268,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-XXE-001` | xxe | block | An XML `DOCTYPE` with an external identifier or an entity (only when `allow_xml` is set). |
 | `AEG-NOSQL-001` | nosqli | block | A JSON key that starts with `$` (a Mongo operator). |
 | `AEG-NOSQL-002` | nosqli | block | A query or form key that carries a known MongoDB operator (`q[$ne]=1`, `$where=...`); `amount[$USD]` is not one. |
-| `AEG-PPOLL-001` | protopollution | block | A JSON key `__proto__`, `constructor` or `prototype`. |
+| `AEG-PPOLL-001` | protopollution | block | A JSON key `__proto__`, `constructor` or `prototype`; a query or form key with a `__proto__` segment or `constructor` then `prototype` in bracket or dot form (`__proto__[isAdmin]`, `a.constructor.prototype.x`). |
 | `AEG-SESSION-001` | session | block | A session identifier in a query, form or JSON value (`PHPSESSID=`, `JSESSIONID=`, `ASPSESSIONID`). |
 | `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, acunetix, nessus, openvas). |
 | `AEG-SCANNER-002` | scanner | block | A well-known probe path (`/wp-admin`, `/phpmyadmin`, `/.env`, `/.git/`, `/actuator`, `/server-status`, ...). |

@@ -128,3 +128,90 @@ func TestQueryLineBreakCmdI(t *testing.T) {
 		}
 	}
 }
+
+// TestKeyNames: key names are inspected for SQL injection (field names the
+// key, no snippet) in JSON, query, urlencoded and multipart bodies, and a
+// query or form key that walks to the prototype in bracket or dot form is
+// prototype pollution. Legitimate key names stay clean.
+func TestKeyNames(t *testing.T) {
+	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true})
+	const mp = "multipart/form-data; boundary=XB"
+	mpBody := func(name string) string {
+		return "--XB\r\nContent-Disposition: form-data; name=\"" + name + "\"\r\n\r\nx\r\n--XB--\r\n"
+	}
+	get := func(q string) *model.Request {
+		return &model.Request{Method: "GET", RawPath: "/a", RawQuery: q, Header: http.Header{}}
+	}
+	post := func(ct, body string) *model.Request {
+		return &model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {ct}}, Body: []byte(body)}
+	}
+	find := func(d model.Decision, rule string) (model.Match, bool) {
+		for _, m := range d.Matches {
+			if m.RuleID == rule {
+				return m, true
+			}
+		}
+		return model.Match{}, false
+	}
+	for _, tc := range []struct {
+		name  string
+		req   *model.Request
+		rule  string
+		field string
+	}{
+		{"json key", post("application/json", `{"1' OR '1'='1":1}`), "AEG-SQLI-001", "body.1' OR '1'='1"},
+		{"query key, encoded =", get("1%27%20OR%20%271%27%3D%271=x"), "AEG-SQLI-001", "query.1' OR '1'='1"},
+		// Unencoded, the pair splits on the first '=': the key is "1' OR '1'".
+		{"query key, raw", get("1'%20OR%20'1'='1=x"), "AEG-SQLI-001", "query.1' OR '1'"},
+		{"form key", post("application/x-www-form-urlencoded", "1%27%20OR%20%271%27%3D%271=x"), "AEG-SQLI-001", "form.1' OR '1'='1"},
+		{"multipart key", post(mp, mpBody("1' OR '1'='1")), "AEG-SQLI-001", "form.1' OR '1'='1"},
+		{"query proto bracket", get("__proto__[isAdmin]=true"), "AEG-PPOLL-001", "query.__proto__[isAdmin]"},
+		{"query constructor dot", get("a.constructor.prototype.x=1"), "AEG-PPOLL-001", "query.a.constructor.prototype.x"},
+		{"form constructor bracket", post("application/x-www-form-urlencoded", "constructor[prototype][isAdmin]=1"), "AEG-PPOLL-001", "form.constructor[prototype][isAdmin]"},
+	} {
+		d := e.Inspect(tc.req)
+		m, ok := find(d, tc.rule)
+		if !ok {
+			t.Errorf("%s: no %s: %+v", tc.name, tc.rule, d.Matches)
+			continue
+		}
+		if m.Field != tc.field {
+			t.Errorf("%s: field %q, want %q", tc.name, m.Field, tc.field)
+		}
+		if tc.rule == "AEG-SQLI-001" && m.Snippet != "" {
+			t.Errorf("%s: snippet %q, want none", tc.name, m.Snippet)
+		}
+	}
+	legit := []string{"first name", "user's note", "amount[$USD]", "constructor_year", "prototype_id",
+		"filter[constructor]", "item[prototype]", "O'Brien", "rock 'n' roll", "say \"hi\""}
+	for _, k := range legit {
+		enc := strings.NewReplacer(" ", "%20", "'", "%27", "\"", "%22", "[", "%5B", "]", "%5D", "$", "%24").Replace(k)
+		for _, req := range []*model.Request{
+			get(enc + "=x"),
+			post("application/x-www-form-urlencoded", enc+"=x"),
+			post(mp, mpBody(k)),
+			post("application/json", `{"`+strings.ReplaceAll(k, `"`, `\"`)+`":"x"}`),
+		} {
+			if d := e.Inspect(req); len(d.Matches) != 0 {
+				t.Errorf("legit key %q (%s): %+v", k, req.Header.Get("Content-Type"), d.Matches)
+			}
+		}
+	}
+	// A plain constructor or prototype key is an ordinary query or form
+	// field (JSONKey still flags it as a JSON object key).
+	for _, q := range []string{"constructor=x", "prototype=x"} {
+		if d := e.Inspect(get(q)); len(d.Matches) != 0 {
+			t.Errorf("query %q: %+v", q, d.Matches)
+		}
+	}
+	// A quoted key with prose in its value: the whole-pair check stays clean.
+	for _, q := range []string{
+		"user%27s%20note=I%27m%20fine%2C%201%20or%202%20is%20ok",
+		"O%27Brien=Tom%27s%20order%3D2%20and%20Sam%27s",
+		"rock%20%27n%27%20roll=it%27s%20%271%27%20or%20%272%27",
+	} {
+		if d := e.Inspect(get(q)); len(d.Matches) != 0 {
+			t.Errorf("query %q: %+v", q, d.Matches)
+		}
+	}
+}

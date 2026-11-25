@@ -31,11 +31,72 @@ func JSONKey(k string) (Hit, bool) {
 // mongoOperators count, matched case-sensitively as MongoDB does, so a form
 // key such as amount[$USD] or price[$EUR] is not a hit. The key is also
 // checked once percent-decoded.
+//
+// It also reports prototype pollution in the bracket or dot form qs-style
+// parsers and deep-set helpers expand (AEG-PPOLL-001): a key whose segments,
+// split on '[', ']' and '.', include __proto__ (__proto__[isAdmin],
+// a.__proto__.x), or a constructor segment followed by a prototype segment
+// (constructor[prototype][x], a.constructor.prototype.x). A constructor or
+// prototype segment on its own is not a hit: filter[constructor] and
+// item[prototype] are ordinary form fields and reach no prototype.
 func QueryKey(k string) (Hit, bool) {
 	if valueOrDecoded(k, isOperatorKey) {
 		return Hit{RuleID: "AEG-NOSQL-002", Category: model.CatNoSQLi, Severity: model.SeverityHigh}, true
 	}
+	if valueOrDecoded(k, isProtoPathKey) {
+		return Hit{RuleID: "AEG-PPOLL-001", Category: model.CatProtoPollute, Severity: model.SeverityHigh}, true
+	}
 	return Hit{}, false
+}
+
+// isProtoPathKey walks the non-empty segments of k (split on '[', ']' and
+// '.') once, without allocating: a __proto__ segment, or a constructor
+// segment whose next non-empty segment is prototype.
+func isProtoPathKey(k string) bool {
+	if !strings.Contains(k, "__proto__") && !strings.Contains(k, "prototype") {
+		return false
+	}
+	prev := ""
+	for i := 0; i < len(k); {
+		j := i
+		for j < len(k) && k[j] != '[' && k[j] != ']' && k[j] != '.' {
+			j++
+		}
+		if seg := k[i:j]; seg != "" {
+			if seg == "__proto__" || seg == "prototype" && prev == "constructor" {
+				return true
+			}
+			prev = seg
+		}
+		i = j + 1
+	}
+	return false
+}
+
+// KeySQLi is SQLi for a key name. A key that is a plain identifier (an
+// ASCII letter or '_', then letters, digits and '_') is one bareword token
+// to libinjection, and a single bareword or keyword is never an injection
+// fingerprint; it has no blank, quote, ';' or escape for the other SQLi
+// checks either. Such keys, nearly every real one, skip the detector, so a
+// body of many small keys costs one byte loop per key.
+func KeySQLi(k string) (Hit, bool) {
+	if isIdentifier(k) {
+		return Hit{}, false
+	}
+	return SQLi(k)
+}
+
+func isIdentifier(k string) bool {
+	if k == "" || !(k[0] >= 'a' && k[0] <= 'z' || k[0] >= 'A' && k[0] <= 'Z' || k[0] == '_') {
+		return false
+	}
+	for i := 1; i < len(k); i++ {
+		c := k[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // mongoOperators are the MongoDB query operators a qs-style key can smuggle

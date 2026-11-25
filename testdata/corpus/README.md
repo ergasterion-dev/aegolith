@@ -4,8 +4,8 @@ The acceptance corpus for Aegolith's detection gates (spec §9.1). `corpus_test.
 
 | Test | Configuration | Gate |
 |---|---|---|
-| `TestCorpusGeneric` | `Config{Mode: enforce}`: no routes, no exclusions, every input untyped | blocked >= 124/128, false positives = 0 |
-| `TestCorpusAPIAware` | `example-api-policy.json` (enforce, no exclusions) | blocked >= 125/128, false positives = 0, and every legitimate request fits the policy (no route or schema match) |
+| `TestCorpusGeneric` | `Config{Mode: enforce}`: no routes, no exclusions, every input untyped | blocked >= 128/132, false positives = 0 |
+| `TestCorpusAPIAware` | `example-api-policy.json` (enforce, no exclusions) | blocked >= 129/132, false positives = 0, and every legitimate request fits the policy (no route or schema match) |
 
 "Blocked" means `Decision.Action == Block`. Run with `make corpus` (`go test -run Corpus -v .`); the test prints a per-category table, the missed attacks and any false positive.
 
@@ -15,7 +15,7 @@ The acceptance corpus for Aegolith's detection gates (spec §9.1). `corpus_test.
 |---|---|
 | `source/attacks.sh` | The ExampleCo WAF attack and false-positive suite, copied with a provenance header (Apache-2.0) and scrubbed of internal hostnames and personal contact details; cases Aegolith added are marked "Aegolith:". Never run against anything here. |
 | `gen.sh` | Regenerates `attacks.jsonl` and `legit.jsonl` from `source/attacks.sh`: it sources the script with its curl helpers replaced by functions that print the request each would send. Deterministic. Run from the repository root: `sh testdata/corpus/gen.sh`. Needs `python3`. |
-| `attacks.jsonl` | 128 attacks, generated (107 from the suite plus 21 Aegolith additions marked in `source/attacks.sh`). |
+| `attacks.jsonl` | 132 attacks, generated (107 from the suite plus 25 Aegolith additions marked in `source/attacks.sh`). |
 | `legit.jsonl` | The 32 legitimate cases from the script, generated, followed by the contents of `legit.extra.jsonl`. |
 | `legit.extra.jsonl` | Hand-written legitimate ExampleCo traffic: prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi, apostrophes, links in reviews, decimal prices, pagination and sort, PUT/PATCH/DELETE, a multipart avatar upload with a JPEG part, cookies, `Accept-Language`, multi-line addresses, and the known false-positive candidates found while building the detectors. Edit this file, then rerun `gen.sh`. |
 | `example-api-policy.json` | The ExampleCo-shaped route policy for the API-aware gate. |

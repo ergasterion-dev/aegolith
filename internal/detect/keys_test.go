@@ -101,3 +101,45 @@ func assertNoKeyHits(t *testing.T, name string, fn func(string) (Hit, bool), key
 		}
 	}
 }
+
+func TestQueryKeyProtoPollution(t *testing.T) {
+	want := Hit{RuleID: "AEG-PPOLL-001", Category: model.CatProtoPollute, Severity: model.SeverityHigh}
+	assertHits(t, "QueryKey", QueryKey, want, []string{
+		"__proto__",
+		"__proto__[isAdmin]",
+		"a[__proto__][isAdmin]",
+		"a.__proto__.x",
+		"[__proto__]",
+		"a.constructor.prototype.x",
+		"constructor[prototype][isAdmin]",
+		"a[constructor][prototype]",
+		"constructor.prototype",
+		"a[constructor][][prototype]",
+		"%5F%5Fproto%5F%5F%5Bx%5D",
+		"__proto__%5Bx%5D",
+	})
+	assertNoKeyHits(t, "QueryKey", QueryKey, []string{
+		"constructor_year", "prototype_id", "constructor", "prototype", "filter[constructor]",
+		"item[prototype]", "prototype[constructor]", "a.prototype", "constructors[prototype]",
+		"constructor[prototypes]", "__proto", "proto__", "__proto__x", "x__proto__", "a[__Proto__]",
+		"Constructor[prototype]", "constructor[name][prototype]",
+	})
+}
+
+func TestKeySQLi(t *testing.T) {
+	want := Hit{RuleID: "AEG-SQLI-001", Category: model.CatSQLi, Severity: model.SeverityCritical}
+	assertHits(t, "KeySQLi", KeySQLi, want, []string{
+		"1' OR '1'='1", "1' OR '1'='1=x", "x' UNION SELECT password FROM users--", "1 OR 1=1",
+	})
+	assertNoKeyHits(t, "KeySQLi", KeySQLi, []string{
+		"first name", "user's note", "amount[$USD]", "constructor_year", "prototype_id", "O'Brien",
+		"a", "line1", "union", "UNION", "select", "or", "OR", "sleep", "order_by", "_id", "",
+	})
+	// The identifier fast path agrees with SQLi: identifiers, keywords
+	// included, are never SQL injection on their own.
+	for _, k := range []string{"union", "select", "or", "and", "sleep", "benchmark", "drop", "x1or1", "admin_1", "NULL", "true"} {
+		if _, ok := SQLi(k); ok {
+			t.Errorf("SQLi(%q) = hit; the identifier fast path in KeySQLi would hide it", k)
+		}
+	}
+}

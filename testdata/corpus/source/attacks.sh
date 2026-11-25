@@ -175,6 +175,11 @@ q $A codei "php tag"                   "<?php system(\$_GET['c']); ?>"
 q $A codei "php eval"                  "eval(base64_decode('cGhwaW5mbygpOw=='))"
 q $A codei "node child_process"        "require('child_process').exec('id')"
 json $A codei "prototype pollution"    '{"__proto__":{"isAdmin":true}}'
+# Aegolith: injection and prototype pollution in key names (G7).
+json $A sqli "sqli in json key"        '{"1'"'"' OR '"'"'1'"'"'='"'"'1":1}'
+path $A sqli "sqli in query key"       "/api/v1/products/search?1'%20OR%20'1'%3D'1=x"
+path $A codei "proto bracket query key" "/api/v1/products/search?__proto__[isAdmin]=true"
+path $A codei "constructor dot query key" "/api/v1/products/search?a.constructor.prototype.isAdmin=true"
 q $A codei "java deserialization b64"  "rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ=="
 
 # --- 12. HTTP protocol attacks ---------------------------------------------------------------------------------

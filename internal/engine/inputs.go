@@ -133,6 +133,14 @@ func (s *state) pairs(loc, specLoc model.Location, prefix, raw, limitField strin
 			if h, ok := detect.QueryKey(s.capped(kv.Key)); ok {
 				s.hit(h, loc, field, kv.Key)
 			}
+			s.scanKey(loc, field, kv.Key)
+			// A pair splits on its first '=', so an unencoded injection such
+			// as ?1' OR '1'='1=x leaves "1' OR '1'" in the key and the rest
+			// in the value, neither of which reads as SQL alone. When the key
+			// holds a quote, the whole decoded pair is checked as well.
+			if strings.ContainsAny(kv.Key, `'"`) && kv.Value != "" {
+				s.scanKey(loc, field, s.capped(kv.Key)+"="+s.capped(kv.Value))
+			}
 			if h, ok := detect.Session(s.capped(kv.Key), s.capped(kv.Value)); ok {
 				s.hit(h, loc, field, kv.Key+"="+kv.Value)
 			}
@@ -232,6 +240,7 @@ func (s *state) checkJSON(body []byte) {
 			if h, ok := detect.JSONKey(v.Key); ok {
 				s.hit(h, model.LocBody, field, v.Key)
 			}
+			s.scanKey(model.LocBody, field, v.Key)
 			return
 		}
 		if v.IsString {
@@ -279,6 +288,7 @@ func (s *state) checkMultipart(body []byte, ct string) {
 		if h, ok := detect.QueryKey(s.capped(p.Name)); ok {
 			s.hit(h, model.LocBody, field, p.Name)
 		}
+		s.scanKey(model.LocBody, field, p.Name)
 		if h, ok := detect.Session(s.capped(p.Name), s.capped(p.Value)); ok {
 			s.hit(h, model.LocBody, field, p.Name+"="+p.Value)
 		}

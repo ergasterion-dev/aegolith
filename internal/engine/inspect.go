@@ -191,10 +191,13 @@ func (s *state) capped(v string) string {
 //     3x as long as its source bytes (the decoder turns each invalid UTF-8
 //     byte into U+FFFD, 1 -> 3 bytes; escapes only shrink), and the
 //     overlapping windows double that: 6x. The windowed raw rescan after
-//     malformed JSON or a depth overflow adds 2x: 8x. Form, multipart,
-//     XML and text values are not expanded: at most 2x;
+//     malformed JSON or a depth overflow adds 2x: 8x. A JSON key is
+//     scanned once (scanKey): at most 3x. Form, multipart, XML and text
+//     values are not expanded: at most 2x, plus 1x for a form pair whose
+//     key holds a quote (the whole pair is checked again): at most 3x;
 //   - a byte of any other input (path, query, cookies, scanned headers) is
-//     charged at most 2x.
+//     charged at most 3x (2x for a value; key bytes and the whole-pair
+//     check of a quoted key add at most 1x each).
 //
 // So no request whose body is within MaxBodyBytes and whose other inputs
 // total at most 256 KiB can exhaust it. Beyond that it can (a documented
@@ -263,6 +266,30 @@ func (s *state) scanWindows(loc model.Location, field, v string, extra func(stri
 		if end == len(v) || s.stop {
 			return
 		}
+	}
+}
+
+// scanKey runs the SQL injection detector on a key name: a key reaches the
+// backend too (a dynamic column name, an ORDER BY or a filter built from
+// form keys). Only the first MaxValueLen bytes are read (capped), charged
+// against the scan budget like a value window; once the budget is spent no
+// key is scanned. The match names the key in its field and carries no
+// snippet, so nothing beyond the (sanitised, length-capped) field name is
+// reported. The other text detectors are not run on keys: names are short
+// identifiers, and their rules are tuned for free-text values.
+func (s *state) scanKey(loc model.Location, field, key string) {
+	if s.stop || s.exhausted || key == "" {
+		return
+	}
+	k := s.capped(key)
+	if int64(len(k)) > s.budget {
+		s.exhausted = true
+		s.protoMatch(ruleValueTooLong, loc, field, "")
+		return
+	}
+	s.budget -= int64(len(k))
+	if h, ok := detect.KeySQLi(k); ok {
+		s.hit(h, loc, field, "")
 	}
 }
 
