@@ -32,6 +32,7 @@
 {"name":"img onerror","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<img src=x onerror=alert(1)>"]],"headers":{},"content_type":"","body":""}
 {"name":"svg onload","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<svg/onload=alert(document.cookie)>"]],"headers":{},"content_type":"","body":""}
 {"name":"javascript uri","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","javascript:alert(1)"]],"headers":{},"content_type":"","body":""}
+{"name":"nested broken script tag","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<scr<script>ipt>alert(1)</script>"]],"headers":{},"content_type":"","body":""}
 {"name":"iframe srcdoc","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<iframe srcdoc='<script>alert(1)</script>'>"]],"headers":{},"content_type":"","body":""}
 {"name":"body onload","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<body onload=alert(1)>"]],"headers":{},"content_type":"","body":""}
 {"name":"event handler no tag","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","\" onmouseover=\"alert(1)"]],"headers":{},"content_type":"","body":""}

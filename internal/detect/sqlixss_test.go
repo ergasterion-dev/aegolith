@@ -389,3 +389,26 @@ func hasRule(hits []Hit, id string) bool {
 	}
 	return false
 }
+
+func TestXSSNestedScriptTag(t *testing.T) {
+	for _, v := range []string{
+		"<scr<script>ipt>alert(1)</script>",
+		"<SCR<script >ipt>alert(1)",
+		"<scr<SCRIPT/x>ipt>",
+		"<scr<script<script>ipt>",
+	} {
+		if _, ok := XSS(v); !ok {
+			t.Errorf("XSS(%q) = no hit, want hit", v)
+		}
+	}
+	for _, v := range []string{
+		"a < script is a word",
+		"1<scripts",
+		"price <script.",
+		"<scripting guide",
+	} {
+		if hit, ok := XSS(v); ok {
+			t.Errorf("XSS(%q) = %+v, want no hit", v, hit)
+		}
+	}
+}

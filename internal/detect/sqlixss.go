@@ -406,7 +406,32 @@ func isProseNumberComment(s, fp string) bool {
 }
 
 func isXSS(s string) bool {
-	return libinjection.IsXSS(s) || isScriptURL(s)
+	return libinjection.IsXSS(s) || isScriptURL(s) || hasScriptTagAnywhere(s)
+}
+
+// hasScriptTagAnywhere finds a "<script" opening tag that libinjection's
+// HTML tokenizer misses because it is nested in a broken one, e.g.
+// "<scr<script>ipt>alert(1)</script>". "<script" counts only when the next
+// byte ends the tag name: '>', '/', whitespace or another '<'. Prose such
+// as "a < script", "1<scripts" or "price <script" (at the end of the value)
+// stays clean. The scan is linear: it moves on after every candidate.
+func hasScriptTagAnywhere(s string) bool {
+	const tag = "<script"
+	for off := 0; off < len(s); {
+		i := indexFold(s[off:], tag)
+		if i < 0 {
+			return false
+		}
+		end := off + i + len(tag)
+		if end < len(s) {
+			switch s[end] {
+			case '>', '/', '<', ' ', '\t', '\n', '\r', '\f':
+				return true
+			}
+		}
+		off += i + 1
+	}
+	return false
 }
 
 // hasStackedCopyProgram finds a stacked PostgreSQL "COPY ... TO|FROM PROGRAM"

@@ -84,6 +84,8 @@ q $A xss "script tag"                  "<script>alert(1)</script>"
 q $A xss "img onerror"                 "<img src=x onerror=alert(1)>"
 q $A xss "svg onload"                  "<svg/onload=alert(document.cookie)>"
 q $A xss "javascript uri"              "javascript:alert(1)"
+# Aegolith: script tag nested in a broken one (G2).
+q $A xss "nested broken script tag"    "<scr<script>ipt>alert(1)</script>"
 q $A xss "iframe srcdoc"               "<iframe srcdoc='<script>alert(1)</script>'>"
 q $A xss "body onload"                 "<body onload=alert(1)>"
 q $A xss "event handler no tag"        "\" onmouseover=\"alert(1)"
