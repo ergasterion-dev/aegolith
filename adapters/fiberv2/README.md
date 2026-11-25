@@ -80,6 +80,12 @@ so set `fiber.Config{BodyLimit: ...}` at or below it as well.
 `BodyLimit` caps the compressed size; fasthttp inflates the whole body on
 `c.Body()`, so it is also your bound on decompression.
 
+Since alpha.4 the copy is always `2 x MaxBodyBytes+1` for an over-cap body, in
+enforce mode too (one extra copy of at most `MaxBodyBytes`), and monitor mode
+inspects up to that size. A JSON or multipart body cut only by the cap does
+not raise `AEG-PROTO-020` with the alpha.4 core; the adapter still pins
+core alpha.3 until the next release, where it can.
+
 The handler still receives the complete, unmodified body.
 
 All strings and byte slices given to the engine and your hook are copies;

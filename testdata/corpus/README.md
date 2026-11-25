@@ -45,6 +45,10 @@ Both gates pass with these attacks still allowed. They are reported, not hidden:
 | misc / xpath injection | missed | missed | `' or name()='username' or 'x'='y`: libinjection does not flag it and there is no XPath detector in v0.1. |
 | log4shell / obfuscated jndi | missed | blocked | The lookup is in `X-Api-Version`, which is scanned only when listed in `inspect_headers` (the API-aware policy lists it; the generic configuration scans `User-Agent` and `Referer` only). |
 
+### alpha.4 notes
+
+The alpha.4 detectors and their false-positive costs are in the [threat model](../../docs/threat-model.md#detector-coverage-added-in-alpha4-and-what-it-costs). The four misses above are unchanged. Counts: generic 128 of 132, API-aware 129 of 132, 0 of 118 legitimate requests blocked.
+
 ### Accepted recall trade-offs (not in the corpus)
 
 The command-injection detector reads some operators as prose, so that real customer text is never blocked (anti-goal 1). These attack shapes are therefore not caught. Each has a unit-test negative next to it:

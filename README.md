@@ -251,13 +251,13 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-ROUTE-001` | route | monitor | No declared route matches (when routes are configured). Set by `unknown_route`. |
 | `AEG-SCHEMA-001` | schema | block | A declared field fails its type, or is an object or array where a scalar is declared. |
 | `AEG-SCHEMA-002` | schema | monitor | A field the matched route does not declare. Set by the route's or config's `unknown_fields`. |
-| `AEG-SQLI-001` | sqli | block | SQL injection (libinjection), or stacked statements that copy to or from a program. Also run on JSON, query and form key names (the match names the key and carries no snippet). |
+| `AEG-SQLI-001` | sqli | block | SQL injection (libinjection, also read from the keywords inside a value after leading words or padding), or stacked statements that copy to or from a program. Also run on JSON, query and form key names (the match names the key and carries no snippet). |
 | `AEG-XSS-001` | xss | block | Cross-site scripting (libinjection), including `javascript:` URLs. |
 | `AEG-CMDI-001` | cmdi | block | A shell operator followed by a command used as a shell is used, an absolute system path, reverse-shell or Shellshock markers. |
 | `AEG-CODEI-001` | codei | block | PHP open tags, `eval`/`assert` of `base64_decode`, Node `child_process` access. |
 | `AEG-CODEI-002` | codei | block | A Java serialized object (`rO0AB`, `aced0005`). |
 | `AEG-LDAP-001` | ldap | block | LDAP filter breakers (`*)(`, `)(\|`, `)(&`, `)(!`). |
-| `AEG-SSTI-001` | ssti | block | Template expressions with code in them (`{{ ... }}`, `${T(`, `#{`, `<%= %>`, `{% %}`). |
+| `AEG-SSTI-001` | ssti | block | Template expressions with code in them (`{{ ... }}` including Go template actions such as `printf` and `call`, `${T(`, `${7*7}`, `${a.b}` and calls in `${...}`, `#{`, `<%= %>`, `{% %}`). |
 | `AEG-JNDI-001` | jndi | block | Log4Shell `${jndi:` lookups, including nested obfuscation. |
 | `AEG-CRLF-001` | crlf | block | CR or LF (raw or encoded) followed by a response header name. |
 | `AEG-LFI-001` | lfi | block | Directory traversal (`../`, encoded forms) or a NUL byte in a value. |
@@ -270,42 +270,42 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-NOSQL-002` | nosqli | block | A query or form key that carries a known MongoDB operator (`q[$ne]=1`, `$where=...`); `amount[$USD]` is not one. |
 | `AEG-PPOLL-001` | protopollution | block | A JSON key `__proto__`, `constructor` or `prototype`; a query or form key with a `__proto__` segment or `constructor` then `prototype` in bracket or dot form (`__proto__[isAdmin]`, `a.constructor.prototype.x`). |
 | `AEG-SESSION-001` | session | block | A session identifier in a query, form or JSON value (`PHPSESSID=`, `JSESSIONID=`, `ASPSESSIONID`). |
-| `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, acunetix, nessus, openvas). |
-| `AEG-SCANNER-002` | scanner | block | A well-known probe path (`/wp-admin`, `/phpmyadmin`, `/.env`, `/.git/`, `/actuator`, `/server-status`, ...). |
+| `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, wfuzz, feroxbuster, hydra, acunetix, nessus, openvas). |
+| `AEG-SCANNER-002` | scanner | block | A well-known probe path (`/wp-admin`, `/phpmyadmin`, `/.env`, `/.git/`, `/actuator`, `/server-status`, ...) as any segment of the path, not only the first. |
 | `AEG-SCANNER-003` | scanner | block | A backup, editor or PHP file (`.bak`, `.old`, `.orig`, `.swp`, `.save`, `.php`, a trailing `~`). |
 
 Each rule's known gaps and false-positive shapes are in the [threat model](docs/threat-model.md#known-gaps-and-trade-offs).
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **107 attacks and 91 legitimate requests**: an attack and false-positive suite taken from a production API's tests, plus 59 more legitimate requests (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **132 attacks and 118 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 25 attacks and 86 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 95 of 107 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 99 of 107 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 128 of 132 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 129 of 132 blocked, and every legitimate request must fit the policy.
 
-Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-24:
+Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-25:
 
 | Category | Generic blocked | API-aware blocked | Total |
 |---|---|---|---|
-| sqli | 25 | 25 | 25 |
-| xss | 16 | 16 | 16 |
+| sqli | 32 | 32 | 32 |
+| xss | 17 | 17 | 17 |
 | lfi | 11 | 11 | 11 |
 | rfi | 3 | 3 | 3 |
-| cmdi | 11 | 11 | 11 |
-| ssti | 4 | 4 | 4 |
+| cmdi | 15 | 15 | 15 |
+| ssti | 9 | 9 | 9 |
 | log4shell | 3 | 4 | 4 |
 | ssrf | 5 | 5 | 5 |
 | xxe | 3 | 3 | 3 |
 | nosqli | 2 | 2 | 3 |
-| codei | 5 | 5 | 5 |
+| codei | 7 | 7 | 7 |
 | protocol | 6 | 6 | 7 |
-| scanner | 7 | 7 | 7 |
+| scanner | 13 | 13 | 13 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **103** | **104** | **107** |
-| **False positives** | **0** | **0** | **91** |
+| **Attacks** | **128** | **129** | **132** |
+| **False positives** | **0** | **0** | **118** |
 
-**What it misses**, listed honestly (4 attacks generic, 3 API-aware):
+**What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4):
 
 | Attack | Generic | API-aware | Why |
 |---|---|---|---|
@@ -318,7 +318,7 @@ The corpus came from the same team that tuned the rules, so these numbers show t
 
 ## Performance
 
-Measured on a developer laptop, not a server. Reproduce with the commands below.
+Measured on a developer laptop, not a server. Reproduce with the commands below. **The figures below are from alpha.3 and were not re-measured for alpha.4** (the machine was loaded); the alpha.4 detectors add work per value (see the [changelog](CHANGELOG.md)), so run `make bench` and `make perf` yourself before relying on them.
 
 | | |
 |---|---|
@@ -333,13 +333,13 @@ Measured on a developer laptop, not a server. Reproduce with the commands below.
 |---|---|---|---|
 | `Inspect`, search GET (query string, browser headers) | 10.1 µs | 9.3 µs | 143 |
 | `Inspect`, JSON cart POST | 15.5 µs | 13.7 µs | 251 |
-| `Inspect`, the 91 legitimate corpus requests, per request | 4.9 µs | 3.4 µs | 80 |
+| `Inspect`, the legitimate corpus requests, per request (91 requests when measured, before alpha.4) | 4.9 µs | 3.4 µs | 80 |
 | `Inspect`, a 500-field JSON body | 351 µs | 358 µs | 9,438 |
 | `ScanText` on a short word | 82 ns | | 1 |
 | `ScanText` on a short prose sentence | 2.8 µs | | 59 |
 | `ScanText` on a SQLi payload | 0.88 µs | | 17 |
 
-**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. Lowest of 3 runs per figure, over the 91 legitimate corpus requests, with and without a realistic set of browser headers:
+**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. Lowest of 3 runs per figure, over the 91 legitimate corpus requests of the alpha.3 corpus, with and without a realistic set of browser headers:
 
 | Configuration | p50 | p99 | max |
 |---|---|---|---|
@@ -373,8 +373,8 @@ make corpus     # the tables above
 
 Aegolith v0.1 is **alpha**. What that means:
 
-- **Alpha release (`v0.1.0-alpha.3`).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 103 and 104 of the 107 corpus attacks with no false positives on 91 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Alpha release (`v0.1.0-alpha.3`; alpha.4 is in preparation, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
+- **Tuned on one corpus.** It blocks 128 and 129 of the 132 corpus attacks with no false positives on 118 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 
