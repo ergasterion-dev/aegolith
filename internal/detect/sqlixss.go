@@ -27,11 +27,136 @@ func XSS(v string) (Hit, bool) {
 }
 
 func isSQLi(s string) bool {
-	if ok, fp := libinjection.IsSQLi(s); ok && !isProseNumberComment(s, fp) {
+	if ok, fp := libinjection.IsSQLi(s); ok && !isProseNumberComment(s, fp) && !isProsePercent(s, fp) && !isBareNumberPhrase(s, fp) {
 		return true
 	}
 	return hasStackedCopyProgram(s) || sqliFromKeywordStarts(s)
 }
+
+// isProsePercent reports whether a libinjection hit comes only from a '%'
+// that prose writes as "percent": "Sale 20% (today only)" and "Cotton 95%
+// (organic)" fold to "n1o(n" and "80% ACRYLIC AND 20% WOOL" to "1&1",
+// because libinjection reads '%' as the modulo operator. The hit is dropped
+// only when all of these hold:
+//
+//   - the fingerprint has no SQL keyword, function, string, comment or ';'
+//     token: only names, numbers, operators, parentheses and AND/OR ("n",
+//     "1", "o", "(", ")", "&"). "5 % (select 1)" folds to "1o(E1" and stays.
+//   - the value has no comment opener ("--", "/*"), no ';' and no quote other
+//     than an apostrophe inside a word ("l'acidité", "d'AVOINE").
+//   - the value has no SQL syntax lastSQLSyntax finds: no "1=1", no "x(" and
+//     no quoted word. "80% cotton or 1=1" and "1%1 or 1=1" stay.
+//   - libinjection does not flag the value with every '%' read as a blank.
+//
+// Accepted cost: a numeric tautology built from '%' and AND/OR alone, with
+// no comparison ("1%1 or 1"), is not flagged; it reads the same as "6-7 or
+// 8" (see isBareNumberPhrase). One extra libinjection call, only for a value
+// that holds a '%' and passes the cheaper checks: linear.
+func isProsePercent(s, fp string) bool {
+	if strings.IndexByte(s, '%') < 0 || !onlyArithmeticTokens(fp) || hasSQLPunctuation(s) || lastSQLSyntax(s) >= 0 {
+		return false
+	}
+	ok, _ := libinjection.IsSQLi(strings.ReplaceAll(s, "%", " "))
+	return !ok
+}
+
+// isBareNumberPhrase reports whether a "1&1" hit is a bare list of numbers
+// and ranges joined by "or"/"and", such as a size "6-7 or 8": every word is
+// a number that starts with a digit, may hold '.', ',' and one inner '-'
+// ("6-7", "1.5-2"), or the word "or" or "and" between two of them.
+// libinjection folds "6-7" to a number and reads the phrase like "1 or 1=1";
+// a comparison, a comment, a quote, a leading sign ("-1 or 1") or "||"
+// keeps it flagged.
+//
+// Accepted cost: "1-1 or 1", a tautology with no comparison, has the same
+// shape as "6-7 or 8" and is not flagged. A typed numeric field still rejects
+// it through its schema. One pass over s.
+func isBareNumberPhrase(s, fp string) bool {
+	if fp != "1&1" {
+		return false
+	}
+	words := strings.Fields(s)
+	if len(words) < 3 || len(words)%2 == 0 {
+		return false
+	}
+	for i, w := range words {
+		if i%2 == 1 {
+			if !strings.EqualFold(w, "or") && !strings.EqualFold(w, "and") {
+				return false
+			}
+			continue
+		}
+		if !isPlainNumberOrRange(w) {
+			return false
+		}
+	}
+	return true
+}
+
+// isPlainNumberOrRange reports whether w is digits with optional '.' and ','
+// separators and at most one inner '-' between digits: "8", "1.5", "79,4",
+// "6-7", "1.5-2".
+func isPlainNumberOrRange(w string) bool {
+	dash := false
+	for i := 0; i < len(w); i++ {
+		c := w[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case (c == '.' || c == ',' || c == '-') && i > 0 && i < len(w)-1 && isDigit(w[i-1]) && isDigit(w[i+1]):
+			if c == '-' {
+				if dash {
+					return false
+				}
+				dash = true
+			}
+		default:
+			return false
+		}
+	}
+	return len(w) > 0 && isDigit(w[0])
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// onlyArithmeticTokens reports whether a libinjection fingerprint holds
+// only bareword, number, operator, parenthesis and logic-operator tokens,
+// and at least one operator or logic operator.
+func onlyArithmeticTokens(fp string) bool {
+	op := false
+	for i := 0; i < len(fp); i++ {
+		switch fp[i] {
+		case 'o', '&':
+			op = true
+		case 'n', '1', '(', ')':
+		default:
+			return false
+		}
+	}
+	return op
+}
+
+// hasSQLPunctuation reports whether s holds a SQL comment opener ("--",
+// "/*"), a ';', a double quote or backtick, or a single quote that is not
+// an apostrophe between two letters. Letters here include any non-ASCII
+// byte, so "l'été" and "d'AVOINE" count as words.
+func hasSQLPunctuation(s string) bool {
+	if strings.Contains(s, "--") || strings.Contains(s, "/*") || strings.ContainsAny(s, ";\"`") {
+		return true
+	}
+	for i := strings.IndexByte(s, '\''); i >= 0; {
+		if i == 0 || i == len(s)-1 || !isWordByte(s[i-1]) || !isWordByte(s[i+1]) {
+			return true
+		}
+		n := strings.IndexByte(s[i+1:], '\'')
+		if n < 0 {
+			break
+		}
+		i += 1 + n
+	}
+	return false
+}
+
+func isWordByte(c byte) bool { return isLetter(c) || c >= 0x80 }
 
 // maxSQLiStarts caps the extra libinjection calls sqliFromKeywordStarts
 // makes on one value (one window, for a value the engine scans in windows)

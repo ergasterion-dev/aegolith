@@ -430,3 +430,74 @@ func TestXSSNestedScriptTag(t *testing.T) {
 		}
 	}
 }
+
+// Product, promo and size text that libinjection reads as SQL: a percent
+// sign is its modulo operator ("Sale 20% (today only)" folds to "n1o(n")
+// and a bare range joined by "or" is arithmetic ORed with a number ("6-7 or
+// 8" folds to "1&1"). None of them may be flagged.
+var sqliPercentAndRangeNegatives = []string{
+	"Sale 20% (today only)",
+	"Cotton 95% (organic)",
+	"Wheat 50% (flour)",
+	"Discount 15% (members)",
+	"Battery 80% (approx)",
+	"80% ACRYLIC AND 20% WOOL",
+	"35% COTTON AND 65% POLYESTER.",
+	"Céréales 93 % (farine de BLÉ 79,4 %, sucre)",
+	"Pomme 99,7% (purée et purée concentrée), arôme naturel de pomme, jus de citron concentré (si nécessaire pour réguler l'acidité)",
+	"Wheat 50%25 (flour)",
+	"6-7 or 8",
+	"6-7 OR 8",
+	"6-7 and 8",
+	"1.5-2 or 3",
+	"10%(x)",
+}
+
+// Counter-cases for the two guards above: each keeps a SQL keyword, a
+// comparison, a quote, a comment, a ';' or a non-numeric operand, and stays
+// caught.
+var sqliPercentAndRangePositives = []string{
+	"1 or 1=1",
+	"1 OR 1=1",
+	"1' or '1'='1",
+	"1 UNION SELECT password FROM users--",
+	"5 % (select 1)",
+	"1%(select 1)",
+	"1 % (select sleep(5))",
+	"1; DROP TABLE x--",
+	"admin'--",
+	"1%1 or 1=1",
+	"1 % 1 or 1=1",
+	"80% cotton or 1=1",
+	"x 1 % (1=1)",
+	"1 % 2 or 'a'='a",
+	"%' or '0'='0",
+	"-1 or 1",
+	"-9-(2) OR 1 = 1",
+	"8-9 OR 1 = 1",
+	"1 || 1 = 1",
+	"1 and 1 not between 0 and 1",
+	"1 AND 1 SOUNDS LIKE 1",
+	"6-7 or 8--",
+	"6-7 or 8=8",
+	"6-7 || 8",
+}
+
+func TestSQLiPercentAndRange(t *testing.T) {
+	for _, v := range sqliPercentAndRangeNegatives {
+		if hit, ok := SQLi(v); ok {
+			t.Errorf("SQLi(%q) = %+v, want no hit", v, hit)
+		}
+		if hasRule(ScanText(v), "AEG-SQLI-001") {
+			t.Errorf("ScanText(%q) has AEG-SQLI-001, want none", v)
+		}
+	}
+	for _, v := range sqliPercentAndRangePositives {
+		if _, ok := SQLi(v); !ok {
+			t.Errorf("SQLi(%q) = no hit, want hit", v)
+		}
+		if !hasRule(ScanText(v), "AEG-SQLI-001") {
+			t.Errorf("ScanText(%q) has no AEG-SQLI-001", v)
+		}
+	}
+}

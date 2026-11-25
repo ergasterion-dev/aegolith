@@ -78,6 +78,10 @@ json $A sqli "union after words in json" '{"search":"b b b b b b 1 UNION SELECT 
 path $A sqli "union in unknown path"   "/api/v1/probe/1%20UNION%20SELECT%20username,%20password%20FROM%20users--"
 PAD="$(printf '%020000d' 0 | tr 0 a)"
 json $A sqli "union after json padding" '{"search":"'"$PAD"' 1 UNION SELECT password FROM users--"}'
+# Aegolith: counter-cases for the percent and bare-number guards: modulo before a subquery, a percent or a range before a tautology (alpha.6).
+q $A sqli "modulo before a subquery"   "5 % (select 1)"
+q $A sqli "percent then tautology"     "80% cotton or 1=1"
+q $A sqli "range then tautology"       "6-7 or 8=8"
 
 # --- 2. Cross-site scripting -----------------------------------------------------------------------------------
 q $A xss "script tag"                  "<script>alert(1)</script>"
