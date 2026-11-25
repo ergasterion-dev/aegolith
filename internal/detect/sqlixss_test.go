@@ -444,7 +444,7 @@ var sqliPercentAndRangeNegatives = []string{
 	"80% ACRYLIC AND 20% WOOL",
 	"35% COTTON AND 65% POLYESTER.",
 	"Céréales 93 % (farine de BLÉ 79,4 %, sucre)",
-	"Pomme 99,7% (purée et purée concentrée), arôme naturel de pomme, jus de citron concentré (si nécessaire pour réguler l'acidité)",
+	"Tomates 62 % (pelées), oignon, huile d'olive 4 % (vierge), sel de l'Atlantique",
 	"Wheat 50%25 (flour)",
 	"6-7 or 8",
 	"6-7 OR 8",
