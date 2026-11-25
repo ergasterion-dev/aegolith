@@ -129,6 +129,11 @@ q $A cmdi "windows cmd"                "& type C:\\Windows\\win.ini"
 q $A cmdi "powershell"                 "; powershell -enc SQBFAFgA"
 json $A cmdi "cmdi in json"            '{"phone":"9999999999; cat /etc/passwd"}'
 hdr $A cmdi "shellshock user-agent"    User-Agent "() { :; }; /bin/bash -c 'cat /etc/passwd'"
+# Aegolith: an encoded line break before a bare command, sleep, and quote- or backslash-split command words (G4).
+path $A cmdi "encoded newline id"      "/api/v1/products/search?q=x%0aid"
+q $A cmdi "sleep after semicolon"      "; sleep 10"
+q $A cmdi "quote-split whoami"         ";w'h'o'am'i"
+q $A cmdi "backslash-split cat"        ";c\\at /et\\c/pas\\swd"
 
 # --- 6. Server-side template injection -------------------------------------------------------------------------
 q $A ssti "jinja config"               "{{config.items()}}"

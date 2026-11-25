@@ -97,3 +97,34 @@ func TestEarlyStopEnforce(t *testing.T) {
 		t.Fatalf("monitor: %+v", d)
 	}
 }
+
+// TestQueryLineBreakCmdI: a line break in the query string can only arrive
+// percent-encoded, so a bare command after it ("x%0aid") is flagged, while
+// the same text in a form or JSON body (a textarea, a multi-line note)
+// keeps the strict line-break rule.
+func TestQueryLineBreakCmdI(t *testing.T) {
+	cmdi := func(d model.Decision) bool {
+		for _, m := range d.Matches {
+			if m.Category == model.CatCmdi {
+				return true
+			}
+		}
+		return false
+	}
+	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true})
+	for _, q := range []string{"q=x%0aid", "q=x%0Awhoami", "q=x%0d%0als", "q=x%0asleep%2010"} {
+		if d := e.Inspect(&model.Request{Method: "GET", RawPath: "/a", RawQuery: q, Header: http.Header{}}); !cmdi(d) {
+			t.Errorf("query %q: no CmdI match: %+v", q, d.Matches)
+		}
+	}
+	for _, tc := range []struct{ ct, body string }{
+		{"application/x-www-form-urlencoded", "note=Notes%3A%0D%0Als"},
+		{"application/x-www-form-urlencoded", "note=Notes%3A%0Aid%0AThanks"},
+		{"application/json", `{"note":"Notes:\nls"}`},
+	} {
+		req := &model.Request{Method: "POST", RawPath: "/a", Header: http.Header{"Content-Type": {tc.ct}}, Body: []byte(tc.body)}
+		if d := e.Inspect(req); cmdi(d) {
+			t.Errorf("body %q: CmdI match: %+v", tc.body, d.Matches)
+		}
+	}
+}

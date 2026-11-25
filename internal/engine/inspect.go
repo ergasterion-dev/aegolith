@@ -234,6 +234,12 @@ func (s *state) scanWindows(loc model.Location, field, v string, extra func(stri
 	if len(v) > size {
 		s.protoMatch(ruleValueTooLong, loc, field, v)
 	}
+	// A query value was percent-decoded from the request line, which cannot
+	// hold a raw line break: line breaks in it were sent encoded.
+	scanText := detect.ScanText
+	if loc == model.LocQuery {
+		scanText = detect.ScanQueryText
+	}
 	step := max(size/2, 1)
 	for start := 0; ; start += step {
 		end := min(start+size, len(v))
@@ -249,7 +255,7 @@ func (s *state) scanWindows(loc model.Location, field, v string, extra func(stri
 				s.hit(h, loc, field, win)
 			}
 		}
-		for _, h := range detect.ScanText(win) {
+		for _, h := range scanText(win) {
 			if h.Category != skip {
 				s.hit(h, loc, field, win)
 			}

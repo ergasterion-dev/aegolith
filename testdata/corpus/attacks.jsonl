@@ -70,6 +70,10 @@
 {"name":"powershell","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","; powershell -enc SQBFAFgA"]],"headers":{},"content_type":"","body":""}
 {"name":"cmdi in json","category":"cmdi","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"phone\":\"9999999999; cat /etc/passwd\"}"}
 {"name":"shellshock user-agent","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"() { :; }; /bin/bash -c 'cat /etc/passwd'"},"content_type":"","body":""}
+{"name":"encoded newline id","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x\nid"]],"headers":{},"content_type":"","body":""}
+{"name":"sleep after semicolon","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","; sleep 10"]],"headers":{},"content_type":"","body":""}
+{"name":"quote-split whoami","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";w'h'o'am'i"]],"headers":{},"content_type":"","body":""}
+{"name":"backslash-split cat","category":"cmdi","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";c\\at /et\\c/pas\\swd"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja config","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{config.items()}}"]],"headers":{},"content_type":"","body":""}
 {"name":"jinja rce","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{''.__class__.__mro__[1].__subclasses__()}}"]],"headers":{},"content_type":"","body":""}
 {"name":"java el","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${T(java.lang.Runtime).getRuntime().exec('id')}"]],"headers":{},"content_type":"","body":""}

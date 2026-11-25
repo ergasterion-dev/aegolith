@@ -7,6 +7,12 @@ var textDetectors = [...]func(string) (Hit, bool){
 	SQLi, XSS, CmdI, CodeI, LDAP, SSTI, JNDI, CRLF, LFI, RFI, SSRF,
 }
 
+// queryTextDetectors are the detectors ScanQueryText runs: textDetectors
+// with CmdI's query form. Read-only.
+var queryTextDetectors = [...]func(string) (Hit, bool){
+	SQLi, XSS, cmdIQuery, CodeI, LDAP, SSTI, JNDI, CRLF, LFI, RFI, SSRF,
+}
+
 // ScanText runs every text detector on v (SQLi, XSS, CmdI, CodeI, LDAP,
 // SSTI, JNDI, CRLF, LFI, RFI, SSRF, in that order) and returns their hits,
 // each rule ID at most once, or nil when there are none.
@@ -20,7 +26,17 @@ var textDetectors = [...]func(string) (Hit, bool){
 //
 // Every detector is linear in len(v), so ScanText is too. Fields typed as
 // URLs are not passed here; the engine runs only SSRF on them.
-func ScanText(v string) []Hit {
+func ScanText(v string) []Hit { return scanText(v, &textDetectors) }
+
+// ScanQueryText is ScanText for a URL query value the engine has already
+// percent-decoded once. The only difference is in CmdI: a query string
+// cannot carry a raw line break, so a line break in the value arrived
+// percent-encoded ("q=x%0aid"), and a bare command after it is not read as
+// a line of prose the way "Notes:\nls" in a JSON note or a form textarea
+// is.
+func ScanQueryText(v string) []Hit { return scanText(v, &queryTextDetectors) }
+
+func scanText(v string, detectors *[len(textDetectors)]func(string) (Hit, bool)) []Hit {
 	if !mayContainAttack(v) {
 		if h, ok := SQLi(v); ok {
 			return []Hit{h}
@@ -28,7 +44,7 @@ func ScanText(v string) []Hit {
 		return nil
 	}
 	var hits []Hit
-	for _, detect := range textDetectors {
+	for _, detect := range detectors {
 		h, ok := detect(v)
 		if !ok || containsRule(hits, h.RuleID) {
 			continue

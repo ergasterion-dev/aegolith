@@ -363,6 +363,52 @@ func TestCmdINegatives(t *testing.T) {
 	assertNoHits(t, "CmdI", CmdI, cmdINegatives)
 }
 
+// TestCmdIVariants covers the G4 lab payloads: a quote- or
+// backslash-split command word, sleep with a number, and a bare command
+// after a line break that arrived percent-encoded (the query string, where
+// ScanQueryText applies).
+func TestCmdIVariants(t *testing.T) {
+	want := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	assertHits(t, "CmdI", CmdI, want, []string{
+		"x%0aid",
+		"; sleep 10",
+		";sleep 5",
+		"| sleep 10 |",
+		"& sleep 10 &",
+		"x%0asleep%2010",
+		";w'h'o'am'i",
+		`;wh""oami`,
+		`;c\at /et\c/pas\swd`,
+		`;'i'd`,
+		`| \l\s -la`,
+	})
+	assertNoHits(t, "CmdI", CmdI, []string{
+		"Notes:\nls",
+		"Notes:\nsleep 8",
+		"rest; sleep well",
+		"it's; fine",
+		`C:\temp\notes`,
+		`Folder; C:\temp\notes`,
+		"Tea & sleep 8 hours",
+		"Kids & sleep 8",
+		"Long day; sleep 8",
+		"Sure; i'd love it",
+		"OK; i'd",
+		"Rest; don't sleep",
+		"; sleep 8 hours",
+		"; sleeping 10",
+		"x; sleep 1.5h then go",
+	})
+	for _, v := range []string{"x\nid", "x\r\nwhoami", "x\nsleep 10"} {
+		if hits := ScanQueryText(v); !containsRule(hits, want.RuleID) {
+			t.Errorf("ScanQueryText(%q) = %+v, want %s", v, hits, want.RuleID)
+		}
+		if hits := ScanText(v); containsRule(hits, want.RuleID) {
+			t.Errorf("ScanText(%q) = %+v, want no %s (literal line break is prose)", v, hits, want.RuleID)
+		}
+	}
+}
+
 func TestCodeIPositives(t *testing.T) {
 	want := Hit{RuleID: "AEG-CODEI-001", Category: model.CatCodei, Severity: model.SeverityCritical}
 	assertHits(t, "CodeI", CodeI, want, codeIPositives)

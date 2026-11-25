@@ -24,11 +24,21 @@ import (
 // operators (a bare command alone on a line, "Notes:\nls", is prose). A
 // line break that only appears after percent-decoding (%0a, %0d) is what
 // scanners send and keeps the ordinary rule.
-func CmdI(v string) (Hit, bool) {
-	hit := isCmdI(v, true)
+func CmdI(v string) (Hit, bool) { return cmdI(v, true) }
+
+// cmdIQuery is CmdI for a URL query value, which the engine has already
+// percent-decoded once. A query string cannot carry a raw line break, so
+// every line break in the value arrived percent-encoded ("q=x%0aid") and
+// the ordinary rule applies to it, not the prose rule for a literal one.
+func cmdIQuery(v string) (Hit, bool) { return cmdI(v, false) }
+
+// cmdI is CmdI; strictLiteral applies the stricter line-break rule to line
+// breaks already present in v.
+func cmdI(v string, strictLiteral bool) (Hit, bool) {
+	hit := isCmdI(v, strictLiteral)
 	if !hit {
 		if d, _ := normalize.DecodeValue(v); d != v {
-			hit = isCmdI(d, !hasEncodedLineBreak(v))
+			hit = isCmdI(d, strictLiteral && !hasEncodedLineBreak(v))
 		}
 	}
 	if hit {
@@ -132,6 +142,10 @@ type cmdWord struct {
 	// netcat: any flag plus a port-like number (nc -lvnp 4444), or -e/-c
 	// with an argument, is a hit.
 	netcat bool
+	// sleep: a hit only with a whole number of seconds and nothing after
+	// it but an operator (see sleepArgAt): "; sleep 10", not "rest; sleep
+	// well" or "Tea & sleep 8 hours".
+	sleep bool
 }
 
 // cmdWords is read-only after init.
@@ -153,6 +167,7 @@ var cmdWords = [...]cmdWord{
 	{name: "ping"},
 	{name: "rm"},
 	{name: "chmod"},
+	{name: "sleep", sleep: true},
 	{name: "dir", windows: true},
 	{name: "type", windows: true},
 	{name: "cmd", windows: true},
@@ -253,6 +268,11 @@ func isCmdI(s string, strictNewline bool) bool {
 // afterNewline is set when the operator before it is only a line break,
 // where a bare command at the end of a line ("Notes:\nls") is prose. ctx
 // is what the operator itself proves (see opContext).
+//
+// The command word is the whole token at s[i] (up to a blank or an
+// operator), so "cats", "identity" and "sh." are not commands. A Unix word
+// split by shell quoting or backslashes ("w'h'o'am'i", "c\at") is matched
+// after dequoteShellWord; Windows names are matched only as written.
 func commandAt(s string, i int, afterNewline bool, ctx opContext) bool {
 	if i >= len(s) {
 		return false
@@ -261,36 +281,117 @@ func commandAt(s string, i int, afterNewline bool, ctx opContext) bool {
 	if first == '/' {
 		return absPathAt(s, i)
 	}
-	if !isASCIILetter(first) {
+	if !isASCIILetter(first) && first != '\'' && first != '"' && first != '\\' {
 		return false
 	}
-	lower := first | 0x20
+	k := cmdTokenEnd(s, i)
+	if k < 0 {
+		return false
+	}
+	word := s[i:k]
+	split := strings.ContainsAny(word, `'"\`)
+	if split {
+		if word = dequoteShellWord(word); word == "" {
+			return false
+		}
+	}
+	j := skipBlanks(s, k)
 	for _, w := range cmdWords {
-		end := i + len(w.name)
-		if end > len(s) || w.name[0] != lower || !w.windows && first != lower {
-			continue
-		}
 		if w.windows {
-			if !hasPrefixFold(s[i:], w.name) {
-				continue
-			}
-		} else if s[i:end] != w.name {
-			continue
-		}
-		if end < len(s) && !isShellOperator(s[end]) && s[end] != ' ' && s[end] != '\t' {
-			continue // part of a longer word: "cats", "identity", "sh."
-		}
-		if w.windows {
-			if windowsArgAt(s, skipBlanks(s, end), w.name[0] == 'p', w.name != "type") {
+			if !split && strings.EqualFold(word, w.name) && windowsArgAt(s, j, w.name[0] == 'p', w.name != "type") {
 				return true
 			}
 			continue
 		}
-		if unixArgsAt(s, skipBlanks(s, end), w, afterNewline, ctx) {
-			return true
+		if word != w.name {
+			continue // Unix names are lower case as the shell needs: "ID", "Cat" are prose
 		}
+		if w.sleep {
+			return sleepArgAt(s, j, afterNewline, ctx)
+		}
+		return unixArgsAt(s, j, w, afterNewline, ctx)
 	}
 	return false
+}
+
+// maxCmdToken bounds the command-word token commandAt reads: longer than
+// any (quote-split) command name, and it keeps each call O(1).
+const maxCmdToken = 64
+
+// cmdTokenEnd returns the end of the token at s[i] (the next blank or shell
+// operator), or -1 when it runs past maxCmdToken bytes.
+func cmdTokenEnd(s string, i int) int {
+	for k := i; k < len(s) && k-i <= maxCmdToken; k++ {
+		if c := s[k]; c == ' ' || c == '\t' || isShellOperator(c) {
+			return k
+		}
+	}
+	if len(s)-i <= maxCmdToken {
+		return len(s)
+	}
+	return -1
+}
+
+// dequoteShellWord returns the word s as the shell would read it after
+// quote removal: paired ' and " are dropped and a backslash outside single
+// quotes keeps only the byte after it ("w'h'o'am'i" and "c\at" become
+// whoami and cat). It is used only to match the command word after an
+// operator. It returns "" when a quote is not closed (an apostrophe, as in
+// "i'd" or "it's", is prose, not quoting), when a backslash ends the word,
+// or when the result is longer than any command name. Linear in len(s).
+func dequoteShellWord(s string) string {
+	const maxName = len("powershell.exe")
+	var buf [maxName]byte
+	n := 0
+	var open byte // the quote currently open, or 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case open != 0 && c == open:
+			open = 0
+			continue
+		case open == 0 && (c == '\'' || c == '"'):
+			open = c
+			continue
+		case c == '\\' && open != '\'':
+			if i++; i == len(s) {
+				return ""
+			}
+			c = s[i]
+		}
+		if n == maxName {
+			return ""
+		}
+		buf[n] = c
+		n++
+	}
+	if open != 0 {
+		return ""
+	}
+	return string(buf[:n])
+}
+
+// sleepArgAt reports whether the argument at s[j] makes "sleep" a shell
+// invocation: a whole number of seconds followed only by blanks and then
+// the end of the value or an operator ("; sleep 10", "| sleep 5 |").
+// "sleep well", "sleep 8 hours" and "sleep 1.5h" are prose. After a
+// prose-like operator ("Kids & sleep 8", "Long day; sleep 8") the number
+// must be followed by another non-line-break operator ("x & sleep 10 &"),
+// and after a literal line break it may not end the line.
+func sleepArgAt(s string, j int, afterNewline bool, ctx opContext) bool {
+	e := digitsEnd(s, j)
+	if e == j {
+		return false
+	}
+	n := skipBlanks(s, e)
+	if n < len(s) && !isShellOperator(s[n]) {
+		return false
+	}
+	atLineEnd := n >= len(s) || s[n] == '\n' || s[n] == '\r'
+	if ctx != opShell || afterNewline {
+		return !atLineEnd
+	}
+	return true
 }
 
 // unixArgsAt reports whether the arguments starting at s[j] make the
