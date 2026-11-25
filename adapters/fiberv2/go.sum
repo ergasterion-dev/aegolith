@@ -6,6 +6,8 @@ github.com/ergasterion-dev/aegolith v0.1.0-alpha.3 h1:tyZp1b3ObF33YFVL8tuPAg1gyH
 github.com/ergasterion-dev/aegolith v0.1.0-alpha.3/go.mod h1:jbhJn/3IqG2vIFh+f5rr0eKToc0ysp3ZcBm+Tl4yGLw=
 github.com/ergasterion-dev/aegolith v0.1.0-alpha.4 h1:h5F2RhEY0B+fAERhQgzEmEm6Kd0VWxokDXY4emgy5Qo=
 github.com/ergasterion-dev/aegolith v0.1.0-alpha.4/go.mod h1:jbhJn/3IqG2vIFh+f5rr0eKToc0ysp3ZcBm+Tl4yGLw=
+github.com/ergasterion-dev/aegolith v0.1.0-alpha.5 h1:JWdre7t6fk1FQQsg4v9phhnKgXlhb94sMi8L8gIdkO4=
+github.com/ergasterion-dev/aegolith v0.1.0-alpha.5/go.mod h1:jbhJn/3IqG2vIFh+f5rr0eKToc0ysp3ZcBm+Tl4yGLw=
 github.com/gofiber/fiber/v2 v2.52.16 h1:lBemN7sjeTPwEdK/9AIAQ3YpYpzEZefiWI/vQT/6dFU=
 github.com/gofiber/fiber/v2 v2.52.16/go.mod h1:dFf1PKExrrSfg/hvoP2yXL35W3bGlzZf71KX+IYzkpg=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
