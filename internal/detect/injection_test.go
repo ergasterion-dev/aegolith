@@ -208,6 +208,10 @@ var (
 		"aced00057372001",
 		"data=rO0ABXNy",
 		"ACED0005737200",
+		// G1b: the stream as a path segment, after a '/', with a type code.
+		"/api/v1/probe/rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAB3CAAAABAAAAAAeA==",
+		"/rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ==",
+		"/api/v1/x/rO0ABXQABWhlbGxv",
 	}
 	codeINegatives = []string{
 		"eval(uation) pending",
@@ -219,6 +223,14 @@ var (
 		"the process. mainModule",
 		"aced0005-9b1e-4c1a-8f00-123456789abc",
 		"order xrO0ABXNy",
+		// G1b near misses: '/' counts as a boundary only before a header and
+		// a type code (rO0ABX), so a base64 blob that holds "/rO0AB" mid-run
+		// and segments that merely contain rO0 stay clean.
+		"/9j/4AAQSkZJRgABAQ/rO0ABcdEfGh+IjKlMn/rO0ABQ==",
+		"/api/v1/files/rO0x9KpQ2mZ7bWc4dGVzdA",
+		"/api/v1/files/abcrO0ABXNyQmZ7bWc4dGVzdA",
+		"/api/v1/files/9f3caced0005b1e2c4d6e8f0a1b3c5d7",
+		"/api/v1/files/dGhpcyBpcyBhIGxvbmcgYmFzZTY0IGlkZW50aWZpZXIgZm9yIGEgZmlsZQ",
 		"Room 0AB, block 5",
 		"I'm in the middle of a process.",
 	}

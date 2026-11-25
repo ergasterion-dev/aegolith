@@ -185,6 +185,8 @@ path $A sqli "sqli in query key"       "/api/v1/products/search?1'%20OR%20'1'%3D
 path $A codei "proto bracket query key" "/api/v1/products/search?__proto__[isAdmin]=true"
 path $A codei "constructor dot query key" "/api/v1/products/search?a.constructor.prototype.isAdmin=true"
 q $A codei "java deserialization b64"  "rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ=="
+# Aegolith: a base64 Java serialized object as a segment of an unknown path (G1b).
+path $A codei "java deserialization b64 in unknown path" "/api/v1/probe/rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAB3CAAAABAAAAAAeA=="
 
 # --- 12. HTTP protocol attacks ---------------------------------------------------------------------------------
 q $A protocol "crlf header injection"  "x%0d%0aSet-Cookie:%20admin=true"

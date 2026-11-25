@@ -894,6 +894,13 @@ func hasCallFold(s, name string) bool {
 // hasJavaSerialized finds the Java serialization stream header AC ED 00 05
 // at the start of a token: base64 "rO0AB" or hex "aced0005" followed by
 // more hex (a UUID's "aced0005-" does not count).
+//
+// '/' is a base64 byte, but it is also the path separator, so a stream sent
+// as a path segment (/api/v1/x/rO0AB...) sits after one (G1b). After a '/'
+// the header must be followed by 'X', which is how base64 carries the type
+// code byte (0x70 to 0x7E) every real stream has after the header: a '/'
+// followed by "rO0ABX" inside a legitimate standard-base64 blob is a 1 in
+// 64^7 chance per position, where "/rO0AB" alone would be 1 in 64^6.
 func hasJavaSerialized(s string) bool {
 	for off := 0; ; {
 		n := strings.Index(s[off:], "rO0AB")
@@ -901,7 +908,8 @@ func hasJavaSerialized(s string) bool {
 			break
 		}
 		at := off + n
-		if at == 0 || !isBase64Byte(s[at-1]) {
+		if at == 0 || !isBase64Byte(s[at-1]) ||
+			s[at-1] == '/' && at+len("rO0AB") < len(s) && s[at+len("rO0AB")] == 'X' {
 			return true
 		}
 		off = at + 1

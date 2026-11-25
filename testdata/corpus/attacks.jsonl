@@ -110,6 +110,7 @@
 {"name":"proto bracket query key","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["__proto__[isAdmin]","true"]],"headers":{},"content_type":"","body":""}
 {"name":"constructor dot query key","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["a.constructor.prototype.isAdmin","true"]],"headers":{},"content_type":"","body":""}
 {"name":"java deserialization b64","category":"codei","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","rO0ABXNyABdqYXZhLnV0aWwuUHJpb3JpdHlRdWV1ZQ=="]],"headers":{},"content_type":"","body":""}
+{"name":"java deserialization b64 in unknown path","category":"codei","kind":"attack","method":"GET","path":"/api/v1/probe/rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAB3CAAAABAAAAAAeA==","query":[],"headers":{},"content_type":"","body":""}
 {"name":"crlf header injection","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","x%0d%0aSet-Cookie:%20admin=true"]],"headers":{},"content_type":"","body":""}
 {"name":"crlf in path","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products%0d%0aX-Injected:%201","query":[],"headers":{},"content_type":"","body":""}
 {"name":"request smuggling te","category":"protocol","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"Transfer-Encoding":"chunked, identity"},"content_type":"","body":""}

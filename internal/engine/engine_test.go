@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ergasterion-dev/aegolith/internal/model"
+	"github.com/ergasterion-dev/aegolith/internal/policy"
 )
 
 func newEngine(t *testing.T, o Options) *Engine {
@@ -261,5 +262,60 @@ func TestLongKeySignal(t *testing.T) {
 	d := e.Inspect(&model.Request{Method: "GET", RawPath: "/a", RawQuery: pad + "=x", Header: http.Header{}})
 	if len(d.Matches) != 0 {
 		t.Errorf("key at the cap: %+v", d.Matches)
+	}
+}
+
+// TestPathJavaSerialized (G1b): a base64 Java serialized object sent as a
+// path segment is AEG-CODEI-002 on an unknown path, with and without a
+// route table (an unknown route under a declared prefix too) and in a
+// wildcard rest. Long legitimate id segments (base64-like, holding rO0 or
+// rO0AB mid-run, hex with aced0005 mid-run) stay clean.
+func TestPathJavaSerialized(t *testing.T) {
+	const obj = "rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAB3CAAAABAAAAAAeA=="
+	routes := []policy.Route{
+		{Method: "GET", Path: "/api/v1/products/:id", PathParams: map[string]policy.FieldSpec{"id": {Type: policy.TypeUUID}}},
+		{Method: "GET", Path: "/api/v1/files/:key", PathParams: map[string]policy.FieldSpec{"key": {Type: policy.TypeString, MaxLen: 200}}},
+		{Method: "GET", Path: "/api/v1/assets/*"},
+	}
+	generic := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true})
+	aware := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, Routes: routes, UnknownRoute: model.ActionMonitor})
+	get := func(e *Engine, path string) model.Decision {
+		return e.Inspect(&model.Request{Method: "GET", RawPath: path, Header: http.Header{}})
+	}
+	codei := func(d model.Decision) bool {
+		for _, m := range d.Matches {
+			if m.RuleID == "AEG-CODEI-002" && m.Field == "path" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range []string{
+		"/api/v1/probe/" + obj,
+		"/" + obj,
+		"/api/v1/products/x/" + obj,
+		"/api/v1/probe/" + strings.ReplaceAll(obj, "=", "%3D"),
+	} {
+		for name, e := range map[string]*Engine{"generic": generic, "api-aware": aware} {
+			if !codei(get(e, p)) {
+				t.Errorf("%s %q: no AEG-CODEI-002: %+v", name, p, get(e, p).Matches)
+			}
+		}
+	}
+	if !codei(get(aware, "/api/v1/assets/img/"+obj)) {
+		t.Errorf("wildcard rest: no AEG-CODEI-002")
+	}
+	for _, p := range []string{
+		"/api/v1/files/dGhpcyBpcyBhIGxvbmcgYmFzZTY0IGlkZW50aWZpZXIgZm9yIGEgZmlsZQ",
+		"/api/v1/files/rO0x9KpQ2mZ7bWc4dGVzdA",
+		"/api/v1/files/abcrO0ABXNyQmZ7bWc4dGVzdA",
+		"/api/v1/files/9f3caced0005b1e2c4d6e8f0a1b3c5d7",
+		"/api/v1/assets/9j/4AAQSkZJRgABAQ/rO0ABcdEfGh+IjKlMn",
+	} {
+		for name, e := range map[string]*Engine{"generic": generic, "api-aware": aware} {
+			if d := get(e, p); len(d.Matches) != 0 {
+				t.Errorf("%s %q: %+v", name, p, d.Matches)
+			}
+		}
 	}
 }
