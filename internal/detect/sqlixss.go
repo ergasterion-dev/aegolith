@@ -654,7 +654,206 @@ func isProseNumberComment(s, fp string) bool {
 }
 
 func isXSS(s string) bool {
-	return libinjection.IsXSS(s) || isScriptURL(s) || hasScriptTagAnywhere(s)
+	return libinjection.IsXSS(s) && !isInertMarkup(s) || isScriptURL(s) || hasScriptTagAnywhere(s)
+}
+
+// inertPlaceholderTags are libinjection black tags that do nothing without
+// an attribute: no URL to load, no handler to run. Docs and issue text use
+// them as placeholders or type names ("- [Docs]: <link>", "an `<Object>`",
+// "rebase onto <base>"). STYLE, SCRIPT, IFRAME, SVG and the other black
+// tags are not on the list: their content or a later child can run code.
+var inertPlaceholderTags = [...]string{"link", "base", "object", "meta", "embed"}
+
+// isInertMarkup reports whether a libinjection XSS hit rests only on markup
+// that cannot run code. The hit is dropped only when all of these hold:
+//
+//   - the value has no NUL byte (libinjection skips NULs inside comment
+//     terminators and tag names, which this scan does not model).
+//   - at least one of these was masked (see maskInertMarkup):
+//     a backtick inside an HTML comment ("<!-- see the `main` branch -->",
+//     closed by "-->" or "-!>", or open to the end of the value) or inside
+//     a bogus comment that libinjection reads the same way ("<!" or "<?" up
+//     to the first '>', as in the regex "`(?<![\w.])`"), which libinjection
+//     flags because old IE ended a tag at a backtick; a bare
+//     placeholder tag from inertPlaceholderTags written as "<name>", only
+//     when no tag in the value has an attribute; or a "<!DOCTYPE" with no
+//     '>' and no '[' after it anywhere in the value (a mention, not a
+//     declaration: "<!DOCTYPE x [" opens an internal subset and stays).
+//   - libinjection does not flag the masked value: a real tag, attribute,
+//     javascript: URL or IE conditional comment ("<!--[if") outside the
+//     masked bytes keeps the hit ("<!-- x --><img src=x onerror=alert(1)>",
+//     "<a href=`javascript:alert(1)`>").
+//   - when a comment backtick was masked, the text after the first one, read
+//     the way old IE would read it once the backtick ended the comment,
+//     holds no "<script", no javascript:/vbscript: and no on<event>=
+//     handler, and libinjection does not flag it alone, masked the same
+//     way (so a later comment backtick or a "<link>" placeholder inside the
+//     comment does not count against it). That keeps
+//     "<!--` onerror=alert(1)" and "<!-- `x` <img src=x onerror=alert(1)> -->".
+//
+// Accepted cost: a bare "<object>", "<link>" or "<base>" with no attribute
+// anywhere in the value is no longer flagged; it loads and runs nothing.
+// Cost: two masking passes and at most two more libinjection calls, only
+// for a value libinjection already flagged: linear.
+func isInertMarkup(s string) bool {
+	if strings.IndexByte(s, 0) >= 0 {
+		return false
+	}
+	m, tick, ok := maskInertMarkup(s)
+	if !ok || libinjection.IsXSS(m) {
+		return false
+	}
+	if tick < 0 {
+		return true
+	}
+	if hasXSSMarker(s[tick+1:]) {
+		return false
+	}
+	rest, _, _ := maskInertMarkup(m[tick+1:])
+	return !libinjection.IsXSS(rest)
+}
+
+// maskInertMarkup returns s with every backtick inside an HTML comment, the
+// '<' of every bare placeholder tag (only when no tag has an attribute) and
+// the '<' of every "<!DOCTYPE" with no '>' or '[' after it replaced by a
+// blank. tick is the index of the first masked backtick, or -1; ok reports
+// whether anything was masked. A comment opens at "<!--" and closes at the
+// first "-->" or "-!>" after it, and a bogus comment ("<!x", "<?x", not
+// "<!DOCTYPE" or "<![CDATA[") closes at the first '>', as libinjection's
+// tokenizer reads them. One pass over s:
+// each comment is searched once and the scan resumes after it, and one
+// search each for the last '>' and '[' answers every "<!DOCTYPE".
+func maskInertMarkup(s string) (masked string, tick int, ok bool) {
+	tick = -1
+	var b []byte
+	set := func(i int) {
+		if b == nil {
+			b = []byte(s)
+		}
+		b[i] = ' '
+	}
+	lastGT := strings.LastIndexByte(s, '>')     // a doctype after it never closes
+	lastSubset := strings.LastIndexByte(s, '[') // nor opens an internal subset
+	var bare []int                              // '<' of each bare placeholder tag
+	attrs := false                              // some tag has an attribute
+	for i := 0; i < len(s); i++ {
+		if s[i] != '<' {
+			continue
+		}
+		body, end := -1, 0
+		switch {
+		case strings.HasPrefix(s[i:], "<!--"):
+			body, end = i+4, commentEnd(s, i+4)
+		case len(s)-i >= 9 && strings.EqualFold(s[i+1:i+9], "!doctype"):
+			if i > lastGT && i > lastSubset {
+				set(i)
+			}
+		case strings.HasPrefix(s[i:], "<![CDATA["):
+			// text, not a comment
+		case strings.HasPrefix(s[i:], "<!") || strings.HasPrefix(s[i:], "<?"):
+			// a bogus comment, up to the first '>': "(?<![\\w.])" in a regex
+			body, end = i+2, len(s)
+			if k := strings.IndexByte(s[i+2:], '>'); k >= 0 {
+				end = i + 2 + k + 1
+			}
+		case i+1 < len(s) && isLetter(s[i+1]):
+			j := i + 1
+			for j < len(s) && isIdentByte(s[j]) {
+				j++
+			}
+			if j < len(s) && s[j] == '>' {
+				if isInertPlaceholderTag(s[i+1 : j]) {
+					bare = append(bare, i)
+				}
+			} else if tagHasAttribute(s, j) {
+				attrs = true
+			}
+			i = j - 1
+		}
+		if body < 0 {
+			continue
+		}
+		for k := body; k < end; k++ {
+			if s[k] == '`' {
+				if tick < 0 {
+					tick = k
+				}
+				set(k)
+			}
+		}
+		i = end - 1
+	}
+	if !attrs {
+		for _, i := range bare {
+			set(i)
+		}
+	}
+	if b == nil {
+		return s, -1, false
+	}
+	return string(b), tick, true
+}
+
+// commentEnd returns the index just past the "-->" or "-!>" that closes an
+// HTML comment whose body starts at s[i], or len(s) when it never closes.
+func commentEnd(s string, i int) int {
+	for {
+		k := strings.IndexByte(s[i:], '-')
+		if k < 0 || i+k+2 >= len(s) {
+			return len(s)
+		}
+		k += i
+		if (s[k+1] == '-' || s[k+1] == '!') && s[k+2] == '>' {
+			return k + 3
+		}
+		i = k + 1
+	}
+}
+
+// tagHasAttribute reports whether a tag name ending at s[j] is followed by
+// an attribute: after blanks and '/', any byte other than '>' or the end of
+// the value. "a <b and c" counts too, which only keeps a hit.
+func tagHasAttribute(s string, j int) bool {
+	for j < len(s) && (isBlank(s[j]) || s[j] == '/' || s[j] == '\f') {
+		j++
+	}
+	return j < len(s) && s[j] != '>'
+}
+
+func isInertPlaceholderTag(name string) bool {
+	for _, t := range inertPlaceholderTags {
+		if strings.EqualFold(name, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasXSSMarker reports whether s holds "<script", a javascript: or
+// vbscript: scheme, or an event-handler attribute: a word that starts with
+// "on" and another letter, then optional blanks and '='. Case-insensitive.
+// One pass plus two substring searches.
+func hasXSSMarker(s string) bool {
+	if indexFold(s, "<script") >= 0 || indexFold(s, "javascript:") >= 0 || indexFold(s, "vbscript:") >= 0 {
+		return true
+	}
+	for i := 0; i+2 < len(s); i++ {
+		if s[i]|0x20 != 'o' || s[i+1]|0x20 != 'n' || !isLetter(s[i+2]) || i > 0 && isIdentByte(s[i-1]) {
+			continue
+		}
+		j := i + 2
+		for j < len(s) && isIdentByte(s[j]) {
+			j++
+		}
+		for j < len(s) && isBlank(s[j]) {
+			j++
+		}
+		if j < len(s) && s[j] == '=' {
+			return true
+		}
+		i = j - 1
+	}
+	return false
 }
 
 // hasScriptTagAnywhere finds a "<script" opening tag that libinjection's
@@ -957,10 +1156,11 @@ func isBlank(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\
 // something: a dotted name assigned, called or indexed ("top.location=name",
 // "document.location='//x'"), a name called with blanks before '(' or
 // tagged with a template ("alert (1)", "alert`1`"; a blank before '(' only
-// counts after ';', since "a=1, duration (2 weeks)" is prose), or a browser global
+// counts after ';' and before code-shaped arguments, since "a=1, duration (2 weeks)" is prose), or a browser global
 // assigned a value that is not an inert word ("location=name",
 // "location='//evil/?'+document.cookie"). "b=2", "maybe", "e.g. later" and
-// "name=Ali" are not.
+// "name=Ali" are not, and neither is a blank-separated call whose argument
+// is not code-shaped (see isCodeArgs): "maybe (later)".
 func isCodeStatement(st string, afterSemi bool) bool {
 	i, dotted := 0, false
 	for i < len(st) && (isIdentByte(st[i]) || st[i] == '$' || st[i] == '.') {
@@ -981,7 +1181,10 @@ func isCodeStatement(st string, afterSemi bool) bool {
 	case '`':
 		return true
 	case '(':
-		return afterSemi || i == len(name)
+		if i == len(name) {
+			return true
+		}
+		return afterSemi && isCodeArgs(st[i+1:])
 	case '[':
 		return dotted
 	case '=':
@@ -992,6 +1195,59 @@ func isCodeStatement(st string, afterSemi bool) bool {
 		return dotted && strings.TrimLeft(rhs, " \t") != "" || isBrowserGlobal(name) && !isInertWord(rhs)
 	}
 	return false
+}
+
+// isCodeArgs reports whether a, the text after the '(' of a call written
+// with a blank before it ("alert (1)"), reads as code arguments rather than
+// a parenthetical aside ("maybe (later)", "practise (daily)", "(2 days)"):
+//
+//   - empty: "alert ()".
+//   - a string, template, array or object literal: "alert ('x')",
+//     "alert (`x`)", "alert ([1])", "alert ({})".
+//   - a call or template inside: "alert (eval(name))".
+//   - a single number, dotted name or browser global, then ')', ',' or an
+//     operator, with an optional unary - + ! ~ before it: "alert (1)",
+//     "alert (-1)", "alert (!0)", "alert (document.cookie)", "alert (name)".
+//
+// "(-2 days)" and "(2 weeks)" have a blank and a word after the number and
+// are not code. A single plain word ("alert (x)", "fetch (url)", "alert (a,
+// b)") is prose-shaped and is not code; as a
+// script it throws a ReferenceError unless the page defines it (the
+// accepted cost). Reads one token: linear.
+func isCodeArgs(a string) bool {
+	i := 0
+	for i < len(a) && isBlank(a[i]) {
+		i++
+	}
+	if i >= len(a) {
+		return false
+	}
+	switch a[i] {
+	case ')', '\'', '"', '`', '[', '{':
+		return true
+	case '-', '+', '!', '~':
+		i++ // a unary operator before the token: "alert (-1)", "alert (!0)"
+	}
+	start, dotted, digits := i, false, true
+	for i < len(a) && (isIdentByte(a[i]) || a[i] == '$' || a[i] == '.') {
+		dotted = dotted || a[i] == '.'
+		digits = digits && (isDigit(a[i]) || a[i] == '.')
+		i++
+	}
+	if i == start || i >= len(a) {
+		return false
+	}
+	if a[i] == '(' || a[i] == '`' {
+		return true
+	}
+	tok := a[start:i]
+	if !digits && !dotted && !isBrowserGlobal(tok) {
+		return false
+	}
+	for i < len(a) && isBlank(a[i]) {
+		i++
+	}
+	return i < len(a) && strings.IndexByte("),+-*/", a[i]) >= 0
 }
 
 // decodeWhitespaceRefs replaces the HTML character references for tab, LF

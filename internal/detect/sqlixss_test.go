@@ -547,3 +547,153 @@ func TestSQLiPercentAndRange(t *testing.T) {
 		}
 	}
 }
+
+// Markup that libinjection flags but that is inert: a backtick inside an
+// HTML comment (libinjection reads it as an old IE tag terminator), a bare
+// placeholder tag such as "<link>" or "<Object>" with no attributes, and a
+// "<!DOCTYPE" mention that never closes. None of them may be flagged.
+var xssInertMarkupNegatives = []string{
+	"<!-- see the `main` branch -->",
+	"<!-- see the `main` branch",
+	"<!-- Ensure the code is up-to-date with the `main` branch. -->",
+	"<!-- plain comment -->",
+	"<!-- Thanks for the PR! Run `make test` before you push. -->\n## Summary\nFixes the `retry` loop.",
+	"<!-- one `a` --> text <!-- two `b` -->",
+	"<!-- `x` -!> after",
+	"<!--\nPick one kind, e.g. `/kind bug`.\nLink docs like this:\n- [Docs]: <link>\n-->\nbody text",
+	"the token pattern gets a lookbehind, `(?<![\\w.])`, before the match",
+	"<? `x` ?>",
+	"- [Docs]: <link>",
+	"the param is an `<Object>` or a `<boolean>`",
+	"rebase onto <base> first",
+	"<meta> and <embed> are void elements",
+	"check for <!DOCTYPE without copying the rest",
+	"compare the first len(\"<!DOCTYPE\") bytes",
+	"javascript: yes=no; maybe (later)",
+	"JavaScript: yes=no; maybe (2 days)",
+	"javascript: tip=1; practise (daily)",
+	"JavaScript: price=10; discount (-2 dollars)",
+	"JavaScript: level=1; then (see notes)",
+}
+
+// xssInertMarkupPositives must stay caught: real markup next to (or inside)
+// the inert shapes above, and javascript: code after a statement separator.
+var xssInertMarkupPositives = []string{
+	"<script>alert(1)</script>",
+	"<img src=x onerror=alert(1)>",
+	`<a href="javascript:alert(1)">x</a>`,
+	"<!-- --><script>alert(1)</script>",
+	"<svg onload=alert(1)>",
+	"<a href=`javascript:alert(1)`>",
+	"<!--[if IE]><script>",
+	"<!--[if IE]>`x`<![endif]-->",
+	"<!-- x --><img src=x onerror=alert(1)>",
+	"<!-- `x` --><img src=x onerror=alert(1)>",
+	"<!-- `x` --><a href=`javascript:alert(1)`>x</a>",
+	"<!--` onerror=alert(1)",
+	"<!-- note ` onmouseover=alert(1)",
+	"<!--` style=x:expression(alert(1))",
+	"<!--` src=`javascript:alert(1)`",
+	"<!-- `x` --> <svg/onload=alert(1)>",
+	"<!-- `x` --><script src=//evil.example/x.js></script>",
+	"<!-- `x` ` <img src=x onerror=alert(1)> -->",
+	"<!-- `x` javascript:alert(1) -->",
+	"<!--`--><iframe src=javascript:alert(1)>",
+	"<!-- ` <img src=x ONERROR=alert(1)> -->",
+	"<!-- ` <img src=x onerror\t=alert(1)> -->",
+	"<!-- ` <a href=&#106;avascript:alert(1)>x</a> -->",
+	"<!-- ` <style>*{x:expression(alert(1))}</style> -->",
+	"<!-- ` <object data=//evil.example/x> -->",
+	"<!-- ` <meta http-equiv=refresh content=0;url=javascript:alert(1)> -->",
+	"<!-- ` -!><img src=x onerror=alert(1)>",
+	"<!-- `x` --><?import namespace=x implementation=y>",
+	"<!-- `x` --><% `y` %>",
+	"x` onerror=alert(1) <!-- `y` -->",
+	"<img src=\"<!--\" onerror=`alert(1)`>",
+	"<a title=\"<!--\" href=`javascript:alert(1)`>",
+	"<link>\"><img src=x onerror=alert(1)>",
+	"<embed><param name=src value=//evil.example/x.swf>",
+	"<meta><style>x</style>",
+	"<!doctype `x` onerror=alert(1)",
+	"<!x `y` ><img src=x onerror=alert(1)>",
+	"<? ` onerror=alert(1)",
+	"<![if IE]>`x`",
+	"<?import `x`>",
+	"<?xml `x`?>",
+	"<!-- `x` <link> --><link rel=import href=//evil.example>",
+	"<!-- `x` --><link rel=stylesheet href=javascript:alert(1)>",
+	"<!-- `x` --><!DOCTYPE html>",
+	"<!-- `x` --><!--[if IE]>",
+	"<link rel=import href=//evil.example/x>",
+	"<base href=javascript:alert(1)//>",
+	"<link><img src=x onerror=alert(1)>",
+	"<object><param name=movie value=javascript:alert(1)></object>",
+	"<base> <style>*{x:expression(alert(1))}</style>",
+	"<link> <iframe>",
+	"<!DOCTYPE html>",
+	"<!DOCTYPE x [<!ENTITY a 'b'>]>",
+	"<!DOCTYPE x [",
+	"<div id=\"1\"><!DOCTYPE x [",
+	"<style>@import 'x'</style>",
+	"<!-- `a` -->\x00<script>",
+	"javascript: a=1; alert (1)",
+	"javascript: a=1; alert (document.cookie)",
+	"javascript: a=1; alert ('x')",
+	"javascript: a=1; alert ()",
+	"javascript: a=1; alert (name)",
+	"javascript: a=1; alert (eval(name))",
+	"javascript: yes=no; alert (1)",
+	"javascript: a=1; alert ([1])",
+	"javascript: a=1; alert ({})",
+	"javascript: a=1; alert (-1)",
+	"javascript: a=1; alert (!0)",
+	"javascript: a=1; alert (top)",
+	"javascript: a=1; alert (x.y)",
+	"javascript: a=1; eval (atob('YWxlcnQoMSk='))",
+	"javascript: yes=no; maybe(later)",
+	"javascript: yes=no;maybe (later)",
+}
+
+// xssInertMarkupAcceptedMisses are attack-shaped values the inert-markup
+// rules deliberately let through (the documented recall cost). If one of
+// them starts to hit, update the threat model.
+var xssInertMarkupAcceptedMisses = []string{
+	// A blank-separated call after "; " whose argument is a single plain
+	// word: it has the shape of "maybe (later)". As a script it throws a
+	// ReferenceError unless x is defined by the page.
+	"javascript: a=1; alert (x)",
+	"javascript: a=1; fetch (url)",
+	"javascript: a=1; alert (a, b)",
+	// A bare "<object>", "<link>" or "<base>" with no attribute and no
+	// attribute on any other tag in the value: nothing loads or runs.
+	"<object>",
+	"<link>",
+	"<base>",
+	"<object><embed>",
+	// A "<!DOCTYPE" that never closes: a mention, and a doctype runs nothing.
+	"<!DOCTYPE",
+}
+
+func TestXSSInertMarkup(t *testing.T) {
+	for _, v := range xssInertMarkupNegatives {
+		if hit, ok := XSS(v); ok {
+			t.Errorf("XSS(%q) = %+v, want no hit", v, hit)
+		}
+		if hasRule(ScanText(v), "AEG-XSS-001") {
+			t.Errorf("ScanText(%q) has AEG-XSS-001, want none", v)
+		}
+	}
+	for _, v := range xssInertMarkupPositives {
+		if _, ok := XSS(v); !ok {
+			t.Errorf("XSS(%q) = no hit, want hit", v)
+		}
+		if !hasRule(ScanText(v), "AEG-XSS-001") {
+			t.Errorf("ScanText(%q) has no AEG-XSS-001", v)
+		}
+	}
+	for _, v := range xssInertMarkupAcceptedMisses {
+		if hit, ok := XSS(v); ok {
+			t.Errorf("XSS(%q) = %+v: an accepted miss now hits; update the threat model", v, hit)
+		}
+	}
+}

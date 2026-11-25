@@ -278,17 +278,17 @@ Each rule's known gaps and false-positive shapes are in the [threat model](docs/
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **152 attacks and 154 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 45 attacks and 122 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **156 attacks and 159 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 49 attacks and 127 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 148 of 152 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 149 of 152 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 152 of 156 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 153 of 156 blocked, and every legitimate request must fit the policy.
 
 Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-26:
 
 | Category | Generic blocked | API-aware blocked | Total |
 |---|---|---|---|
 | sqli | 37 | 37 | 37 |
-| xss | 17 | 17 | 17 |
+| xss | 21 | 21 | 21 |
 | lfi | 11 | 11 | 11 |
 | rfi | 3 | 3 | 3 |
 | cmdi | 29 | 29 | 29 |
@@ -302,8 +302,8 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | scanner | 13 | 13 | 13 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **148** | **149** | **152** |
-| **False positives** | **0** | **0** | **154** |
+| **Attacks** | **152** | **153** | **156** |
+| **False positives** | **0** | **0** | **159** |
 
 **What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.5):
 
@@ -374,7 +374,7 @@ make corpus     # the tables above
 Aegolith v0.1 is **alpha**. What that means:
 
 - **Alpha release (`v0.1.0-alpha.5`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 148 and 149 of the 152 corpus attacks with no false positives on 154 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Tuned on one corpus.** It blocks 152 and 153 of the 156 corpus attacks with no false positives on 159 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 
@@ -387,7 +387,7 @@ The full list, with the reasons, is in the [threat model](docs/threat-model.md#k
 - **Non-UTF-8 JSON charsets** (`charset=utf-16`, `iso-8859-1`) are accepted by the content-type check. This fails safe: the body is inspected as UTF-8 bytes, and UTF-16 is blocked for its NUL bytes.
 - **Worst-case cost.** A hostile 1 MiB body can cost up to about 0.8 s of CPU and 128 MB of allocation (see [Performance](#performance)). The scan budget is kept at 8x the body limit on purpose.
 - **Recall traded for fewer false positives:** `x & cat /flag.txt` (no flag, after a prose `&`) and `Location:evil.com` in a value are allowed.
-- **Known false positive:** prose such as `javascript: yes=no; maybe (later)` is blocked as XSS.
+- **Recall traded for fewer false positives (XSS, alpha.6):** a backtick inside an HTML comment, a bare `<link>`/`<base>`/`<object>` with no attribute and an unclosed `<!DOCTYPE` mention are no longer flagged on their own, and `javascript: a=1; alert (x)` (a blank before `(` and a plain word inside) is allowed. Real markup next to them is still caught.
 
 Roadmap:
 

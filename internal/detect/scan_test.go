@@ -184,6 +184,10 @@ func TestScanTextLinear(t *testing.T) {
 		"backslashes":         "..\\",
 		"union-comment":       "union /* ",
 		"union-paren-comment": "and union (/* note ",
+		"comment-backtick":    "<!-- `x` -->",
+		"open-comment":        "<!--`onx -",
+		"placeholder-tag":     "<link>",
+		"doctype-mention":     "<!doctype ",
 	}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
 	limit := wallLimit(2*time.Second, 20*time.Second)
