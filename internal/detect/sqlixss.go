@@ -1113,9 +1113,10 @@ func isInertPlaceholderTag(name string) bool {
 // hasXSSMarker reports whether s holds "<script", a javascript: or
 // vbscript: scheme, or attribute text that runs or redirects: a word that
 // starts with "on" and another letter (an event handler) or the word
-// "formaction", then optional blanks and '=' (or "&#61", "&#x3d",
-// "&equals;", the character references for it). Case-insensitive. One pass
-// over the words plus three substring searches.
+// "formaction", then optional blanks (a form feed counts, as in an HTML
+// tag) and '=' (or "&#61", "&#x3d", "&equals;", the character references
+// for it). Case-insensitive. One pass over the words plus three substring
+// searches.
 func hasXSSMarker(s string) bool {
 	if indexFold(s, "<script") >= 0 || indexFold(s, "javascript:") >= 0 || indexFold(s, "vbscript:") >= 0 {
 		return true
@@ -1131,7 +1132,7 @@ func hasXSSMarker(s string) bool {
 		w := s[i:j]
 		handler := len(w) > 2 && w[0]|0x20 == 'o' && w[1]|0x20 == 'n' && isLetter(w[2])
 		if handler || strings.EqualFold(w, "formaction") {
-			for j < len(s) && isBlank(s[j]) {
+			for j < len(s) && (isBlank(s[j]) || s[j] == '\f') {
 				j++
 			}
 			if j < len(s) && (s[j] == '=' || isEqualsRef(s[j:])) {
