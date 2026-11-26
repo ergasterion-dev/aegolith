@@ -1,0 +1,18 @@
+[
+  {
+    "name": "crs",
+    "repo": "github.com/coreruleset/coreruleset",
+    "commit": "af4996c059bb1bdfc269f685b5c816d33027f242",
+    "license": "Apache-2.0",
+    "included": true,
+    "note": "Release v4.31.0. LICENSE is the Apache License 2.0; fetched for use as test input, not redistributed."
+  },
+  {
+    "name": "gotestwaf",
+    "repo": "github.com/wallarm/gotestwaf",
+    "commit": "5daeba073823a57e79ba922beef0c2d92a8dd776",
+    "license": "MIT",
+    "included": true,
+    "note": "Release v0.5.11. LICENSE is the MIT License; fetched for use as test input, not redistributed."
+  }
+]
