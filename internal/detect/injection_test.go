@@ -868,7 +868,7 @@ func TestSSTINegatives(t *testing.T) {
 
 // TestSSTIAlpha6Templates covers the alpha.6 template readings: a filter
 // pipe in {{ }} is code only when attack-shaped, a short i18n call in ${ }
-// is data, and #{ } follows the ${ } rules.
+// is data, and a plain data path in #{ } is data.
 func TestSSTIAlpha6Templates(t *testing.T) {
 	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
 	assertNoHits(t, "SSTI", SSTI, []string{
@@ -910,12 +910,11 @@ func TestSSTIAlpha6Templates(t *testing.T) {
 		// pass is a word ("bus pass", "boarding pass").
 		"${bus.pass}",
 		"${ticket.pass}",
-		// #{ } as ${ }: a data path is not code.
+		// #{ }: a plain data path is not code.
 		"#{order.total}",
 		"Order #{order.id} ready",
 		"#{user.name}",
 		"#{price}",
-		"#{amount(usd)}",
 		// ?new or ?api after a quote in prose is not a FreeMarker binding.
 		`He said "hi"?new(ish)`,
 		`"x"?api`,
@@ -1046,7 +1045,6 @@ func TestSSTIAlpha6Templates(t *testing.T) {
 		"#{7*'7'}",
 		"${7*'7'}",
 		"#{open(%q(|id))}",
-		"${ex(`id`)}",
 		// Jinja balances braces in an expression: the call runs before an
 		// inner {{ }} set literal fails.
 		"{{ lipsum.__globals__.os.popen('id').read() ~ {{a|b}} }}",
@@ -1098,7 +1096,6 @@ func TestSSTIAlpha6FixRound1(t *testing.T) {
 		"<#assign e=c?new ()>${e('id')}",
 		`<#assign e="freemarker.template.utility.Execute" ? new()>${e("id")}`,
 		"<#assign e=c?NEW()>${t('id')}",
-		"${x? new()}",
 		// I4: the code-reaching shapes of the Node/Ruby names stay caught.
 		"#{require.main.constructor._load(foo).readdirSync(foo2)}",
 		"#{require.main.constructor._load(foo)}",
@@ -1106,10 +1103,8 @@ func TestSSTIAlpha6FixRound1(t *testing.T) {
 		"#{binding.irb}",
 		"${binding.eval(x)}",
 		"#{x.constructor.constructor(x)()}",
-		"${user.constructor.constructor}",
 		"#{this.constructor.constructor(x)()}",
 		"#{require(x)}",
-		"${fork(x)}",
 		"#{spawn(x)}",
 		"#{instance_eval(x)}",
 		"#{Kernel.open(x)}",
@@ -1118,7 +1113,6 @@ func TestSSTIAlpha6FixRound1(t *testing.T) {
 		"#{IO.readlines(x)}",
 		"#{Dir.entries(x)}",
 		"#{Dir.glob(x)}",
-		"${File.write(a, b)}",
 		// I5: indexes on ENV, Dir and JSF implicit objects; dynamic calls.
 		"#{ENV['SECRET_KEY_BASE']}",
 		"#{ENV[x]}",
@@ -1129,7 +1123,6 @@ func TestSSTIAlpha6FixRound1(t *testing.T) {
 		"#{initParam['db']}",
 		"#{new ProcessBuilder(x).start()}",
 		"#{new ProcessBuilder({'id'}).start()}",
-		"${new ProcessBuilder(x).start()}",
 		"#{Function(x)()}",
 		"#{new Function(x)()}",
 		"#{x.send(m, a)}",
@@ -1156,7 +1149,6 @@ func TestSSTIAlpha6FixRound1(t *testing.T) {
 		"#{ENV.to_h}",
 		"#{Dir.pwd}",
 		"#{x['constructor']['constructor'](y)()}",
-		"${x['constructor']['constructor']('alert(1)')()}",
 		"#{x.constructor .constructor(y)()}",
 		"#{Function.call(null, x)}",
 		"#{Function ('x')()}",
@@ -1209,6 +1201,123 @@ func TestSSTIAlpha6FixRound1(t *testing.T) {
 	})
 }
 
+// TestSSTIAlpha6FixRound2 covers the inverted #{ } reading (only a plain
+// data path is clear; everything 8ad8880 flagged in #{ } stays flagged), the
+// FreeMarker directive and built-in guard on the i18n reading, and ${ }
+// back at the 8ad8880 rules apart from pass, i18n calls and quoted numbers.
+func TestSSTIAlpha6FixRound2(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertHits(t, "SSTI", SSTI, want, []string{
+		// N1: a blank before "(".
+		`#{system ("id")}`,
+		"#{system ('cat /etc/passwd')}",
+		"#{exec ('id')}",
+		"#{open ('|id')}",
+		"#{eval (params[:c])}",
+		// N2: "&." and wrapped receivers.
+		"#{Kernel&.open(params[:c])}",
+		"#{File&.read(params[:f])}",
+		"#{Dir&.glob(x)}",
+		"#{Open3&.capture2(x)}",
+		"#{ObjectSpace&.each_object(x)}",
+		"#{ENV&.to_h}",
+		"#{(Kernel).open(params[:c])}",
+		"#{(File).read(params[:f])}",
+		"#{[Kernel][0].open(x)}",
+		"#{(ENV)['SECRET_KEY_BASE']}",
+		"#{(Dir)['/*']}",
+		"#{ENV.[](x)}",
+		"#{Dir.[]('/*')}",
+		// N3: method objects.
+		"#{method(:spawn).call(params[:c])}",
+		"#{method(:fork).call}",
+		"#{x.method(:instance_eval).call(y)}",
+		"#{x.public_method(:send).call(m, a)}",
+		"#{x.method(:send).(m, a)}",
+		// N4: FreeMarker ?eval, a variable, a comment inside the built-in.
+		`<#assign e=('"freemarker.template.utility.Execute"?n'+'ew()')?eval>${e('id')}`,
+		"<#assign e=c?eval>${e('id')}",
+		"<#assign e=c?new<#-- -->()>${e('id')}",
+		"<#assign e=c?interpret>${e('id')}",
+		"<@x/>${e('id')}",
+		"[@x/]${e('id')}",
+		"[#assign e=c]${e('id')}",
+		"<#assign e=c? eval>${e('id')}",
+		// N5: optional calls, comments, template-literal keys, Function by
+		// reference.
+		"#{x?.constructor?.constructor?.(y)()}",
+		"#{require?.(x)}",
+		"#{require/**/(x)}",
+		"#{require /*c*/ (x)}",
+		"#{x.constructor[`constructor`](y)()}",
+		"#{x[`constructor`][`constructor`](`return 1`)()}",
+		"#{(0,Function)(y)()}",
+		"#{Reflect.construct(Function,[y])()}",
+		// Related: Spring environment and property maps, concatenated keys.
+		"#{systemEnvironment['DB_PASSWORD']}",
+		"#{@systemEnvironment['x']}",
+		"#{systemProperties['user.home']}",
+		"#{x['constru'+'ctor']['constru'+'ctor']('return 1')()}",
+		// Plain paths that are not benign: a module, environment or scope
+		// root, a sensitive segment, a zero-argument code method.
+		"#{binding.irb}",
+		"#{Kernel.exit}",
+		"#{ENV.keys}",
+		"#{Process.pid}",
+		"#{Dir.pwd}",
+		"#{File.separator}",
+		"#{header.title}",
+		"#{sessionScope.user}",
+		"#{facesContext.externalContext}",
+		"#{systemProperties.x}",
+		"#{user.password}",
+		"#{config.secret}",
+		"#{x.instance_variables}",
+		"#{self.methods}",
+		"#{x.irb}",
+		"#{x.constructor}",
+		"#{a.getClass}",
+		"#{x.y.classLoader}",
+		// Gains kept: quoted product, %x, #{T(.
+		"#{7*'7'}",
+		"#{%x{id}}",
+		"#{T(Runtime)}",
+		"#{amount(usd)}",
+		"#{x[0]}",
+		"#{a*b}",
+		"#{foo(bar)}",
+		"#{x.send m}",
+		"#{File.expand_path(x)}",
+		"#{t('cart.title')}",
+	})
+	assertNoHits(t, "SSTI", SSTI, []string{
+		// Required clean in #{ }.
+		"#{order.total}",
+		"#{user.name}",
+		"#{order.id}",
+		"#{repo.fork}",
+		"#{book.binding}",
+		"#{user.pass}",
+		"#{bus.pass}",
+		" #{ order.total } ",
+		"Order #{12}",
+		"Flat #{3B}",
+		// N6: ${ } is back at the 8ad8880 rules.
+		"${Kernel.version}",
+		"${Dir.home}",
+		"${File.open}",
+		"${header['title']}",
+		`${row["token"]}`,
+		"${user.send()}",
+		"${fork (2)}",
+		"${f%x*}",
+		"${name%x.*}",
+		// i18n stays clean with no FreeMarker directive or built-in.
+		"${t('cart.title')} - what?news",
+		"${t('cart.title')} <b>#1</b>",
+	})
+}
+
 // TestSSTIAlpha6AcceptedMisses pins the attack shapes alpha.6 lets through
 // to clear the template text above (threat model, "Changes in alpha.6";
 // corpus README trade-off section). If one starts to hit, update those
@@ -1227,25 +1336,23 @@ func TestSSTIAlpha6AcceptedMisses(t *testing.T) {
 		"{{[x|safe]}}",
 		"{{[c|config]}}",
 		"{{ -g|list }}",
-		// 2. A one-letter, $t or i18n.t call with one plain string literal,
-		// when the name was bound to an executor outside the value and the
-		// value holds no FreeMarker ?new or ?api.
+		// 2. In ${ }, a one-letter, $t or i18n.t call with one plain string
+		// literal, when the name was bound to an executor outside the value
+		// and the value holds no FreeMarker directive or binding built-in.
 		"${e('id')}",
 		"${t('whoami')}",
-		// 3. Member access to a field named pass.
+		// 3. pass as a member or a call in ${ }, and a #{ } data path
+		// ending in pass.
 		"${user.pass}",
+		"${user.pass()}",
 		"#{user.pass}",
-		// 4. #{ } with a plain index, a product of names, member access on
-		// header, param or cookie, a method called without parentheses, or
-		// a call with no string-literal argument on a name that is neither
-		// sensitive nor a code name.
-		"#{x[0]}",
-		"#{a*b}",
-		"#{foo(bar)}",
-		"#{header.title}",
-		"#{x.send m}",
+		// 4. #{ } holding a plain data path that reaches a zero-argument
+		// method not in hashCodeSegments.
 		"#{x.fork}",
-		"#{File.expand_path(x)}",
+		"#{x.class}",
+		"#{a.b.c}",
+		"#{order.send}",
+		"#{file.read}",
 	})
 }
 

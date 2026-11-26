@@ -257,7 +257,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-CODEI-001` | codei | block | PHP open tags, `eval`/`assert` of `base64_decode`, Node `child_process` access. |
 | `AEG-CODEI-002` | codei | block | A Java serialized object (`rO0AB`, `aced0005`). |
 | `AEG-LDAP-001` | ldap | block | LDAP filter breakers (`*)(`, `)(\|`, `)(&`, `)(!`). |
-| `AEG-SSTI-001` | ssti | block | Template expressions with code in them (`{{ ... }}` including Go template actions such as `printf` and `call` and filter pipes with a call, argument or sensitive name, `${T(`, `${7*7}`, `${a.b}` with a sensitive name and calls in `${...}`, the same in `#{...}`, `<%= %>`, `{% %}`). |
+| `AEG-SSTI-001` | ssti | block | Template expressions with code in them (`{{ ... }}` including Go template actions such as `printf` and `call` and filter pipes with a call, argument or sensitive name, `${T(`, `${7*7}`, `${a.b}` with a sensitive name and calls in `${...}`, any call, index, `*` or member access in `#{...}` except a plain data path, `<%= %>`, `{% %}`). |
 | `AEG-JNDI-001` | jndi | block | Log4Shell `${jndi:` lookups, including nested obfuscation. |
 | `AEG-CRLF-001` | crlf | block | CR or LF (raw or encoded) followed by a response header name. |
 | `AEG-LFI-001` | lfi | block | Directory traversal (`../`, encoded forms) or a NUL byte in a value. |
@@ -278,10 +278,10 @@ Each rule's known gaps and false-positive shapes are in the [threat model](docs/
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **168 attacks and 168 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 61 attacks and 136 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **172 attacks and 169 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 65 attacks and 137 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 164 of 168 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 165 of 168 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 168 of 172 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 169 of 172 blocked, and every legitimate request must fit the policy.
 
 Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-26:
 
@@ -292,7 +292,7 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | lfi | 11 | 11 | 11 |
 | rfi | 3 | 3 | 3 |
 | cmdi | 29 | 29 | 29 |
-| ssti | 19 | 19 | 19 |
+| ssti | 23 | 23 | 23 |
 | log4shell | 3 | 4 | 4 |
 | ssrf | 5 | 5 | 5 |
 | xxe | 3 | 3 | 3 |
@@ -302,8 +302,8 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | scanner | 13 | 13 | 13 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **164** | **165** | **168** |
-| **False positives** | **0** | **0** | **168** |
+| **Attacks** | **168** | **169** | **172** |
+| **False positives** | **0** | **0** | **169** |
 
 **What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.5):
 
@@ -374,7 +374,7 @@ make corpus     # the tables above
 Aegolith v0.1 is **alpha**. What that means:
 
 - **Alpha release (`v0.1.0-alpha.5`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 164 and 165 of the 168 corpus attacks with no false positives on 168 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Tuned on one corpus.** It blocks 168 and 169 of the 172 corpus attacks with no false positives on 169 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 

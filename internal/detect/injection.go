@@ -1368,10 +1368,10 @@ func isLDAP(s string) bool {
 // alpha.6 reads some template text as data so that real customer and docs
 // text is not blocked: a {{ }} filter pipe made of placeholder text
 // ("{{ price | currency }}", "Dear {{ name|title }},", tldr's
-// "{{[-p|--patch]}}"), a short i18n call in ${ } or #{ }
-// ("${t('cart.title')}"), member access to a field named pass
-// ("${bus.pass}"), and #{ } data paths ("#{order.total}"), since #{ } now
-// follows the ${ } rules. The accepted SSTI misses of alpha.6 (the same list
+// "{{[-p|--patch]}}"), a short i18n call in ${ } ("${t('cart.title')}"),
+// member access to a field named pass ("${bus.pass}"), and a plain data path
+// in #{ } ("#{order.total}"); #{ } stays stricter than ${ } for anything
+// else. The accepted SSTI misses of alpha.6 (the same list
 // is in the threat model and the corpus README; each has an entry in
 // TestSSTIAlpha6AcceptedMisses):
 //
@@ -1389,41 +1389,42 @@ func isLDAP(s string) bool {
 //     `{{[c|config]}}`, `{{ -g|list }}`. Without a call or an argument
 //     a filter cannot reach a callable, and an unknown filter name does
 //     not compile in Jinja, Django, Twig or Nunjucks.
-//  2. A call of a one-letter lower-case name, `$t` or `i18n.t` with one
-//     plain string literal (letters, digits, blanks, `.`, `_`, `-`)
-//     that names no Java class, reflection or process word, when the
-//     name was bound to an executor outside the value: `${e('id')}`,
-//     `${t('whoami')}`. A FreeMarker `?new(` or `?api` anywhere in the
-//     same value turns this reading off, so a binding in the value is
-//     caught.
-//  3. Member access to a field named `pass`: `${user.pass}`,
-//     `#{user.pass}`. `password`, `passwd` and `pwd` still count.
-//  4. `#{ }` with an index on a name other than `ENV`, `Dir` and the
-//     JSF scope objects (`header`, `headerValues`, `param`,
-//     `paramValues`, `cookie`, `initParam`, `requestScope`,
-//     `sessionScope`, `applicationScope`) and with no sensitive string
-//     literal, a product of names, member access on the JSF request
-//     objects `header`, `param` and `cookie`, a method called without
-//     parentheses, or a call with no string-literal argument on a name
-//     that is neither sensitive nor a code name (code names count in
-//     call position, such as `require(`, `fork(`, `spawn(`, `send(`,
-//     `public_send(`, `const_get(`, `getBean(`, `ProcessBuilder(` and
-//     `Function(`, and as `Kernel.`, `Open3.`, `ObjectSpace.`, `ENV.`
-//     and `Function.`, or `File.`, `IO.` and `Dir.` with a file or
-//     process method): `#{x[0]}`, `#{a*b}`, `#{foo(bar)}`,
-//     `#{header.title}`, `#{x.send m}`, `#{x.fork}`,
-//     `#{File.expand_path(x)}`. `${ }` never flagged these.
+//  2. In `${ }`, a call of a one-letter lower-case name, `$t` or
+//     `i18n.t` with one plain string literal (letters, digits, blanks,
+//     `.`, `_`, `-`) that names no Java class, reflection or process
+//     word, when the name was bound to an executor outside the value:
+//     `${e('id')}`, `${t('whoami')}`. A FreeMarker directive (`<#`,
+//     `[#`, `<@`, `[@`) or a `?new`, `?api`, `?eval` or `?interpret`
+//     built-in anywhere in the same value turns this reading off.
+//  3. Member access to, or a call of, a name `pass` in `${ }` when no
+//     other sensitive name is present, and a `#{ }` data path ending in
+//     `pass`: `${user.pass}`, `${user.pass()}`, `#{user.pass}`.
+//     `password`, `passwd` and `pwd` still count.
+//  4. In `#{ }`, a plain data path: names joined by single `.` and
+//     nothing else, a root that starts with a lower-case letter or `_`
+//     and is not a scope, environment or global object (`binding`,
+//     `header`, `param`, `cookie`, `initParam`, the JSF and JSP
+//     `*Scope` objects, `facesContext`, `externalContext`,
+//     `systemEnvironment`, `systemProperties`, `self`, `this`,
+//     `require`, `constructor`, ...), and no sensitive name or
+//     zero-argument code method (`irb`, `methods`,
+//     `instance_variables`, `constructor`, `call`, ...) in it:
+//     `#{x.fork}`, `#{x.class}`, `#{a.b.c}`, `#{order.send}`,
+//     `#{file.read}`. A method reached this way runs only on an object
+//     the template already holds. Anything else in `#{ }` (a call, an
+//     index, `*`, `&.`, any other byte, an upper-case root) is code as
+//     in alpha.5.
 func isSSTI(s string) bool {
 	if strings.Contains(s, "${T(") || strings.Contains(s, "#{T(") ||
 		hasFreeMarkerNew(s) || eachCodeTemplate(s) {
 		return true
 	}
-	// A FreeMarker ?new or ?api anywhere in the value can bind an executor
-	// to a short name, so no i18n call is read as data then
-	// ("<#assign e=c?new()>${e('id')}").
-	bind := hasFreeMarkerBuiltin(s)
-	return eachDelimited(s, "${", "}", func(in string) bool { return elExpr(in, false, bind) }) ||
-		eachDelimited(s, "#{", "}", func(in string) bool { return elExpr(in, true, bind) }) ||
+	// A FreeMarker directive or a ?new, ?api, ?eval or ?interpret built-in
+	// anywhere in the value can bind an executor to a short name, so no
+	// i18n call is read as data then ("<#assign e=c?new()>${e('id')}").
+	bind := hasFreeMarkerBinding(s)
+	return eachDelimited(s, "${", "}", func(in string) bool { return elExpr(in, bind) }) ||
+		eachDelimited(s, "#{", "}", isHashExpr) ||
 		eachDelimited(s, "{%", "%}", isJinjaStatement) ||
 		hasERBOutput(s)
 }
@@ -1458,12 +1459,16 @@ func hasFreeMarkerNew(s string) bool {
 	}
 }
 
-// hasFreeMarkerBuiltin reports whether s holds FreeMarker's ?new or ?api
-// built-in anywhere: "?", optional blanks, then "new", optional blanks and
-// "(", or "api" not followed by a name byte (any case). "what?news" is not
-// one. Each "?" skips blanks only up to the next non-blank, so the scan is
-// linear.
-func hasFreeMarkerBuiltin(s string) bool {
+// hasFreeMarkerBinding reports whether s holds a FreeMarker directive
+// ("<#", "[#", "<@", "[@") or a ?new, ?api, ?eval or ?interpret built-in:
+// "?", optional blanks or line breaks, then the name (any case) not
+// followed by a name byte. "what?news" is not one. Each "?" skips blanks
+// only up to the next non-blank, so the scan is linear.
+func hasFreeMarkerBinding(s string) bool {
+	if strings.Contains(s, "<#") || strings.Contains(s, "[#") ||
+		strings.Contains(s, "<@") || strings.Contains(s, "[@") {
+		return true
+	}
 	for off := 0; ; {
 		n := strings.IndexByte(s[off:], '?')
 		if n < 0 {
@@ -1473,17 +1478,8 @@ func hasFreeMarkerBuiltin(s string) bool {
 		for j < len(s) && isBlankByte(s[j]) {
 			j++
 		}
-		switch {
-		case hasPrefixFold(s[j:], "new"):
-			k := j + 3
-			for k < len(s) && isBlankByte(s[k]) {
-				k++
-			}
-			if k < len(s) && s[k] == '(' {
-				return true
-			}
-		case hasPrefixFold(s[j:], "api"):
-			if j+3 >= len(s) || !isIdentByte(s[j+3]) {
+		for _, b := range [...]string{"new", "api", "eval", "interpret"} {
+			if hasPrefixFold(s[j:], b) && (j+len(b) >= len(s) || !isIdentByte(s[j+len(b)])) {
 				return true
 			}
 		}
@@ -1835,28 +1831,21 @@ var elCodeSensitive = map[string]bool{
 }
 
 // isELExpr reports whether the inside of a ${ } (EL, Spring, Groovy,
-// FreeMarker) holds code: number arithmetic (7*7, 7+7), a dunder walk, a
-// string literal used as an object ("id".execute()), FreeMarker ?new or
-// ?api, a call with a string literal argument (ex("id")), or member access
-// (user.password) or a call that names something sensitive (see
-// elSensitive), a Ruby %x command or a Ruby class with process or file
-// access (File.read). Plain data paths such as "${order.total}", a
-// placeholder such as "${PRICE}", a number such as "${5}" and a short i18n
-// call such as "${t('cart.title')}" (see isI18nCall) are not code. #{ }
-// (Ruby, EL, Thymeleaf) uses the same rules from alpha.6.
-func isELExpr(in string) bool { return elExpr(in, false, false) }
+// FreeMarker) holds code: number arithmetic (7*7, 7+7, 7*'7'), a dunder
+// walk, a string literal used as an object ("id".execute()), FreeMarker
+// ?new or ?api, a call with a string literal argument (ex("id")), or member
+// access (user.password) or a call that names something sensitive (see
+// elSensitive). Plain data paths such as "${order.total}", a placeholder
+// such as "${PRICE}", a number such as "${5}" and a short i18n call such as
+// "${t('cart.title')}" (see isI18nCall) are not code.
+func isELExpr(in string) bool { return elExpr(in, false) }
 
-// elExpr is isELExpr. hash is set for #{ }, where ":" is Ruby syntax
-// ("Kernel::system", "a ? b : c") rather than a Log4j lookup, so it does not
-// end the reading. bind is set when the value holds a FreeMarker ?new or
-// ?api, and then no i18n call is read as data.
-func elExpr(in string, hash, bind bool) bool {
+// elExpr is isELExpr. bind is set when the value holds a FreeMarker
+// directive or binding built-in, and then no i18n call is read as data.
+func elExpr(in string, bind bool) bool {
 	in = strings.Trim(in, " \t")
 	if !bind && isI18nCall(in) {
 		return false
-	}
-	if hasRubyCommand(in) {
-		return true
 	}
 	i := 0
 	for i < len(in) && in[i] >= '0' && in[i] <= '9' {
@@ -1877,7 +1866,7 @@ func elExpr(in string, hash, bind bool) bool {
 	access := false
 	for j := 1; j < len(in); j++ {
 		c, p := in[j], in[j-1]
-		if c == ':' && !access && !hash {
+		if c == ':' && !access {
 			// A lookup such as ${jndi:ldap://host/a} or ${env:HOME} belongs
 			// to the JNDI rule, not to EL member access.
 			return false
@@ -1885,40 +1874,107 @@ func elExpr(in string, hash, bind bool) bool {
 		switch {
 		case (c == '.' || c == '?' || c == '(') && (p == '"' || p == '\''):
 			return true // a string literal used as an object: ${"id".execute()}
-		case c == '?' && (hasPrefixFold(strings.TrimLeft(in[j+1:], " \t"), "new") ||
-			hasPrefixFold(strings.TrimLeft(in[j+1:], " \t"), "api")):
-			return true // FreeMarker ?new / ?api, also "? new"
-		case c == '(' && isIdentByte(p) && isLiteralStart(in[j+1:]):
-			return true // a call with a string literal: ${ex("id")}, #{open(%q(|id))}
+		case c == '?' && (hasPrefixFold(in[j+1:], "new") || hasPrefixFold(in[j+1:], "api")):
+			return true // FreeMarker ?new / ?api
+		case c == '(' && isIdentByte(p) && j+1 < len(in) && (in[j+1] == '"' || in[j+1] == '\''):
+			return true // a call with a string literal: ${ex("id")}
 		case isIdentByte(p) && (c == '(' || c == '.' && j+1 < len(in) && isASCIILetter(in[j+1])):
 			access = true
 		}
 	}
-	return access && hasSensitiveName(in) || hasCodeReach(in)
+	return access && hasSensitiveName(in)
 }
 
-// isLiteralStart reports whether s starts with a string literal: a quote,
-// a backtick, or a Ruby percent literal ("%q(", "%w[", "%(").
-func isLiteralStart(s string) bool {
-	if s == "" {
+// isHashExpr reports whether the inside of a #{ } (Ruby, EL, Thymeleaf,
+// Spring) holds code. #{ } stays stricter than ${ }: anything with a call,
+// an index, a "*" or member access is code ("#{order.total.round(2)}",
+// "#{x[0]}", "#{7*'7'}"), and so is a Ruby %x command ("#{%x{id}}"), unless
+// the whole expression is a plain data path (see isHashDataPath):
+// "#{order.total}", "#{user.name}", "#{repo.fork}" and "#{bus.pass}" are
+// data. "#{12}" or "#{3B}" in an address has none of these.
+func isHashExpr(in string) bool {
+	t := strings.Trim(in, " \t\r\n")
+	if hasRubyCommand(t) {
+		return true
+	}
+	if isHashDataPath(t) {
 		return false
 	}
-	switch s[0] {
-	case '"', '\'', '`':
-		return true
-	case '%':
-		// %( %[ %{ %< %| %! %/, optionally after one of q Q w W i I.
-		s = s[1:]
-		if s != "" && strings.IndexByte("qQwWiI", s[0]) >= 0 {
-			s = s[1:]
+	for i := 0; i < len(in); i++ {
+		switch in[i] {
+		case '(', '[', '*':
+			return true
+		case '.':
+			if i+1 < len(in) && isASCIILetter(in[i+1]) {
+				return true
+			}
 		}
-		return s != "" && strings.IndexByte("([{<|!/", s[0]) >= 0
 	}
 	return false
 }
 
+// isHashDataPath reports whether t (a trimmed #{ } inside) is names joined
+// by single dots with no elSensitive or hashCodeSegments name in it and a
+// root that is not a module, environment or scope object: the root starts
+// with a lower-case letter or "_" (an upper-case root is a Ruby constant, a
+// module or class such as ENV, File, Kernel or Etc) and is not in
+// hashRootsFold, matched in any case.
+func isHashDataPath(t string) bool {
+	if !isDataPath(t) {
+		return false
+	}
+	root := t
+	if i := strings.IndexByte(t, '.'); i >= 0 {
+		root = t[:i]
+	}
+	if root[0] >= 'A' && root[0] <= 'Z' || hashRootsFold[strings.ToLower(root)] {
+		return false
+	}
+	for seg := t; seg != ""; {
+		part := seg
+		if i := strings.IndexByte(seg, '.'); i >= 0 {
+			part, seg = seg[:i], seg[i+1:]
+		} else {
+			seg = ""
+		}
+		if lower := strings.ToLower(part); elSensitive[lower] || hashCodeSegments[lower] {
+			return false
+		}
+	}
+	return true
+}
+
+// hashRootsFold are names, matched in any case, that a #{ } path may not
+// start with: binding, JSF and JSP implicit and scope objects, Spring's
+// environment and property maps and bean factory, and JavaScript globals.
+var hashRootsFold = map[string]bool{
+	"binding": true, "header": true, "headervalues": true, "param": true,
+	"paramvalues": true, "cookie": true, "initparam": true, "pagescope": true,
+	"requestscope": true, "sessionscope": true, "applicationscope": true,
+	"facescontext": true, "externalcontext": true, "view": true, "flash": true,
+	"systemenvironment": true, "systemproperties": true, "environment": true,
+	"beanfactory": true, "applicationcontext": true, "servletcontext": true,
+	"application": true, "self": true, "this": true, "global": true,
+	"globalthis": true, "window": true, "root": true, "require": true,
+	"module": true, "exports": true, "constructor": true, "prototype": true,
+}
+
+// hashCodeSegments are zero-argument methods that reach code or
+// reflection from any object, so a #{ } path holding one is code
+// ("#{x.instance_variables}", "#{x.irb}", "#{x.constructor}").
+var hashCodeSegments = map[string]bool{
+	"irb": true, "pry": true, "exit": true, "abort": true, "instance_variables": true,
+	"local_variables": true, "global_variables": true, "methods": true,
+	"public_methods": true, "private_methods": true, "protected_methods": true,
+	"singleton_methods": true, "constants": true, "ancestors": true, "superclass": true,
+	"class_variables": true, "constructor": true, "prototype": true, "caller": true,
+	"mainmodule": true, "getclass": true, "classloader": true, "getclassloader": true,
+	"call": true, "instance_exec": true, "binding_of_caller": true,
+}
+
 // hasRubyCommand finds Ruby's %x command literal: "%x" then a delimiter
-// ("%x(id)", "%x[id]", "%x|id|").
+// ("%x(id)", "%x[id]", "%x{id}", "%x|id|"). Only #{ } reads it: in ${ }
+// "%x" is shell parameter expansion ("${f%x*}").
 func hasRubyCommand(in string) bool {
 	for off := 0; ; {
 		n := strings.Index(in[off:], "%x")
@@ -1933,165 +1989,11 @@ func hasRubyCommand(in string) bool {
 	}
 }
 
-// codeCalls holds lower-cased Node, Ruby, Java and Spring names that reach
-// code when called, and only then: "${repo.fork}", "${book.binding}" and
-// "${order.send}" are data, "#{x.send(m, a)}", "#{spawn(x)}" and
-// "#{new ProcessBuilder(x).start()}" are not.
-var codeCalls = map[string]bool{
-	"require": true, "fork": true, "spawn": true, "syscall": true, "binding": true,
-	"constructor": true, "_load": true, "readfilesync": true, "readdirsync": true,
-	"execsync": true, "execfile": true, "spawnsync": true, "instance_eval": true,
-	"class_eval": true, "module_eval": true, "instance_exec": true, "send": true,
-	"public_send": true, "const_get": true, "getbean": true, "processbuilder": true,
-	"instance_variable_get": true, "define_method": true,
-}
-
-// rubyModules are Ruby modules any method of which reaches the process, the
-// environment or the object space, and JavaScript's Function; they count
-// with their case at the start of a path and followed by "." or "::" and a
-// name ("Kernel.open", "Open3::capture2", "ENV.to_h", "Function.call").
-var rubyModules = map[string]bool{
-	"Kernel": true, "Open3": true, "ObjectSpace": true, "ENV": true, "Function": true,
-}
-
-// rubyIOClasses are Ruby classes that count with their case at the start of
-// a path, followed by "." or "::" and a name in rubyIOMethods ("File.read",
-// "IO::popen", "Dir.glob"); "${File.separator}" and "${Dir.name}" are data.
-var rubyIOClasses = map[string]bool{"File": true, "IO": true, "Dir": true}
-
-var rubyIOMethods = map[string]bool{
-	"read": true, "readlines": true, "binread": true, "write": true, "binwrite": true,
-	"open": true, "popen": true, "foreach": true, "new": true, "delete": true,
-	"unlink": true, "glob": true, "entries": true, "children": true, "each_child": true,
-	"readlink": true, "sysopen": true, "rename": true, "symlink": true, "chmod": true,
-	"chown": true, "truncate": true, "mkdir": true, "rmdir": true, "chdir": true,
-	"copy_stream": true, "pipe": true, "select": true, "pwd": true, "getwd": true,
-	"home": true,
-}
-
-// indexRoots are names that read the environment, the file system or the
-// request scope when indexed at the start of a path: Ruby ENV and Dir (with
-// their case; Dir[] is a glob) and the JSF/JSP implicit objects
-// ("#{header['x']}", "#{sessionScope['user']}"). "${page.header}" is data.
-var indexRoots = map[string]bool{
-	"ENV": true, "Dir": true, "header": true, "headerValues": true, "param": true,
-	"paramValues": true, "cookie": true, "initParam": true, "requestScope": true,
-	"sessionScope": true, "applicationScope": true,
-}
-
-// hasCodeReach reports whether in uses a name where it reaches code:
-//   - a codeCalls name (any case) followed by "(", or "Function(";
-//   - binding followed by ".irb", ".eval", ".local_variable_get",
-//     ".local_variable_set" or ".receiver"; "constructor.constructor";
-//     "require" followed by ".main", ".cache" or ".resolve";
-//   - a rubyModules name, or a rubyIOClasses name with a rubyIOMethods
-//     method, at the start of a path, after "." or "::";
-//   - an indexRoots name at the start of a path followed by "[".
-//
-// "At the start of a path" means not after "." (a "::" before it is fine:
-// "::Kernel.system"). Blanks may sit before "(", ".", "::" and "[", and
-// after "." or "::". Also an index with a sensitive string literal (see
-// hasSensitiveIndex). Linear: each look-ahead reads the blanks and one name
-// after the current name, which the outer loop reads again at most once.
-func hasCodeReach(in string) bool {
-	if hasSensitiveIndex(in) {
-		return true
-	}
-	for i := 0; i < len(in); {
-		if !isIdentByte(in[i]) {
-			i++
-			continue
-		}
-		j := i
-		for j < len(in) && isIdentByte(in[j]) {
-			j++
-		}
-		name := in[i:j]
-		rooted := i == 0 || in[i-1] != '.'
-		// Ruby and JavaScript allow blanks before "(", "." and "[".
-		at := j
-		for at < len(in) && (in[at] == ' ' || in[at] == '\t' || in[at] == '\r' || in[at] == '\n') {
-			at++
-		}
-		var nb byte
-		if at < len(in) {
-			nb = in[at]
-		}
-		next, after := "", in[at:]
-		if strings.HasPrefix(after, "::") {
-			after = after[2:]
-		} else if strings.HasPrefix(after, ".") {
-			after = after[1:]
-		} else {
-			after = ""
-		}
-		after = strings.TrimLeft(after, " \t\r\n")
-		if after != "" {
-			k := 0
-			for k < len(after) && isIdentByte(after[k]) {
-				k++
-			}
-			next = after[:k]
-		}
-		lower := strings.ToLower(name)
-		switch {
-		case nb == '(' && (codeCalls[lower] || name == "Function"):
-			return true
-		case lower == "binding" && (next == "irb" || next == "eval" || next == "local_variable_get" ||
-			next == "local_variable_set" || next == "receiver"):
-			return true
-		case lower == "constructor" && next == "constructor":
-			return true
-		case name == "require" && (next == "main" || next == "cache" || next == "resolve"):
-			return true
-		case rooted && next != "" && rubyModules[name]:
-			return true
-		case rooted && rubyIOClasses[name] && rubyIOMethods[next]:
-			return true
-		case rooted && nb == '[' && indexRoots[name]:
-			return true
-		}
-		i = j
-	}
-	return false
-}
-
-// hasSensitiveIndex reports whether in indexes with a string literal that
-// names an elSensitive or codeCalls name ("x['constructor']['constructor']",
-// "obj[\"getClass\"]"). The literal is read for at most maxELName bytes.
-func hasSensitiveIndex(in string) bool {
-	for off := 0; ; {
-		n := strings.IndexByte(in[off:], '[')
-		if n < 0 {
-			return false
-		}
-		j := off + n + 1
-		for j < len(in) && (in[j] == ' ' || in[j] == '\t') {
-			j++
-		}
-		if j < len(in) && (in[j] == '\'' || in[j] == '"') {
-			q := in[j]
-			lit := in[j+1:]
-			if len(lit) > maxELName+1 {
-				lit = lit[:maxELName+1]
-			}
-			if e := strings.IndexByte(lit, q); e > 0 {
-				lower := strings.ToLower(lit[:e])
-				if elSensitive[lower] || codeCalls[lower] {
-					return true
-				}
-			}
-		}
-		off = off + n + 1
-	}
-}
-
 // elSensitive holds the lower-cased names that make member access or a call
-// inside ${ } or #{ } attack-shaped: credentials, reflection, process and
-// web-context objects (with the JSF scopes and contexts) and the Java package
-// roots. "pass" is not one from alpha.6: it is an ordinary word
-// ("${bus.pass}", "${ticket.pass}"). The Node and Ruby names that reach
-// code only in some positions are in hasCodeReach.
+// inside ${ } attack-shaped (and keep a #{ } data path code): credentials,
+// reflection, process and web-context objects, and the Java package roots.
+// "pass" is not one from alpha.6: it is an ordinary word ("${bus.pass}",
+// "${ticket.pass}").
 var elSensitive = map[string]bool{
 	"password": true, "passwd": true, "pwd": true,
 	"secret": true, "token": true, "credential": true, "credentials": true,
@@ -2102,8 +2004,6 @@ var elSensitive = map[string]bool{
 	"popen": true, "eval": true, "import": true, "scriptengine": true,
 	"session": true, "request": true, "response": true, "pagecontext": true,
 	"java": true, "javax": true,
-	"facescontext": true, "externalcontext": true, "sessionmap": true,
-	"sessionscope": true, "applicationscope": true, "initparam": true,
 }
 
 // maxELName bounds the identifier length hasSensitiveName looks up (longer

