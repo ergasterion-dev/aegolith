@@ -3,7 +3,7 @@ module github.com/ergasterion-dev/aegolith/adapters/fiberv2
 go 1.25
 
 require (
-	github.com/ergasterion-dev/aegolith v0.1.0-alpha.5
+	github.com/ergasterion-dev/aegolith v0.1.0-alpha.6
 	github.com/gofiber/fiber/v2 v2.52.16
 )
 
