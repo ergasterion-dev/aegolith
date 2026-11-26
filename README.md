@@ -21,14 +21,14 @@ before it runs attack detectors, and runs those detectors only where the input i
 
 ## At a glance
 
-| | |
+| Topic | Summary |
 |---|---|
 | **What it is** | A Go library. Middleware for `net/http` and Fiber v2, or call `Inspect` yourself. Not a proxy, not a service, no infrastructure. |
 | **Latest release** | `v0.1.0-alpha.6`, 2026-11-26, for the core module and `adapters/fiberv2`. [What changed](#whats-new-in-alpha6). |
 | **Requirements** | Go 1.25 or later. The core depends on the standard library and [libinjection-go](https://github.com/corazawaf/libinjection-go) only; Fiber lives in its own module. |
-| **Cost per request** | 13.7 µs for a search GET and 19.2 µs for a JSON POST on an Apple M4 Pro laptop, no policy. A hostile 1 MiB body can cost about 0.45 s. The p99 budget of 50 µs was missed in some runs. [Details and caveats](#performance). |
+| **Cost per request** | 13.7 µs for a search GET and 19.2 µs for a JSON POST: lowest of four `make bench` rounds on an Apple M4 Pro laptop, no policy. A hostile 1 MiB body can cost about 0.45 s. The p99 budget of 50 µs was missed in some runs. [Details and caveats](#performance). |
 | **Corpus** | 226 (no policy) and 227 (typed policy) of 230 attacks blocked, 0 of 195 legitimate requests flagged. The corpus was written by the people who tuned the rules. [Details](#corpus-results). |
-| **Safe start** | Monitor mode never blocks; it reports what would have been blocked. |
+| **Safe start** | Monitor mode does not block on matches; it reports what would have been blocked. With `fail_open` set to `false`, an internal error or panic still blocks. |
 | **Not** | A CRS clone, a ModSecurity rule engine, a rate limiter, a bot filter, or a replacement for an edge or network WAF. |
 
 <details>
@@ -169,12 +169,13 @@ flowchart TD
     V --> I["8. Decision<br/>enforce blocks,<br/>monitor reports"]
 ```
 
-Every match passes through rule actions, then exclusions, then de-duplication (rule plus field) as soon as it is found, so an excluded match never stops the pipeline. Each value in steps 4 to 7 is handled like this:
+Every match passes through rule actions, then exclusions, then de-duplication (rule plus field) as soon as it is found, so an excluded match never stops the pipeline. Each value in steps 4 to 7 is handled like this (an undeclared value also gets the detectors after `AEG-SCHEMA-002`; path parameters never raise it):
 
 ```mermaid
 flowchart TD
     V["A value: path parameter, query,<br/>form or JSON field"] --> R{"Is it declared on<br/>the matched route?"}
-    R -- "no route matched,<br/>or not declared" --> S["Every detector runs<br/>(plus AEG-SCHEMA-002 if the route<br/>declares fields in that location)"]
+    R -- "no route matched,<br/>or not declared" --> S["Every detector runs<br/>on a string value;<br/>JSON numbers and booleans<br/>are not scanned"]
+    R -. "undeclared query, form or JSON field,<br/>route declares that location" .-> U["AEG-SCHEMA-002<br/>(monitor by default)"]
     R -- "declared" --> T{"Does it pass<br/>its type?"}
     T -- "no" --> X["AEG-SCHEMA-001"]
     T -- "yes: uuid, uuid_lenient, int,<br/>number, bool, enum, phone" --> K["Not scanned:<br/>it cannot carry an injection"]
@@ -211,7 +212,7 @@ The path from "installed" to "enforcing" has six steps. You can stop at any of t
 
 ### 1. Start in monitor mode, with no configuration
 
-`aegolith.Config{Mode: aegolith.ModeMonitor}` is a complete configuration. With no routes, every input is untyped and gets every detector, and nothing is blocked.
+`aegolith.Config{Mode: aegolith.ModeMonitor}` is a complete configuration. With no routes, every input is untyped and every string value gets every detector, and no match is blocked (`fail_open` defaults to `true`, so an internal error does not block either).
 
 > [!IMPORTANT]
 > The zero value of `Mode` is **enforce**. `aegolith.Config{}` blocks. Set `Mode: aegolith.ModeMonitor` (or `"mode": "monitor"` in a config file) explicitly until you have read the decisions.
@@ -241,7 +242,7 @@ handler := httpwaf.Middleware(fw, httpwaf.Options{OnDecision: onDecision})(mux)
 
 | `Decision` field | Meaning |
 |---|---|
-| `Action` | `allow` or `block`. In monitor mode always `allow`. |
+| `Action` | `allow` or `block`. In monitor mode `allow`, except that an internal error or panic gives `block` when `fail_open` is `false`. |
 | `Monitored` | True when matches were found but not enforced. |
 | `Matches` | One entry per rule and field: `RuleID`, `Category`, `Severity`, `Location`, `Field`, redacted `Snippet`, `Action`. |
 | `Route` | The matched route key (`"POST /api/v1/cart/items"`), empty when none matched. |
@@ -379,7 +380,7 @@ Unknown routes and unknown fields stay in monitor by default even in enforce mod
 
 | Key (JSON) | Default | What it does |
 |---|---|---|
-| `mode` | `enforce` | `enforce` blocks on a block match; `monitor` never blocks. |
+| `mode` | `enforce` | `enforce` blocks on a block match; `monitor` does not block on matches (an internal error still blocks when `fail_open` is `false`). |
 | `routes` | none | Declared routes and their typed fields. With none, every input is untyped. |
 | `unknown_route` | `monitor` | Action for a request matching no route, when routes are set (`AEG-ROUTE-001`). `monitor` or `block`. |
 | `unknown_fields` | `monitor` | Action for an undeclared field on a matched route (`AEG-SCHEMA-002`), unless the route sets its own. `monitor` or `block`. |
@@ -418,26 +419,26 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 <details open>
 <summary><b>Protocol, route and schema</b> (13 rules)</summary>
 
-| Rule | Default | What it flags |
-|---|---|---|
-| `AEG-PROTO-001` | block | Method not in the allow-list. |
-| `AEG-PROTO-002` | block | Body with a content type not in the allow-list. |
-| `AEG-PROTO-003` | block | Body larger than `max_body_bytes`. The rest of the body is not inspected, so setting this rule to `monitor` lets padding hide an attack; cap the body at the server too (see [step 5](#5-cap-the-body-and-decide-about-compression)). |
-| `AEG-PROTO-004` | block | CR, LF or NUL in the path (raw or decoded) or in a header value. |
-| `AEG-PROTO-005` | block | Path traversal in the raw path (`../`, `..\`, `%2e%2e%2f`, `..%2f`, `%252e%252e%252f`). |
-| `AEG-PROTO-006` | block | `Transfer-Encoding` other than `chunked`, or together with `Content-Length`. |
-| `AEG-PROTO-007` | block | Double-encoded path. |
-| `AEG-PROTO-010` | monitor | More than `max_fields` fields, or JSON nested deeper than `max_depth`. |
-| `AEG-PROTO-011` | monitor | A value longer than `max_value_len` (scanned in windows), or the per-request scan budget ran out. |
-| `AEG-PROTO-020` | monitor | Body that cannot be parsed (malformed JSON or multipart); the raw body is still scanned. |
-| `AEG-ROUTE-001` | monitor | No declared route matches (when routes are configured). Set by `unknown_route`. |
-| `AEG-SCHEMA-001` | block | A declared field fails its type, or is an object or array where a scalar is declared. |
-| `AEG-SCHEMA-002` | monitor | A field the matched route does not declare. Set by the route's or config's `unknown_fields`. |
+| Rule | Category | Default | What it flags |
+|---|---|---|---|
+| `AEG-PROTO-001` | protocol | block | Method not in the allow-list. |
+| `AEG-PROTO-002` | protocol | block | Body with a content type not in the allow-list. |
+| `AEG-PROTO-003` | protocol | block | Body larger than `max_body_bytes`. The rest of the body is not inspected, so setting this rule to `monitor` lets padding hide an attack; cap the body at the server too (see [step 5](#5-cap-the-body-and-decide-about-compression)). |
+| `AEG-PROTO-004` | protocol | block | CR, LF or NUL in the path (raw or decoded) or in a header value. |
+| `AEG-PROTO-005` | protocol | block | Path traversal in the raw path (`../`, `..\`, `%2e%2e%2f`, `..%2f`, `%252e%252e%252f`). |
+| `AEG-PROTO-006` | protocol | block | `Transfer-Encoding` other than `chunked`, or together with `Content-Length`. |
+| `AEG-PROTO-007` | protocol | block | Double-encoded path. |
+| `AEG-PROTO-010` | protocol | monitor | More than `max_fields` fields, or JSON nested deeper than `max_depth`. |
+| `AEG-PROTO-011` | protocol | monitor | A value longer than `max_value_len` (scanned in windows), or the per-request scan budget ran out. |
+| `AEG-PROTO-020` | protocol | monitor | Body that cannot be parsed (malformed JSON or multipart); the raw body is still scanned. |
+| `AEG-ROUTE-001` | route | monitor | No declared route matches (when routes are configured). Set by `unknown_route`. |
+| `AEG-SCHEMA-001` | schema | block | A declared field fails its type, or is an object or array where a scalar is declared. |
+| `AEG-SCHEMA-002` | schema | monitor | A field the matched route does not declare. Set by the route's or config's `unknown_fields`. |
 
 </details>
 
 <details open>
-<summary><b>Injection and file abuse</b> (18 rules)</summary>
+<summary><b>Injection and file abuse</b> (17 rules)</summary>
 
 | Rule | Category | Default | What it flags |
 |---|---|---|---|
@@ -458,18 +459,18 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-SSRF-001` | ssrf | block | A URL to a cloud metadata endpoint. |
 | `AEG-SSRF-002` | ssrf | block | A URL to localhost, a loopback, private or link-local address. Not applied to `Referer`. |
 | `AEG-XXE-001` | xxe | block | An XML `DOCTYPE` with an external identifier or an entity (only when `allow_xml` is set). |
-| `AEG-SESSION-001` | session | block | A session identifier in a query, form or JSON value (`PHPSESSID=`, `JSESSIONID=`, `ASPSESSIONID`). |
 
 </details>
 
 <details open>
-<summary><b>Keys and scanners</b> (6 rules)</summary>
+<summary><b>Keys, session identifiers and scanners</b> (7 rules)</summary>
 
 | Rule | Category | Default | What it flags |
 |---|---|---|---|
 | `AEG-NOSQL-001` | nosqli | block | A JSON key that starts with `$` (a Mongo operator). |
 | `AEG-NOSQL-002` | nosqli | block | A query or form key that carries a known MongoDB operator (`q[$ne]=1`, `$where=...`); `amount[$USD]` is not one. |
 | `AEG-PPOLL-001` | protopollution | block | A JSON key `__proto__`, `constructor` or `prototype`; a query or form key with a `__proto__` segment or `constructor` then `prototype` in bracket or dot form (`__proto__[isAdmin]`, `a.constructor.prototype.x`). |
+| `AEG-SESSION-001` | session | block | A session identifier in a query, form or JSON value (`PHPSESSID=`, `JSESSIONID=`, `ASPSESSIONID`). |
 | `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, wfuzz, feroxbuster, hydra, acunetix, nessus, openvas, commix, netsparker, arachni, w3af, webinspect, havij, sqlninja, whatweb, detectify, jorgee, zmeu, paros, `qualys was`, and `vega` followed by `/`), as whole words. |
 | `AEG-SCANNER-002` | scanner | block | A well-known probe path: `/wp-admin`, `/phpmyadmin`, `/actuator`, `/server-status`, secret dotfiles (`/.htpasswd`, `/.htaccess`, `/.git-credentials`, `/.npmrc`, `/.netrc`, `/.DS_Store`, shell histories, ...) and private keys (`/id_rsa`, ...) at the path start; `/.env`, `/.git/`, `/.aws/`, `/.ssh/`, `/wp-login.php` and the whole segments `.git`, `.svn`, `.hg`, `.bzr` at the start of any segment; and `/actuator/<endpoint>` (`env`, `heapdump`, ...) at any depth. Not raised for text that lies wholly in literal segments of a declared route the request matched (a route `GET /api/v1/stores/:id/actuator/health`). |
 | `AEG-SCANNER-003` | scanner | block | A backup, editor or PHP file (`.bak`, `.old`, `.orig`, `.swp`, `.save`, `.php`, a trailing `~`), or a SQL dump, SQLite file or archive as the first segment (`/backup.sql`, `/users.sql.gz`, `/db.sqlite`, `/backup2026.zip`; deeper names such as `/api/v1/exports/orders.sql` and compressed web files such as `/sitemap.xml.gz` are clear). Not raised for a last segment spelled literally by a declared route. |
@@ -480,7 +481,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 
 `v0.1.0-alpha.6` was tagged on 2026-11-26 for the core module and for `adapters/fiberv2`, which now requires core alpha.6. It fixes the false positives found by an external validation of alpha.5 (public attack payload lists and benign text) and closes several cheap recall gaps. The full list is in the [changelog](CHANGELOG.md#v010-alpha6); every cost and accepted miss is in the [threat model](docs/threat-model.md#changes-in-alpha6-and-what-they-cost).
 
-| | |
+| Area | Change |
 |---|---|
 | **New rules** (block by default) | `AEG-SQLI-002` (SQL time-delay and command-execution tokens), `AEG-SSTI-002` (server-side include directives). |
 | **Fewer false positives** | Percentages and size ranges in product text (SQLi); locale tokens in user agents, prose `&`, markdown backtick spans (CmdI); backticks in HTML comments, placeholder tags, a mention of `<!DOCTYPE` (XSS); placeholder filter pipes, `${t('cart.title')}`, plain `#{ }` data paths (SSTI). |
@@ -488,10 +489,10 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | **Behaviour change** | A probe-path match is not reported when the text lies wholly in literal segments of the declared route the request matched, so `GET /api/v1/stores/:id/actuator/health` clears its own `actuator/health`. |
 | **New false positives to expect** | Shell snippets with `$(...)`, the bare name `xp_cmdshell`, a quoted server-side include, an archive or SQL file served as the first path segment (`/app.zip`), an application whose user-agent token is a scanner word (`Paros/2.1`). |
 | **Corpus** | 230 attacks and 195 legitimate requests (was 137 and 130), 0 false positives. |
-| **Speed** | Slower than alpha.5 on identical requests; see [Performance](#performance). |
+| **Speed** | Slower than alpha.5 on identical requests: search GET and cart POST benchmarks 14 to 21%, worst-case bodies 4 to 6%, median p99 latency 11 to 24% (release measurements). See [Performance](#performance). |
 
 > [!NOTE]
-> **On `main` but not in the tag.** After the core tag, `main` gained documentation only: a known gap found after tagging (declared templates that end in `/`, [listed below](#known-gaps)), tighter adapter notes, and comments in `internal/engine/inputs.go`. No Go code that runs changed; the adapter tag includes those notes. After both tags, `main` gained the [WAF bench](#waf-bench-in-progress), a separate module in `bench/` that is not part of any release, and `make build`, `test`, `test-quick` and `vet` now also cover it.
+> **On `main` but not in the tag.** After the core tag, `main` gained documentation (a known gap found after tagging, declared templates that end in `/`, [listed below](#known-gaps); tighter adapter notes; comments in `internal/engine/inputs.go`), one adapter test (`adapters/fiberv2/scanner_route_test.go`) and the adapter's pin to core alpha.6 in its `go.mod`. No core Go code that runs changed; the adapter tag `adapters/fiberv2/v0.1.0-alpha.6` includes all of this. After both tags, `main` gained the [WAF bench](#waf-bench-in-progress), a separate module in `bench/` that is not part of any release, and `make build`, `test`, `test-quick` and `vet` now also cover it.
 
 ## Corpus results
 
@@ -537,16 +538,21 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 
 Measured on a developer laptop, not a server, on 2026-11-27 at commit `7ec9018`. The Go code that runs is the same as in the `v0.1.0-alpha.6` tag (only comments changed since). The commands are at the end of this section.
 
-| | |
+| Item | Value |
 |---|---|
 | CPU | Apple M4 Pro (14 cores) |
 | Go | go1.25.12 darwin/arm64, GOMAXPROCS 14 |
-| Load | The laptop was not idle: a virtual machine and desktop applications were running. Each quoted run started with a 1-minute load average below 10 (6.1 to 7.9). |
+| Load | The laptop was not idle: a virtual machine and desktop applications were running. Load average at the start and end of the runs, over 1 and 5 minutes: benchmarks 6.1 to 13.2 and 4.8 to 10.4; latency 7.6 to 10.8 and 7.0 to 9.4. |
 
 > [!WARNING]
-> **The latency budget did not hold in every run.** The spec asks for p99 under 50 µs per typical request on one core. In the six latency runs made for this page, one went over: generic with browser headers, p99 53.0 µs. At release time, alpha.6 was over budget in 3 of 12 runs and alpha.5 in 4 of 12 (see the release measurements below). Every row ever measured over budget had browser headers. Measure on your own hardware before you rely on the budget.
+> **The latency budget did not hold in every run, with either release.** The spec asks for p99 under 50 µs per typical request on one core.
+>
+> - **This page (2026-11-27, alpha.6 code):** 1 of 6 runs was over budget, generic with browser headers at p99 53.0 µs.
+> - **Release measurements (2026-11-26, commit `b0c0ec0`):** alpha.6 was over budget in 3 of 12 runs on its own 195 requests (p99 up to 84.7 µs) and in 4 of 12 on alpha.5's 130 requests and policy (up to 87.0 µs); alpha.5 was over in 4 of 12 (up to 111.8 µs). The slowest single request in those runs took 19.5 ms.
+>
+> In the runs recorded here, every row over budget had browser headers. Measure on your own hardware before you rely on the budget.
 
-**Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Four rounds were run; one started with a 1-minute load of 11.4 and is not counted. Each number is the **lowest of the other three** (no cell of the fourth round was lower). "Generic" is no policy, "api-aware" is the typed corpus policy.
+**Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Four rounds were run, and each number is the **lowest of all four**. Round 3 started with a 1-minute load of 11.4; none of its cells was the lowest, so leaving it out would change nothing. "Generic" is no policy, "api-aware" is the typed corpus policy.
 
 | Benchmark | Generic | API-aware | Allocs/op (generic) |
 |---|--:|--:|--:|
@@ -558,16 +564,16 @@ Measured on a developer laptop, not a server, on 2026-11-27 at commit `7ec9018`.
 | `ScanText` on a short prose sentence | 3.3 µs | | 59 |
 | `ScanText` on a SQLi payload | 0.97 µs | | 17 |
 
-**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`), alpha.6 on its 195 legitimate corpus requests, with and without a realistic set of browser headers. Six runs were made. The first three started with a 1-minute load of 10.8 and are not in this table; one of them is the run over budget above. The table is the other three runs: p50 and lowest p99 are the lowest any of them produced, highest p99 and highest max the worst.
+**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`), alpha.6 on its 195 legitimate corpus requests, with and without a realistic set of browser headers. Six runs were made and every run is counted; 1 of the 6 was over budget. Columns: lowest p50 of the six runs, lowest p99, highest p99, and highest max (the slowest single request in any run).
 
-| Configuration | p50 | Lowest p99 | Highest p99 | Highest max |
+| Configuration | Lowest p50 | Lowest p99 | Highest p99 | Highest max |
 |---|--:|--:|--:|--:|
-| generic, corpus requests | 5.4 µs | 15.5 µs | 16.3 µs | 213 µs |
-| generic, with browser headers | 14.0 µs | 23.3 µs | 30.5 µs | 299 µs |
-| api-aware, corpus requests | 3.8 µs | 11.3 µs | 15.3 µs | 192 µs |
-| api-aware, with browser headers | 12.8 µs | 22.5 µs | 26.4 µs | 376 µs |
+| generic, corpus requests | 5.4 µs | 15.5 µs | 18.0 µs | 363 µs |
+| generic, with browser headers | 14.0 µs | 23.3 µs | **53.0 µs (over budget)** | 690 µs |
+| api-aware, corpus requests | 3.8 µs | 11.3 µs | 20.8 µs | 799 µs |
+| api-aware, with browser headers | 12.8 µs | 22.5 µs | 40.6 µs | 1.62 ms |
 
-**Worst case.** Cost is linear in the input and bounded, but a hostile large body is not cheap. The adversarial 1 MiB bodies in `BenchmarkInspectWorstCase` (lowest of the three counted rounds):
+**Worst case.** Cost is linear in the input and bounded, but a hostile large body is not cheap. The adversarial 1 MiB bodies in `BenchmarkInspectWorstCase` (lowest of all four rounds):
 
 | Body | Time | Allocated |
 |---|--:|--:|
@@ -718,7 +724,7 @@ The full list, with the reasons, is in the [threat model](docs/threat-model.md#k
 - **Worst-case cost.** A hostile 1 MiB body can cost about 0.45 s of CPU on an Apple M4 Pro and 128 MB of allocation (see [Performance](#performance)); the same body took up to 0.66 s while that laptop was loaded, and slower hardware takes longer. In monitor mode an over-cap body of 2 MiB+1 bytes (the Fiber adapter hands over that much) measured about 0.44 s and 145 MB. The scan budget is kept at 8x the body limit on purpose.
 - **Declared templates that end in `/`** (found after the alpha.6 tag). With `GET /actuator/health/` declared, `GET /actuator/health` is not flagged by the scanner path rules (alpha.5 flagged it), and another handler may answer it: Fiber with `StrictRouting` serves it with a later `/actuator/:ep`, `/actuator/*` or catch-all handler, if there is one, when the template has no parameter; Go's `ServeMux` serves it with a pattern that matches the slashless path itself, such as `/actuator/{ep}`. If another handler could answer that path, register the route and declare its template without the final slash. Details in the [threat model](docs/threat-model.md#known-gaps-found-in-the-alpha6-review).
 
-<details>
+<details open>
 <summary><b>Recall traded for fewer false positives, and new false positives in alpha.6</b></summary>
 
 - **Recall traded for fewer false positives:** `x & cat /flag.txt` (no flag, after a prose `&`) and `Location:evil.com` in a value are allowed.
