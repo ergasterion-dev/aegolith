@@ -4,6 +4,8 @@
 package target
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +33,14 @@ const (
 	maxErrorLen  = 128
 )
 
+// maxEchoedIDLen is the longest request ID the middleware puts in its block
+// answer.
+const maxEchoedIDLen = 64
+
+// inspectionFailed marks the decision record of a request blocked because
+// inspecting it panicked.
+const inspectionFailed = "inspection failed"
+
 // Config configures the target.
 type Config struct {
 	// Mode is the firewall's mode. It overrides the mode in the policy file.
@@ -49,6 +59,12 @@ type Config struct {
 // record after it has been answered, so an interrupted request never leaves an
 // access record without its decision. If the decision record cannot be
 // written, the access record is withheld too.
+//
+// If inspection itself panics, the middleware reports no decision. A firewall
+// that fails closed blocks the request, which is recorded as a block with no
+// rules and the error "inspection failed". A firewall that fails open (the
+// default) passes it on, and nothing here can tell that apart from a clean
+// allow: it leaves an access record and no decision.
 func Handler(cfg Config) (http.Handler, error) {
 	if cfg.Access == nil || cfg.Decisions == nil {
 		return nil, errors.New("target: the access and decision writers are required")
@@ -79,9 +95,9 @@ type server struct {
 	fw                *aegolith.Firewall
 	unrecorded        http.Handler // for a request that cannot be joined
 	access, decisions *records.Writer
-	// A failed Writer fails every later record, so only the first failure is
-	// reported.
-	reportFailure sync.Once
+	// A failed Writer fails every later record, so only the first failure of
+	// each log is reported.
+	accessFailure, decisionFailure sync.Once
 }
 
 func (s *server) serve(w http.ResponseWriter, r *http.Request) {
@@ -96,30 +112,66 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		Path:   clip(r.URL.EscapedPath(), maxPathLen),
 		Time:   time.Now().UTC(),
 	}
-	// The hook is bound to this request, so that a lost decision record can
-	// withhold this request's access record.
-	lost := false
+	// The middleware options are bound to this request, so that a lost
+	// decision record can withhold this request's access record.
+	var decided, blocked, lost bool
+	record := func(d records.Decision) {
+		if err := s.decisions.Write(d); err != nil {
+			lost = true
+			report(&s.decisionFailure, "decision", err)
+		}
+	}
 	waf := httpwaf.Middleware(s.fw, httpwaf.Options{
 		OnDecision: func(_ *aegolith.Request, d aegolith.Decision) {
-			if err := s.decisions.Write(decisionRecord(id, d)); err != nil {
-				lost = true
-				s.report("decision", err)
-			}
+			decided = true
+			record(decisionRecord(id, d))
 		},
+		BlockHandler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			blocked = true
+			writeBlocked(w, id)
+		}),
 	})
 	waf(http.HandlerFunc(backend)).ServeHTTP(w, r)
+	// A block the hook never saw: inspection panicked and the firewall fails
+	// closed. With no decision record it would read as passed.
+	if blocked && !decided {
+		record(records.Decision{
+			ID:     id,
+			Action: aegolith.ActionBlock.String(),
+			Rules:  []string{},
+			Error:  inspectionFailed,
+		})
+	}
 	if lost {
 		return
 	}
 	if err := s.access.Write(access); err != nil {
-		s.report("access", err)
+		report(&s.accessFailure, "access", err)
 	}
 }
 
-func (s *server) report(log string, err error) {
-	s.reportFailure.Do(func() {
+func report(once *sync.Once, log string, err error) {
+	once.Do(func() {
 		slog.Error("target: records are being lost", "log", log, "error", err)
 	})
+}
+
+// writeBlocked gives the answer of the middleware's default block handler,
+// which a BlockHandler replaces and the library does not export: 403 with the
+// request ID, or a random one if the ID is too long to echo.
+func writeBlocked(w http.ResponseWriter, id string) {
+	if len(id) > maxEchoedIDLen {
+		var b [8]byte
+		_, _ = rand.Read(b[:]) // crypto/rand.Read does not return an error
+		id = hex.EncodeToString(b[:])
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	// The only failure left is a client that went away.
+	_ = json.NewEncoder(w).Encode(struct {
+		Error     string `json:"error"`
+		RequestID string `json:"request_id"`
+	}{"request blocked", id})
 }
 
 // backend stands for the protected application. It reads the body, as an

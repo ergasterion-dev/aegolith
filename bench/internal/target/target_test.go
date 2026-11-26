@@ -5,8 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
+	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +20,7 @@ import (
 
 	"github.com/ergasterion-dev/aegolith"
 	"github.com/ergasterion-dev/aegolith/bench/internal/records"
+	"github.com/ergasterion-dev/aegolith/httpwaf"
 )
 
 // attack is a SQL injection the generic detectors block.
@@ -241,6 +248,161 @@ func TestLostDecisionWithholdsAccessRecord(t *testing.T) {
 	get(h, "/x?q=apples", "clean")
 	if !strings.Contains(access.String(), `"clean"`) {
 		t.Errorf("a request with no decision still gets its access record, got %q", access.String())
+	}
+}
+
+// panicOnce is a request body whose first Read panics, which makes the
+// middleware's inspection step panic. Later reads find it empty, so a request
+// that is passed on can still be answered.
+type panicOnce struct{ panicked bool }
+
+func (b *panicOnce) Read([]byte) (int, error) {
+	if !b.panicked {
+		b.panicked = true
+		panic("body read failed")
+	}
+	return 0, io.EOF
+}
+
+func (*panicOnce) Close() error { return nil }
+
+func unreadable() *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/x", nil)
+	r.Body = &panicOnce{}
+	return r
+}
+
+// failClosedPolicy writes a policy that blocks on an internal error.
+func failClosedPolicy(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(path, []byte(`{"fail_open": false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The middleware blocks a request whose inspection panicked without calling
+// OnDecision. Without a decision record the block would read as "passed".
+func TestFailClosedPanicIsRecordedAsBlock(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []aegolith.Mode{aegolith.ModeEnforce, aegolith.ModeMonitor} {
+		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
+			h, l := newHandler(t, mode, failClosedPolicy(t))
+			w := send(h, unreadable(), "t1")
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("status %d, want 403", w.Code)
+			}
+			if want := `{"error":"request blocked","request_id":"t1"}` + "\n"; w.Body.String() != want {
+				t.Errorf("body %q, want %q", w.Body.String(), want)
+			}
+			access, decisions := l.read(t)
+			if _, ok := access["t1"]; !ok {
+				t.Error("no access record")
+			}
+			if len(decisions["t1"]) != 1 {
+				t.Fatalf("decisions = %+v, want one for t1", decisions)
+			}
+			d := decisions["t1"][0]
+			if d.Action != "block" || d.Monitored || len(d.Rules) != 0 || d.Error != "inspection failed" {
+				t.Errorf("decision = %+v, want a block with no rules and the error", d)
+			}
+			if !strings.Contains(l.decisions.String(), `"rules":[]`) {
+				t.Errorf("rules must be an empty list: %s", l.decisions.String())
+			}
+		})
+	}
+}
+
+func TestFailClosedPanicWithLostDecisionWithholdsAccessRecord(t *testing.T) {
+	t.Parallel()
+	var access bytes.Buffer
+	h, err := Handler(Config{
+		PolicyPath: failClosedPolicy(t),
+		Access:     records.NewWriter(&access),
+		Decisions:  records.NewWriter(brokenWriter{}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := send(h, unreadable(), "t1"); w.Code != http.StatusForbidden {
+		t.Errorf("status %d, want 403", w.Code)
+	}
+	if access.Len() != 0 {
+		t.Errorf("access record written although its decision was lost: %s", access.String())
+	}
+}
+
+// The known limit: a firewall that fails open passes the request on, and
+// nothing tells that apart from a clean allow.
+func TestFailOpenPanicLooksLikeCleanAllow(t *testing.T) {
+	t.Parallel()
+	h, l := newHandler(t, aegolith.ModeEnforce, "")
+	if w := send(h, unreadable(), "t1"); w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", w.Code)
+	}
+	access, decisions := l.read(t)
+	if _, ok := access["t1"]; !ok || len(decisions) != 0 {
+		t.Errorf("access %v, decisions %+v; want an access record only", ok, decisions)
+	}
+}
+
+// The target replaces the middleware's block handler to see the block; the
+// answer must stay the middleware's own.
+func TestBlockResponseMatchesMiddlewareDefault(t *testing.T) {
+	t.Parallel()
+	fw, err := aegolith.New(aegolith.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	library := httpwaf.Middleware(fw, httpwaf.Options{})(http.NotFoundHandler())
+	h, _ := newHandler(t, aegolith.ModeEnforce, "")
+
+	// The middleware echoes an ID of up to 64 characters.
+	for _, id := range []string{"t1", strings.Repeat("a", 64)} {
+		got, want := get(h, attack, id), get(library, attack, id)
+		if got.Code != want.Code || got.Body.String() != want.Body.String() ||
+			!maps.EqualFunc(got.Header(), want.Header(), slices.Equal[[]string]) {
+			t.Errorf("id of %d: got %d %v %q, want %d %v %q", len(id),
+				got.Code, got.Header(), got.Body.String(), want.Code, want.Header(), want.Body.String())
+		}
+	}
+	// A longer one is replaced by a random one.
+	random := regexp.MustCompile(`^\{"error":"request blocked","request_id":"[0-9a-f]{16}"\}\n$`)
+	long := strings.Repeat("a", 65)
+	if got, want := get(h, attack, long).Body.String(), get(library, attack, long).Body.String(); !random.MatchString(got) || !random.MatchString(want) {
+		t.Errorf("bodies %q and %q, want a random request id in both", got, want)
+	}
+}
+
+// Not parallel: it replaces the default logger.
+func TestEachLogReportsItsFirstFailure(t *testing.T) {
+	logger, output, flags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(logger)
+		log.SetOutput(output)
+		log.SetFlags(flags)
+	})
+	var reported bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&reported, nil)))
+
+	h, err := Handler(Config{
+		Mode:      aegolith.ModeMonitor,
+		Access:    records.NewWriter(brokenWriter{}),
+		Decisions: records.NewWriter(brokenWriter{}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		get(h, attack, "lost-decision")
+		get(h, "/x?q=apples", "lost-access")
+	}
+	for _, name := range []string{"log=decision", "log=access"} {
+		if got := strings.Count(reported.String(), name); got != 1 {
+			t.Errorf("%s reported %d times, want once:\n%s", name, got, reported.String())
+		}
 	}
 }
 
