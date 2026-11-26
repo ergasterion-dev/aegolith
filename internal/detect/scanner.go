@@ -115,6 +115,12 @@ func rootSegment(p string) string {
 // and so ".tar.gz"). An API serves none of these at its root; deeper in
 // the path they are ordinary export or download names
 // ("/api/v1/exports/orders.sql") and stay clear. Case is ignored.
+//
+// A compressed web or text file is not an archive: ".gz", ".bz2" or ".xz"
+// right after one of webTypes ("/sitemap.xml.gz", "/main.js.gz") is
+// clear, unless an earlier extension is ".sql" (above) or another archive
+// (".tar", ".zip", ...: "/backup.tar.xml.gz"). Only the extension right
+// before the compression counts: "/main.js.map.gz" is flagged.
 func isRootDump(seg string) bool {
 	for i := 0; i+4 <= len(seg); i++ {
 		if seg[i] == '.' && hasPrefixFold(seg[i:], ".sql") && (i+4 == len(seg) || seg[i+4] == '.') {
@@ -123,10 +129,46 @@ func isRootDump(seg string) bool {
 	}
 	for _, ext := range [...]string{".sqlite", ".sqlite3", ".zip", ".rar", ".7z", ".tar", ".tgz", ".gz", ".bz2", ".xz"} {
 		if len(seg) >= len(ext) && hasPrefixFold(seg[len(seg)-len(ext):], ext) {
+			if (ext == ".gz" || ext == ".bz2" || ext == ".xz") && compressedWebFile(seg[:len(seg)-len(ext)]) {
+				return false
+			}
 			return true
 		}
 	}
 	return false
+}
+
+// webTypes are the extensions of files a site serves precompressed.
+var webTypes = [...]string{"xml", "txt", "html", "js", "css", "json", "svg", "wasm", "csv"}
+
+// compressedWebFile reports whether name, a file name without its
+// compression extension, ends in one of webTypes and holds no archive
+// extension before it (a '.' followed by an archive name and another '.').
+func compressedWebFile(name string) bool {
+	dot := strings.LastIndexByte(name, '.')
+	if dot < 0 {
+		return false
+	}
+	inner, web := name[dot+1:], false
+	for _, w := range webTypes {
+		if len(inner) == len(w) && hasPrefixFold(inner, w) {
+			web = true
+		}
+	}
+	if !web {
+		return false
+	}
+	for i := 0; i < dot; i++ {
+		if name[i] != '.' {
+			continue
+		}
+		for _, a := range [...]string{"tar.", "tgz.", "zip.", "rar.", "7z.", "gz.", "bz2.", "xz.", "sqlite.", "sqlite3."} {
+			if hasPrefixFold(name[i+1:], a) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // probeMatch reports whether p holds a probe name whose range keep accepts.
@@ -169,13 +211,17 @@ func probeMatch(p string, keep func(start, end int) bool) bool {
 			}
 		}
 		if i == 0 {
+			// A root name's range runs to the end of the path: what follows
+			// it (an actuator endpoint, a wp-admin page) is part of the
+			// probe, so a declared "/actuator/:ep" or "/wp-admin/*" does
+			// not excuse it.
 			for _, pre := range rootNames {
-				if namedSegment(rest, pre) && keep(1, len(pre)) {
+				if namedSegment(rest, pre) && keep(1, len(p)) {
 					return true
 				}
 			}
 			for _, pre := range [...]string{"/.htaccess", "/.htpasswd", "/.htdigest", "/.htgroup", "/.htusers", "/.git-credentials"} {
-				if hasPrefixFold(rest, pre) && keep(1, len(pre)) {
+				if hasPrefixFold(rest, pre) && keep(1, len(p)) {
 					return true
 				}
 			}

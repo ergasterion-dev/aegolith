@@ -169,6 +169,10 @@
 {"name":"hydra","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Hydra"},"content_type":"","body":""}
 {"name":"undeclared actuator endpoint beside a declared one","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/stores/1/actuator/heapdump","query":[],"headers":{},"content_type":"","body":""}
 {"name":"dotenv in the parameter of a declared actuator route","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/stores/.env/actuator/health","query":[],"headers":{},"content_type":"","body":""}
+{"name":"actuator endpoint in a declared root parameter","category":"scanner","kind":"attack","method":"GET","path":"/actuator/heapdump","query":[],"headers":{},"content_type":"","body":""}
+{"name":"declared actuator route with a trailing slash","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/stores/1/actuator/health/","query":[],"headers":{},"content_type":"","body":""}
+{"name":"declared actuator route with an encoded slash","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/stores/a%2Fb/actuator/health","query":[],"headers":{},"content_type":"","body":""}
+{"name":"compressed archive named as xml","category":"scanner","kind":"attack","method":"GET","path":"/backup.tar.xml.gz","query":[],"headers":{},"content_type":"","body":""}
 {"name":"git directory without a slash","category":"scanner","kind":"attack","method":"GET","path":"/.git","query":[],"headers":{},"content_type":"","body":""}
 {"name":"svn entries","category":"scanner","kind":"attack","method":"GET","path":"/.svn/entries","query":[],"headers":{},"content_type":"","body":""}
 {"name":"hg dirstate under prefix","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/.hg/dirstate","query":[],"headers":{},"content_type":"","body":""}

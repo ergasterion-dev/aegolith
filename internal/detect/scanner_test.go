@@ -215,6 +215,18 @@ func TestProbePathAlpha6(t *testing.T) {
 		"/sql", "/backup", "/backups/", "/mysql", "/sqlite-guide", "/id_rsa_guide", "/ids", "/.sqlfluff",
 		"/data.sqlx", "/archive", "/zip-codes", "/gz", "/robots.txt", "/openapi.json", "/favicon.ico",
 		"/api/v1/orders.zip", "/v1/exports.tar.gz",
+		// Compressed web and text files at the root (sitemaps,
+		// precompressed assets).
+		"/sitemap.xml.gz", "/sitemap_index.xml.gz", "/index.html.gz", "/main.js.gz", "/robots.txt.gz",
+		"/export.csv.gz", "/app.css.br", "/data.json.xz", "/logo.svg.gz", "/app.wasm.gz", "/SITEMAP.XML.GZ",
+		"/feed.xml.bz2",
+	})
+	// Still dumps or archives: a compressed archive or SQL name, or a
+	// web extension that is not the one right before the compression.
+	assertHits(t, "ProbePath", ProbePath, backup, []string{
+		"/x.sql.json.gz", "/backup.tar.xml.gz", "/backup.zip.json.gz", "/x.json.tar.gz", "/x.xml.gz.gz",
+		"/backup.json.zip", "/x.html.tar", "/sitemap.xml.7z", "/sitemap.xml.rar", "/error_log.gz", "/.gz",
+		"/main.js.map.gz", "/release-1.2.3.zip", "/v1.2.tar",
 	})
 }
 

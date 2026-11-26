@@ -263,6 +263,12 @@ hdr $A scanner "hydra"                 User-Agent "Hydra"
 # an endpoint it does not declare, or one in a parameter, is still a probe.
 path $A scanner "undeclared actuator endpoint beside a declared one" "/api/v1/stores/1/actuator/heapdump"
 path $A scanner "dotenv in the parameter of a declared actuator route" "/api/v1/stores/.env/actuator/health"
+# Aegolith (alpha.6 review): the policy also declares GET /actuator/:ep, and a trailing slash
+# the template lacks or a %2F in the parameter excuses nothing.
+path $A scanner "actuator endpoint in a declared root parameter" "/actuator/heapdump"
+path $A scanner "declared actuator route with a trailing slash" "/api/v1/stores/1/actuator/health/"
+path $A scanner "declared actuator route with an encoded slash" "/api/v1/stores/a%2Fb/actuator/health"
+path $A scanner "compressed archive named as xml" "/backup.tar.xml.gz"
 # Aegolith (alpha.6): VCS and secret files at the root, root dumps and archives, more scanner agents.
 path $A scanner "git directory without a slash" "/.git"
 path $A scanner "svn entries"          "/.svn/entries"

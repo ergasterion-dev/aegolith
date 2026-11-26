@@ -29,6 +29,8 @@ func TestDeclaredActuatorRouteThroughServeMux(t *testing.T) {
 		want int
 	}{
 		{"/api/v1/stores/42/actuator/health", http.StatusOK},
+		{"/api/v1/stores/42/actuator/health/", http.StatusForbidden}, // the "/" catch-all would answer it
+		{"/api/v1/stores/a%2Fb/actuator/health", http.StatusForbidden},
 		{"/api/v1/devices/42/actuator/health", http.StatusForbidden},
 		{"/api/v1/stores/42/actuator/env", http.StatusForbidden},
 		{"/api/v1/stores/42/.git/config", http.StatusForbidden},

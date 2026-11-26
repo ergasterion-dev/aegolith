@@ -38,6 +38,9 @@ func TestDeclaredRouteScannerPath(t *testing.T) {
 		policy.Route{Method: "GET", Path: "/api/v1/stores/:id/actuator/health/:file"},
 		policy.Route{Method: "GET", Path: "/api/v1/vault/:x/actuator/env"},
 		policy.Route{Method: "GET", Path: "/api/v1/files/*"},
+		policy.Route{Method: "GET", Path: "/actuator/:ep"},
+		policy.Route{Method: "GET", Path: "/actuator/health"},
+		policy.Route{Method: "GET", Path: "/wp-admin/*"},
 		policy.Route{Method: "GET", Path: "/:slug"},
 		policy.Route{Method: "GET", Path: "/:a/:b"},
 		policy.Route{Method: "GET", Path: "/*"},
@@ -56,14 +59,14 @@ func TestDeclaredRouteScannerPath(t *testing.T) {
 		{"GET", "/api/v1/stores/1/actuator/info", false},
 		{"GET", "/api/v1/stores/1/actuator/metrics", false},
 		{"GET", "/api/v1/stores/1/actuator/env", false},
-		{"GET", "/api/v1/stores/4b8e2f1a/actuator/health/", false}, // one trailing slash, as the router
-		{"HEAD", "/api/v1/stores/1/actuator/health", false},        // HEAD falls back to GET, as the router
-		{"GET", "/API/V1/Stores/1/Actuator/Health", true},          // folding router: the same handler
+		{"HEAD", "/api/v1/stores/1/actuator/health", false}, // HEAD falls back to GET, as the router
+		{"GET", "/API/V1/Stores/1/Actuator/Health", true},   // folding router: the same handler
 		{"GET", "/api/v1/branches/1/actuator/health", false},
 		{"GET", "/api/v1/stores/1/actuator/env/x", false}, // literal prefix, harmless wildcard rest
-		// %2F stays inside the parameter: the actuator text it decodes to
-		// is not an endpoint, the real one is literal.
-		{"GET", "/api/v1/stores/1%2Factuator/actuator/health", false},
+		// A double-encoded slash stays one segment on every router.
+		{"GET", "/api/v1/stores/x%252Fy/actuator/health", false},
+		// A root probe name declared wholly literally.
+		{"GET", "/actuator/health", false},
 		// A dot segment as the parameter is the router's view too (the
 		// protocol rule AEG-PROTO-005 refuses it anyway).
 		{"GET", "/api/v1/stores/../actuator/env", false},
@@ -72,7 +75,7 @@ func TestDeclaredRouteScannerPath(t *testing.T) {
 			t.Errorf("declared %s %q: %v", tc.method, tc.path, ids)
 		}
 		// Without a policy the same path is a probe.
-		if !strings.Contains(tc.path, "%2F") && len(scannerRules(do(generic, tc.method, tc.path, tc.fold))) == 0 {
+		if len(scannerRules(do(generic, tc.method, tc.path, tc.fold))) == 0 {
 			t.Errorf("generic %s %q: not flagged", tc.method, tc.path)
 		}
 	}
@@ -93,13 +96,28 @@ func TestDeclaredRouteScannerPath(t *testing.T) {
 		{"GET", "/api/v1/stores/1/actuator/env/.env", false, "AEG-SCANNER-002"},
 		{"GET", "/api/v1/stores/x%2F.env/actuator/health", false, "AEG-SCANNER-002"}, // %2F in a parameter
 		{"GET", "/api/v1/stores/x%2Factuator%2Fenv/actuator/health", false, "AEG-SCANNER-002"},
-		{"GET", "/api/v1/vault/.env/actuator/env", false, "AEG-SCANNER-002"},                                // second match in a parameter
-		{"GET", "/api/v1/stores/1/actuator/health/config.php.bak", false, "AEG-SCANNER-003"},                // backup file in a parameter
-		{"GET", "/api/v1/files/.git/config", false, "AEG-SCANNER-002"},                                      // wildcard
-		{"GET", "/.env", false, "AEG-SCANNER-002"},                                                          // /:slug
-		{"GET", "/actuator/env", false, "AEG-SCANNER-002"},                                                  // /:a/:b
-		{"GET", "/wp-admin/install.php", false, "AEG-SCANNER-002"},                                          // /:a/:b
-		{"GET", "/x/y/.git/config", false, "AEG-SCANNER-002"},                                               // /*
+		{"GET", "/api/v1/vault/.env/actuator/env", false, "AEG-SCANNER-002"},                 // second match in a parameter
+		{"GET", "/api/v1/stores/1/actuator/health/config.php.bak", false, "AEG-SCANNER-003"}, // backup file in a parameter
+		{"GET", "/api/v1/files/.git/config", false, "AEG-SCANNER-002"},                       // wildcard
+		{"GET", "/.env", false, "AEG-SCANNER-002"},                                           // /:slug
+		{"GET", "/actuator/env", false, "AEG-SCANNER-002"},                                   // /:a/:b
+		{"GET", "/wp-admin/install.php", false, "AEG-SCANNER-002"},                           // /:a/:b
+		{"GET", "/x/y/.git/config", false, "AEG-SCANNER-002"},
+		// A root probe name runs to the end of the path: a parameter or
+		// wildcard after it is part of the match.
+		{"GET", "/actuator/env", false, "AEG-SCANNER-002"},
+		{"GET", "/actuator/heapdump", false, "AEG-SCANNER-002"},
+		{"GET", "/actuator/jolokia", false, "AEG-SCANNER-002"},
+		{"GET", "/wp-admin/setup-config", false, "AEG-SCANNER-002"},
+		{"GET", "/wp-admin/", false, "AEG-SCANNER-002"},
+		// A trailing slash the template does not have: ServeMux and Fiber
+		// StrictRouting send it to another handler.
+		{"GET", "/api/v1/stores/7/actuator/health/", false, "AEG-SCANNER-002"},
+		{"GET", "/actuator/health/", false, "AEG-SCANNER-002"},
+		// %2F in a parameter: Fiber UnescapePath routes it elsewhere.
+		{"GET", "/api/v1/stores/a%2Fb/actuator/health", false, "AEG-SCANNER-002"},
+		{"GET", "/api/v1/stores/a%2fb/actuator/health", false, "AEG-SCANNER-002"},
+		{"GET", "/api/v1/stores/1%2Factuator/actuator/health", false, "AEG-SCANNER-002"},                    // /*
 		{"GET", "/api/v1/stores/1/actuator/env/x/../../../../../../actuator/env", false, "AEG-SCANNER-002"}, // wildcard rest
 	} {
 		ids := scannerRules(do(e, tc.method, tc.path, tc.fold))
@@ -143,15 +161,17 @@ func TestDeclaredRouteAcceptedMisses(t *testing.T) {
 	routes := []policy.Route{{Method: "GET", Path: "/api/v1/stores/:id/actuator/health"}}
 	declared := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, Routes: routes, UnknownRoute: model.ActionMonitor})
 	folded := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, Routes: routes, UnknownRoute: model.ActionMonitor, CaseInsensitiveRoutes: true})
+	rootLit := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, UnknownRoute: model.ActionMonitor,
+		Routes: []policy.Route{{Method: "GET", Path: "/actuator/health"}}})
 	generic := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true})
 	for _, tc := range []struct {
 		name, method, path string
 		e                  *Engine
 	}{
 		{"1. literal segments", "GET", "/api/v1/stores/7/actuator/health", declared},
-		{"2. trailing slash", "GET", "/api/v1/stores/7/actuator/health/", declared},
 		{"2. HEAD for GET", "HEAD", "/api/v1/stores/7/actuator/health", declared},
 		{"2. folded case", "GET", "/API/V1/Stores/7/Actuator/Health", folded},
+		{"1. root name, wholly literal", "GET", "/actuator/health", rootLit},
 	} {
 		req := func() *model.Request {
 			return &model.Request{Method: tc.method, RawPath: tc.path, Header: http.Header{}}
@@ -162,5 +182,31 @@ func TestDeclaredRouteAcceptedMisses(t *testing.T) {
 		if ids := scannerRules(tc.e.Inspect(req())); len(ids) != 0 {
 			t.Errorf("%s: %q still reported %v: the accepted-miss list is out of date", tc.name, tc.path, ids)
 		}
+	}
+}
+
+// TestDeclaredRouteNotExcused pins the forms that the accepted-miss list
+// says excuse nothing: a trailing slash the template lacks and %2F (any
+// case) in a parameter or wildcard segment.
+func TestDeclaredRouteNotExcused(t *testing.T) {
+	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, UnknownRoute: model.ActionMonitor, Routes: []policy.Route{
+		{Method: "GET", Path: "/api/v1/stores/:id/actuator/health"},
+		{Method: "GET", Path: "/api/v1/shops/*"},
+		{Method: "GET", Path: "/api/v1/hubs/:id/actuator/health/"},
+	}})
+	for _, p := range []string{
+		"/api/v1/stores/7/actuator/health/",
+		"/api/v1/stores/a%2Fb/actuator/health",
+		"/api/v1/stores/a%2fb/actuator/health",
+		"/api/v1/stores/%2F/actuator/health",
+		"/api/v1/shops/x%2F/actuator/env",
+	} {
+		if len(scannerRules(e.Inspect(&model.Request{Method: "GET", RawPath: p, Header: http.Header{}}))) == 0 {
+			t.Errorf("%q: excused", p)
+		}
+	}
+	// A template that ends in '/' itself keeps the trailing-slash form.
+	if ids := scannerRules(e.Inspect(&model.Request{Method: "GET", RawPath: "/api/v1/hubs/7/actuator/health/", Header: http.Header{}})); len(ids) != 0 {
+		t.Errorf("template with a trailing slash: %v", ids)
 	}
 }

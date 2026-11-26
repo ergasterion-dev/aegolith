@@ -122,6 +122,9 @@
         "sort": {"type": "enum", "enum": ["relevance", "price", "-price", "rating", "-rating", "created_at", "-created_at"]}
       }
     },
+    {"method": "GET", "path": "/actuator/:ep"},
+    {"method": "GET", "path": "/sitemap.xml.gz"},
+    {"method": "GET", "path": "/main.js.gz"},
     {
       "method": "GET",
       "path": "/api/v1/stores/:id/actuator/health",

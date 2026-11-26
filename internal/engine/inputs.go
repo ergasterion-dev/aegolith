@@ -33,15 +33,19 @@ import (
 // Accepted misses (declared routes, alpha.6; the same list is in
 // docs/threat-model.md, testdata/corpus/README.md and
 // TestDeclaredRouteAcceptedMisses):
-//  1. A probe-path match whose text lies wholly in literal segments of
-//     the declared route the request matched: `GET
+//  1. A probe-path match whose text lies wholly in literal segments of the
+//     declared route the request matched: `GET
 //     /api/v1/stores/7/actuator/health` when `GET
-//     /api/v1/stores/:id/actuator/health` is declared. The route's own
-//     handler answers it.
-//  2. The same request in the forms the route table already treats as
-//     that route: one trailing slash (`/api/v1/stores/7/actuator/health/`),
-//     `HEAD` for a `GET` route, and other letter case when routes fold case
-//     (`/API/V1/Stores/7/Actuator/Health`).
+//     /api/v1/stores/:id/actuator/health` is declared, and `GET
+//     /actuator/health` when `GET /actuator/health` is declared (for a
+//     root name such as `/actuator` or `/wp-admin` the text runs to the
+//     end of the path). The route's own handler answers it.
+//  2. The same request as `HEAD` for a `GET` route, and in other letter
+//     case when routes fold case (`/API/V1/Stores/7/Actuator/Health`). A
+//     trailing slash the template does not have, and `%2F` in any case in
+//     a parameter or wildcard segment, excuse nothing: ServeMux, Fiber
+//     `StrictRouting` and Fiber `UnescapePath` can send those to another
+//     handler.
 func (s *state) checkProbeAndAgent() {
 	if h, ok := detect.ProbePathExcept(s.path, s.declaredLiteral()); ok {
 		s.hit(h, model.LocPath, "path", s.path)
@@ -64,6 +68,19 @@ func (s *state) declaredLiteral() func(start, end int) bool {
 	if !s.routed {
 		return nil
 	}
+	// Forms a common Go router may send to another handler than the
+	// declared one excuse nothing: a trailing slash the template does not
+	// have (ServeMux, Fiber StrictRouting), and an encoded '/' in a
+	// parameter or wildcard segment (Fiber UnescapePath splits on it).
+	raw := s.req.RawPath
+	if len(raw) > 1 && strings.HasSuffix(raw, "/") && !strings.HasSuffix(s.route.Route.Path, "/") {
+		return nil
+	}
+	for i, seg := range policy.Segments(raw) {
+		if !s.route.Literal(i) && hasEncodedSlash(seg) {
+			return nil
+		}
+	}
 	var mask []byte // per byte of s.path: 0 outside literal segments, 1 in one, 2 a separator
 	built := false
 	return func(start, end int) bool {
@@ -83,6 +100,16 @@ func (s *state) declaredLiteral() func(start, end int) bool {
 		}
 		return lit
 	}
+}
+
+// hasEncodedSlash reports whether seg holds "%2F" in any case.
+func hasEncodedSlash(seg string) bool {
+	for i := 0; i+2 < len(seg); i++ {
+		if seg[i] == '%' && seg[i+1] == '2' && (seg[i+2] == 'F' || seg[i+2] == 'f') {
+			return true
+		}
+	}
+	return false
 }
 
 // literalMask maps each byte of decoded (the decoded form of raw) to the

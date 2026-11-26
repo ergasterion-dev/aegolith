@@ -176,3 +176,5 @@
 {"name":"user agent: app named like a scanner word","category":"fp","kind":"legit","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Vegan Recipes/4.1 CFNetwork/1410.0.3 Darwin/22.6.0"},"content_type":"","body":""}
 {"name":"user agent: app with Vega without a slash","category":"fp","kind":"legit","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Mozilla/5.0 (Linux; Android 14; Vega) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"},"content_type":"","body":""}
 {"name":"user agent: Parosol app","category":"fp","kind":"legit","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Parosol/2.0 (iPhone; iOS 18.1; Scale/3.00)"},"content_type":"","body":""}
+{"name":"root: gzipped sitemap","category":"fp","kind":"legit","method":"GET","path":"/sitemap.xml.gz","query":[],"headers":{},"content_type":"","body":""}
+{"name":"root: precompressed script","category":"fp","kind":"legit","method":"GET","path":"/main.js.gz","query":[],"headers":{},"content_type":"","body":""}
