@@ -4,3 +4,6 @@ bin/
 .superpowers/
 .DS_Store
 # testdata/fuzz/ is tracked on purpose (fuzz regression corpus)
+# WAF bench: fetched third-party sources and run output
+bench/.sources/
+bench/out/

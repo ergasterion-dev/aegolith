@@ -1,5 +1,8 @@
 GO ?= go
 ADAPTERS := adapters/fiberv2
+# The WAF bench is its own module (the make target "bench" runs Go
+# benchmarks, not this).
+BENCHDIR := bench
 FUZZTIME ?= 10s
 # Go files gofmt covers: tracked plus untracked files git does not ignore
 # ("." would also walk scratch directories such as .superpowers/).
@@ -18,6 +21,7 @@ test:
 	$(GO) test -race ./...
 	$(GO) test ./...
 	@if [ -d $(ADAPTERS) ]; then cd $(ADAPTERS) && $(GO) test -race ./... && $(GO) test ./...; fi
+	@if [ -d $(BENCHDIR) ]; then cd $(BENCHDIR) && $(GO) test -race ./... && $(GO) test ./...; fi
 
 test-quick:
 	$(GO) test ./...
@@ -26,6 +30,7 @@ test-quick:
 vet:
 	$(GO) vet ./...
 	@if [ -d $(ADAPTERS) ]; then cd $(ADAPTERS) && $(GO) vet ./...; fi
+	@if [ -d $(BENCHDIR) ]; then cd $(BENCHDIR) && $(GO) vet ./...; fi
 
 fmt:
 	$(GOFILES) | xargs -0 gofmt -w
