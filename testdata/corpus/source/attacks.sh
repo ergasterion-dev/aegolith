@@ -263,6 +263,20 @@ hdr $A scanner "hydra"                 User-Agent "Hydra"
 # an endpoint it does not declare, or one in a parameter, is still a probe.
 path $A scanner "undeclared actuator endpoint beside a declared one" "/api/v1/stores/1/actuator/heapdump"
 path $A scanner "dotenv in the parameter of a declared actuator route" "/api/v1/stores/.env/actuator/health"
+# Aegolith (alpha.6): VCS and secret files at the root, root dumps and archives, more scanner agents.
+path $A scanner "git directory without a slash" "/.git"
+path $A scanner "svn entries"          "/.svn/entries"
+path $A scanner "hg dirstate under prefix" "/api/v1/.hg/dirstate"
+path $A scanner "htpasswd"             "/.htpasswd"
+path $A scanner "DS_Store"             "/.DS_Store"
+path $A scanner "private key at root"  "/id_rsa"
+path $A scanner "sql dump at root"     "/backup.sql"
+path $A scanner "backup archive at root" "/backup2026.zip"
+hdr $A scanner "commix"                User-Agent "commix/v3.9-stable (https://commixproject.com)"
+hdr $A scanner "netsparker"            User-Agent "Mozilla/5.0 (compatible; Netsparker)"
+hdr $A scanner "arachni"               User-Agent "Arachni/v1.6.1"
+hdr $A scanner "qualys was"            User-Agent "Mozilla/5.0 (Qualys WAS)"
+hdr $A scanner "vega"                  User-Agent "Vega/1.0"
 
 # --- 14. Session fixation / misc ----------------------------------------------------------------------------------
 q $A session "session fixation"        "PHPSESSID=attacker-fixed-id"

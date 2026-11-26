@@ -3,6 +3,7 @@ package detect
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ergasterion-dev/aegolith/internal/model"
 )
@@ -168,5 +169,141 @@ func TestProbePathExcept(t *testing.T) {
 		if len(r) == 0 || r[len(r)-1] != want {
 			t.Errorf("%q: ranges %q, want last %q", path, r, want)
 		}
+	}
+}
+
+// TestProbePathAlpha6: VCS directories as whole segments at any depth;
+// secret dotfiles, private keys, SQL dumps, SQLite files and archives as
+// the first segment only (they are legitimate file names deeper in a tree:
+// an export, a repository browser, a key name).
+func TestProbePathAlpha6(t *testing.T) {
+	probe := Hit{RuleID: "AEG-SCANNER-002", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertHits(t, "ProbePath", ProbePath, probe, []string{
+		"/.git", "/.git/", "/.GIT", "/api/v1/.git", "/x/.git.bak",
+		"/.svn", "/.svn/entries", "/.SVN/wc.db", "/api/v1/.svn/entries",
+		"/.hg", "/.hg/dirstate", "/a/.hg/store/data/",
+		"/.bzr", "/.bzr/README",
+		"/.git-credentials",
+		"/.htpasswd", "/.htaccess", "/.htdigest", "/.htgroup", "/.htusers",
+		"/.htaccess.bak1", "/.htaccess-dev", "/.htpasswds", "/.HTACCESS",
+		"/.npmrc", "/.netrc", "/.pgpass", "/.DS_Store", "/.ds_store",
+		"/.bash_history", "/.zsh_history", "/.mysql_history", "/.psql_history",
+		"/.s3cfg", "/.dockercfg", "/.docker/config.json", "/.kube/config",
+		"/id_rsa", "/id_rsa.pub", "/id_dsa", "/id_dsa.ppk", "/id_ecdsa", "/id_ed25519",
+	})
+	backup := Hit{RuleID: "AEG-SCANNER-003", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertHits(t, "ProbePath", ProbePath, backup, []string{
+		"/backup.sql", "/backup2026.sql", "/Dump.sql", "/db.sql", "/.sql", "/users.sql.gz", "/.sql.bz2", "/dump.sql.zip",
+		"/db.sqlite", "/data.sqlite3",
+		"/backup2026.zip", "/backup.zip", "/backup.tar.gz", "/backup.tgz", "/dump.7z", "/site.rar",
+		"/backups.tar.bz2", "/.zip", "/1.tar", "/localhost.tar.xz", "/www.ZIP", "/error_log.gz",
+	})
+	assertNoHits(t, "ProbePath", ProbePath, []string{
+		// The brief's near misses.
+		"/.gitignore", "/.github/", "/.github/workflows/x.yml", "/docs/git-guide", "/api/v1/sql-reports",
+		// Other dot names that are not secrets or VCS metadata.
+		"/.well-known/openid-configuration", "/.well-known/security.txt", "/.gitattributes", "/.gitlab-ci.yml",
+		"/.hgignore", "/.svnignore", "/.github", "/.html", "/.httpd", "/.npmignore", "/.dsstore-guide",
+		"/api/v1/gitlab", "/api/v1/git/commits", "/api/v1/svn-mirror", "/hg-docs", "/bzr2git",
+		// Secret and archive names deeper in a tree: exports, repository
+		// browsers, key names.
+		"/api/v1/exports/orders.sql", "/api/v1/exports/backup.sql", "/api/v1/backups/backup2026.zip",
+		"/api/v1/reports/2026.tar.gz", "/api/v1/downloads/site.zip", "/api/v1/files/db.sqlite",
+		"/api/v1/keys/id_rsa", "/api/v1/repos/1/files/.htaccess", "/api/v1/repos/1/files/.npmrc",
+		"/api/v1/files/.DS_Store", "/api/v1/repos/1/files/.netrc",
+		// Root names that only look alike.
+		"/sql", "/backup", "/backups/", "/mysql", "/sqlite-guide", "/id_rsa_guide", "/ids", "/.sqlfluff",
+		"/data.sqlx", "/archive", "/zip-codes", "/gz", "/robots.txt", "/openapi.json", "/favicon.ico",
+		"/api/v1/orders.zip", "/v1/exports.tar.gz",
+	})
+}
+
+func TestUserAgentAlpha6(t *testing.T) {
+	want := Hit{RuleID: "AEG-SCANNER-001", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertHits(t, "UserAgent", UserAgent, want, []string{
+		"commix/v3.9-stable (https://commixproject.com)",
+		"Mozilla/5.0 (compatible; Netsparker)",
+		"Arachni/v1.6.1",
+		"w3af.org", "w3af.sf.net", "Mozilla/4.0 (compatible; w3af.sourceforge.net)",
+		"Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; HP WebInspect)",
+		"Havij",
+		"sqlninja",
+		"WhatWeb/0.5.5",
+		"Mozilla/5.0 (compatible; Detectify) +https://detectify.com/bot/x",
+		"Mozilla/5.0 Jorgee",
+		"ZmEu",
+		"paros",
+		"Paros/3.2.13",
+		"vega/", "Vega/1.0",
+		"qualys was", "Mozilla/5.0 (Qualys WAS)",
+	})
+	assertNoHits(t, "UserAgent", UserAgent, append([]string{
+		// Longer words that contain the names.
+		"Commixer/1.0", "Parosol/2.0", "Vegan Recipes/4.1 CFNetwork/1410.0.3 Darwin/22.6.0",
+		"Vegas Guide/2.0", "Mozilla/5.0 (Linux; Android 14; Vegas)", "Arachnid/1.0",
+		"WhatWebsite/1.0", "Detectifying/1.0", "qualys washer", "Qualysis WAS",
+		// A name without the '/' that the CRS entry has.
+		"Vega", "Vega Lite", "Mozilla/5.0 (Vega)",
+	}, legitUserAgents...))
+}
+
+// TestProbePathAndUserAgentLinear runs ProbePath (with an excuse that reads
+// every range it is given, as the engine's does) and UserAgent on long
+// repetitions of every name they try, the way TestScanTextLinear does:
+// over 8x the time for 4x the input, three times in a row, fails.
+func TestProbePathAndUserAgentLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wall-clock bound; skipped under -short")
+	}
+	reading := func(p string) func() {
+		return func() {
+			ProbePathExcept(p, func(s, e int) bool {
+				n := 0
+				for i := s; i < e; i++ {
+					n += int(p[i])
+				}
+				return n >= 0
+			})
+		}
+	}
+	paths := map[string]string{
+		"git":        "/.git",
+		"git-dir":    "/.git/",
+		"svn":        "/.svn/x",
+		"ht":         "/.htaccess",
+		"actuator":   "/actuator/env",
+		"actuator-x": "/actuator/",
+		"env":        "/.env.",
+		"slashes":    "/",
+	}
+	// One long first segment: the root dump scan reads it once.
+	roots := map[string]string{"sql": ".sql", "sql-almost": ".sq", "dots": "."}
+	agents := map[string]string{"vega": "vega", "vega-x": "vega ", "paro": "paro", "qualys": "qualys wa", "nmap": "nmapnmap"}
+	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
+	limit := wallLimit(2*time.Second, 20*time.Second)
+	check := func(name string, mk func(n int) func()) {
+		s, m, l := mk(small), mk(medium), mk(large)
+		grow := func() bool {
+			ds, dm := bestOf(5, s), bestOf(5, m)
+			return ds > 500*time.Microsecond && dm > 8*ds
+		}
+		if raceSlowdown == 1 && grow() && grow() && grow() {
+			t.Errorf("%s: super-linear", name)
+		}
+		if d := bestOf(3, l); d > limit {
+			t.Errorf("%s: %v on %d bytes, want under %v", name, d, large, limit)
+		}
+	}
+	for name, unit := range paths {
+		check("path "+name, func(n int) func() { return reading(strings.Repeat(unit, n/len(unit))) })
+	}
+	for name, unit := range roots {
+		check("root "+name, func(n int) func() { return reading("/" + strings.Repeat(unit, n/len(unit))) })
+	}
+	for name, unit := range agents {
+		check("ua "+name, func(n int) func() {
+			ua := strings.Repeat(unit, n/len(unit))
+			return func() { UserAgent(ua) }
+		})
 	}
 }

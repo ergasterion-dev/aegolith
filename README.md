@@ -270,18 +270,18 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-NOSQL-002` | nosqli | block | A query or form key that carries a known MongoDB operator (`q[$ne]=1`, `$where=...`); `amount[$USD]` is not one. |
 | `AEG-PPOLL-001` | protopollution | block | A JSON key `__proto__`, `constructor` or `prototype`; a query or form key with a `__proto__` segment or `constructor` then `prototype` in bracket or dot form (`__proto__[isAdmin]`, `a.constructor.prototype.x`). |
 | `AEG-SESSION-001` | session | block | A session identifier in a query, form or JSON value (`PHPSESSID=`, `JSESSIONID=`, `ASPSESSIONID`). |
-| `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, wfuzz, feroxbuster, hydra, acunetix, nessus, openvas). |
-| `AEG-SCANNER-002` | scanner | block | A well-known probe path: `/wp-admin`, `/phpmyadmin`, `/actuator`, `/server-status` at the path start; `/.env`, `/.git/`, `/.aws/`, `/.ssh/`, `/wp-login.php` at the start of any segment; and `/actuator/<endpoint>` (`env`, `heapdump`, ...) at any depth. Not raised for text that lies wholly in literal segments of a declared route the request matched (a route `GET /api/v1/stores/:id/actuator/health`). |
-| `AEG-SCANNER-003` | scanner | block | A backup, editor or PHP file (`.bak`, `.old`, `.orig`, `.swp`, `.save`, `.php`, a trailing `~`). Not raised for a last segment spelled literally by a declared route. |
+| `AEG-SCANNER-001` | scanner | block | A known scanner in `User-Agent` (sqlmap, nikto, nuclei, masscan, nmap, zgrab, wpscan, dirbuster, gobuster, ffuf, wfuzz, feroxbuster, hydra, acunetix, nessus, openvas, commix, netsparker, arachni, w3af, webinspect, havij, sqlninja, whatweb, detectify, jorgee, zmeu, paros, `qualys was`, and `vega` followed by `/`), as whole words. |
+| `AEG-SCANNER-002` | scanner | block | A well-known probe path: `/wp-admin`, `/phpmyadmin`, `/actuator`, `/server-status`, secret dotfiles (`/.htpasswd`, `/.htaccess`, `/.git-credentials`, `/.npmrc`, `/.netrc`, `/.DS_Store`, shell histories, ...) and private keys (`/id_rsa`, ...) at the path start; `/.env`, `/.git/`, `/.aws/`, `/.ssh/`, `/wp-login.php` and the whole segments `.git`, `.svn`, `.hg`, `.bzr` at the start of any segment; and `/actuator/<endpoint>` (`env`, `heapdump`, ...) at any depth. Not raised for text that lies wholly in literal segments of a declared route the request matched (a route `GET /api/v1/stores/:id/actuator/health`). |
+| `AEG-SCANNER-003` | scanner | block | A backup, editor or PHP file (`.bak`, `.old`, `.orig`, `.swp`, `.save`, `.php`, a trailing `~`), or a SQL dump, SQLite file or archive as the first segment (`/backup.sql`, `/users.sql.gz`, `/db.sqlite`, `/backup2026.zip`; deeper names such as `/api/v1/exports/orders.sql` are clear). Not raised for a last segment spelled literally by a declared route. |
 
 Each rule's known gaps and false-positive shapes are in the [threat model](docs/threat-model.md#known-gaps-and-trade-offs).
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **174 attacks and 169 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 67 attacks and 137 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **187 attacks and 178 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 80 attacks and 146 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 170 of 174 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 171 of 174 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 183 of 187 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 184 of 187 blocked, and every legitimate request must fit the policy.
 
 Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-26:
 
@@ -299,11 +299,11 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | nosqli | 2 | 2 | 3 |
 | codei | 8 | 8 | 8 |
 | protocol | 6 | 6 | 7 |
-| scanner | 15 | 15 | 15 |
+| scanner | 28 | 28 | 28 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **170** | **171** | **174** |
-| **False positives** | **0** | **0** | **169** |
+| **Attacks** | **183** | **184** | **187** |
+| **False positives** | **0** | **0** | **178** |
 
 **What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.5):
 
@@ -374,7 +374,7 @@ make corpus     # the tables above
 Aegolith v0.1 is **alpha**. What that means:
 
 - **Alpha release (`v0.1.0-alpha.5`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 170 and 171 of the 174 corpus attacks with no false positives on 169 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Tuned on one corpus.** It blocks 183 and 184 of the 187 corpus attacks with no false positives on 178 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 

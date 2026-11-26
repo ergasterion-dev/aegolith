@@ -8,20 +8,43 @@ import (
 
 // UserAgent reports whether ua names a known attack scanner as a whole word
 // (any case, not part of a longer word: "nmapper" does not count):
-// AEG-SCANNER-001.
+// AEG-SCANNER-001. "qualys was" is matched as one phrase, and "vega" only
+// when a '/' follows it ("Vega/1.0"; "Vega" alone is a common product and
+// place name).
 func UserAgent(ua string) (Hit, bool) {
 	for _, tok := range [...]string{
 		"sqlmap", "nikto", "nuclei", "masscan", "nmap", "zgrab", "wpscan", "dirbuster",
 		"gobuster", "ffuf", "acunetix", "nessus", "openvas", "wfuzz", "feroxbuster", "hydra",
+		// alpha.6: CRS 3.3 scanner names missed by the external validation.
+		"commix", "netsparker", "arachni", "w3af", "webinspect", "havij", "sqlninja",
+		"whatweb", "detectify", "jorgee", "zmeu", "paros", "qualys was",
 	} {
 		if hasLetterWordFold(ua, tok) {
 			return Hit{RuleID: "AEG-SCANNER-001", Category: model.CatScanner, Severity: model.SeverityMedium}, true
 		}
 	}
-	if indexFold(ua, "fuzz faster u fool") >= 0 {
+	if indexFold(ua, "fuzz faster u fool") >= 0 || hasLetterWordBeforeFold(ua, "vega", '/') {
 		return Hit{RuleID: "AEG-SCANNER-001", Category: model.CatScanner, Severity: model.SeverityMedium}, true
 	}
 	return Hit{}, false
+}
+
+// hasLetterWordBeforeFold reports whether the lower-case word w appears in
+// s (any case) with no ASCII letter before it and the byte next right
+// after it.
+func hasLetterWordBeforeFold(s, w string, next byte) bool {
+	for off := 0; ; {
+		n := indexFold(s[off:], w)
+		if n < 0 {
+			return false
+		}
+		at := off + n
+		end := at + len(w)
+		if (at == 0 || !isASCIILetter(s[at-1])) && end < len(s) && s[end] == next {
+			return true
+		}
+		off = at + 1
+	}
 }
 
 // hasLetterWordFold reports whether the lower-case word w appears in s (any
@@ -67,16 +90,57 @@ func ProbePathExcept(p string, excused func(start, end int) bool) (Hit, bool) {
 	if seg := strings.LastIndexByte(p, '/') + 1; isBackupFile(p[seg:]) && keep(seg, len(p)) {
 		return Hit{RuleID: "AEG-SCANNER-003", Category: model.CatScanner, Severity: model.SeverityMedium}, true
 	}
+	if first := rootSegment(p); isRootDump(first) && keep(1, 1+len(first)) {
+		return Hit{RuleID: "AEG-SCANNER-003", Category: model.CatScanner, Severity: model.SeverityMedium}, true
+	}
 	return Hit{}, false
 }
 
+// rootSegment returns the first segment of p ("" when p does not start
+// with '/').
+func rootSegment(p string) string {
+	if p == "" || p[0] != '/' {
+		return ""
+	}
+	if n := strings.IndexByte(p[1:], '/'); n >= 0 {
+		return p[1 : 1+n]
+	}
+	return p[1:]
+}
+
+// isRootDump reports whether seg, the first path segment, names a SQL dump
+// (".sql" followed by the end or another extension: "backup.sql",
+// "users.sql.gz", ".sql"), a SQLite file (".sqlite", ".sqlite3") or an
+// archive (".zip", ".rar", ".7z", ".tar", ".tgz", ".gz", ".bz2", ".xz",
+// and so ".tar.gz"). An API serves none of these at its root; deeper in
+// the path they are ordinary export or download names
+// ("/api/v1/exports/orders.sql") and stay clear. Case is ignored.
+func isRootDump(seg string) bool {
+	for i := 0; i+4 <= len(seg); i++ {
+		if seg[i] == '.' && hasPrefixFold(seg[i:], ".sql") && (i+4 == len(seg) || seg[i+4] == '.') {
+			return true
+		}
+	}
+	for _, ext := range [...]string{".sqlite", ".sqlite3", ".zip", ".rar", ".7z", ".tar", ".tgz", ".gz", ".bz2", ".xz"} {
+		if len(seg) >= len(ext) && hasPrefixFold(seg[len(seg)-len(ext):], ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // probeMatch reports whether p holds a probe name whose range keep accepts.
-// The dotfile directories and files (/.env, /.git/, /.aws/, /.ssh/) and
-// /wp-login.php match at the start of any path segment (a '/' precedes the
-// name), so "/api/v1/.env" counts as well as "/.env": no API names a route
-// that way. /wp-admin, /phpmyadmin, /server-status and /actuator match at
-// the start of the path only, since an API may have its own
-// "/api/server-status" or "/api/v1/devices/actuator/5" route. Below the
+// The dotfile directories and files (/.env, /.git/, /.aws/, /.ssh/), the
+// version-control directories as whole segments (.git, .svn, .hg, .bzr;
+// from alpha.6) and /wp-login.php match at the start of any path segment
+// (a '/' precedes the name), so "/api/v1/.env" counts as well as "/.env":
+// no API names a route that way. "/.gitignore" and "/.github/" do not
+// match: the name must end at the end, '/' or '.'. The rootNames and the
+// .ht* server files and .git-credentials (matched as prefixes, so
+// "/.htaccess-dev" counts) match at the start of the path only, since an
+// API may have its own "/api/server-status" or
+// "/api/v1/devices/actuator/5" route, or serve a repository's
+// ".htaccess" deeper in the path. Below the
 // first segment, actuator counts only when a known Spring Boot endpoint
 // follows it ("/api/v1/actuator/env"; see actuatorEndpoint). Names that
 // are directories end in '/' and match as plain prefixes; the others must
@@ -99,12 +163,19 @@ func probeMatch(p string, keep func(start, end int) bool) bool {
 		if hasPrefixFold(rest, "/wp-login.php") && keep(i+1, i+len("/wp-login.php")) {
 			return true
 		}
-		if namedSegment(rest, "/.env") && keep(i+1, i+len("/.env")) {
-			return true
+		for _, pre := range [...]string{"/.env", "/.git", "/.svn", "/.hg", "/.bzr"} {
+			if namedSegment(rest, pre) && keep(i+1, i+len(pre)) {
+				return true
+			}
 		}
 		if i == 0 {
-			for _, pre := range [...]string{"/wp-admin", "/phpmyadmin", "/actuator", "/server-status"} {
+			for _, pre := range rootNames {
 				if namedSegment(rest, pre) && keep(1, len(pre)) {
+					return true
+				}
+			}
+			for _, pre := range [...]string{"/.htaccess", "/.htpasswd", "/.htdigest", "/.htgroup", "/.htusers", "/.git-credentials"} {
+				if hasPrefixFold(rest, pre) && keep(1, len(pre)) {
 					return true
 				}
 			}
@@ -117,6 +188,19 @@ func probeMatch(p string, keep func(start, end int) bool) bool {
 		}
 	}
 	return false
+}
+
+// rootNames match as the first segment only (followed by the end, '/' or
+// '.'): admin and status pages an API may also have below its prefix, and
+// secret files (shell histories, registry and cloud credentials, private
+// keys) that are ordinary file names in a repository browser or a key
+// store deeper in the path ("/api/v1/repos/1/files/.npmrc",
+// "/api/v1/keys/id_rsa").
+var rootNames = [...]string{
+	"/wp-admin", "/phpmyadmin", "/actuator", "/server-status",
+	"/.npmrc", "/.netrc", "/.pgpass", "/.ds_store", "/.s3cfg", "/.dockercfg", "/.docker", "/.kube",
+	"/.bash_history", "/.zsh_history", "/.mysql_history", "/.psql_history",
+	"/id_rsa", "/id_dsa", "/id_ecdsa", "/id_ed25519",
 }
 
 // namedSegment reports whether rest starts with pre (case-insensitively)

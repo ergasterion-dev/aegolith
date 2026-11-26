@@ -169,6 +169,19 @@
 {"name":"hydra","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Hydra"},"content_type":"","body":""}
 {"name":"undeclared actuator endpoint beside a declared one","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/stores/1/actuator/heapdump","query":[],"headers":{},"content_type":"","body":""}
 {"name":"dotenv in the parameter of a declared actuator route","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/stores/.env/actuator/health","query":[],"headers":{},"content_type":"","body":""}
+{"name":"git directory without a slash","category":"scanner","kind":"attack","method":"GET","path":"/.git","query":[],"headers":{},"content_type":"","body":""}
+{"name":"svn entries","category":"scanner","kind":"attack","method":"GET","path":"/.svn/entries","query":[],"headers":{},"content_type":"","body":""}
+{"name":"hg dirstate under prefix","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/.hg/dirstate","query":[],"headers":{},"content_type":"","body":""}
+{"name":"htpasswd","category":"scanner","kind":"attack","method":"GET","path":"/.htpasswd","query":[],"headers":{},"content_type":"","body":""}
+{"name":"DS_Store","category":"scanner","kind":"attack","method":"GET","path":"/.DS_Store","query":[],"headers":{},"content_type":"","body":""}
+{"name":"private key at root","category":"scanner","kind":"attack","method":"GET","path":"/id_rsa","query":[],"headers":{},"content_type":"","body":""}
+{"name":"sql dump at root","category":"scanner","kind":"attack","method":"GET","path":"/backup.sql","query":[],"headers":{},"content_type":"","body":""}
+{"name":"backup archive at root","category":"scanner","kind":"attack","method":"GET","path":"/backup2026.zip","query":[],"headers":{},"content_type":"","body":""}
+{"name":"commix","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"commix/v3.9-stable (https://commixproject.com)"},"content_type":"","body":""}
+{"name":"netsparker","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Mozilla/5.0 (compatible; Netsparker)"},"content_type":"","body":""}
+{"name":"arachni","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Arachni/v1.6.1"},"content_type":"","body":""}
+{"name":"qualys was","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Mozilla/5.0 (Qualys WAS)"},"content_type":"","body":""}
+{"name":"vega","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Vega/1.0"},"content_type":"","body":""}
 {"name":"session fixation","category":"session","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","PHPSESSID=attacker-fixed-id"]],"headers":{},"content_type":"","body":""}
 {"name":"ldap injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","*)(uid=*))(|(uid=*"]],"headers":{},"content_type":"","body":""}
 {"name":"xpath injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","' or name()='username' or 'x'='y"]],"headers":{},"content_type":"","body":""}
