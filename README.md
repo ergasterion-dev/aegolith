@@ -327,7 +327,7 @@ Measured on a developer laptop, not a server, on the alpha.6 code at commit `b0c
 | CPU | Apple M4 Pro (14 cores) |
 | Go | go1.25.12 darwin/arm64, GOMAXPROCS 14 |
 | Date | 2026-11-26 |
-| Load | The laptop was not idle: load average 5.7 to 9.3 over 1 minute and 7.7 to 10.0 over 5 minutes at the start and end of the alpha.6 runs reported here. Treat the numbers as upper bounds. |
+| Load | The laptop was not idle: load average 5.7 to 9.3 over 1 minute and 7.7 to 10.0 over 5 minutes at the start and end of the alpha.6 benchmark and latency runs reported here. Treat the numbers as upper bounds. |
 
 **Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Each number is the **lowest of 3 runs**. "Generic" is no policy, "api-aware" is the typed corpus policy.
 
