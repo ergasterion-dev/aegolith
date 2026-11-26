@@ -475,9 +475,11 @@ func proseBacktickAt(s string, i, close int) bool {
 // '-' ("id", "uname -m", "id --user --name", "ls -l --escape"). Any other
 // token (an argument, a number, a path, a URL, a quote, an operator), the
 // flags -c and -e, and any flag at all after sh, bash, python, perl, nc,
-// ncat or netcat make it a command. Accepted cost: a command word with
-// such flags in a prose span is clean ("a `whoami` b", "a `uname -a` b",
-// "a `ls -la` b", "a `sh` b"). Linear in len(span).
+// ncat or netcat make it a command. Only a flag that is exactly -c or -e
+// counts, so a bundle that holds one ("ls -ce", "id -ec") is a flag like
+// any other. Accepted cost: a command word with such flags in a prose span
+// is clean ("a `whoami` b", "a `uname -a` b", "a `ls -la` b", "a `ls -ce`
+// b", "a `sh` b"). Linear in len(span).
 func inlineNameSpan(span string) bool {
 	i := skipBlanks(span, 0)
 	start := i
@@ -769,7 +771,8 @@ func proseDollarWord(s string, i int, word string, close int) bool {
 // with a variable or substitution ("$" then a letter, "_", "{", "(" or
 // "?"), a backtick or a quote ("; echo $HOME", "|| echo `id`", "&& echo
 // 'x'"): commix's echo probe after a shell operator. "$5" is an amount, not
-// a variable ("Ok; echo $5 back" is clear). ctx is what the operator
+// a variable ("Ok; echo $5 back" is clear), and so "; echo $1" and
+// "| echo $$" are missed. ctx is what the operator
 // proves: after a lone " & " (opProseAmp) it never matches ("Tom & echo
 // \"hi\""), and after a prose sentence's "; " (opProseSemi) or "; " after one
 // plain word (opWordSemi) a quote is prose quoting, so only "$" or a
@@ -1507,18 +1510,22 @@ func isLDAP(s string) bool {
 //     `password`, `passwd` and `pwd` still count.
 //  4. In `#{ }`, a plain data path: names joined by single `.` and
 //     nothing else, a root that starts with a lower-case letter or `_`
-//     and is not a scope, environment or global object (`binding`,
-//     `header`, `param`, `cookie`, `initParam`, the JSF and JSP
-//     `*Scope` objects, `facesContext`, `externalContext`,
-//     `systemEnvironment`, `systemProperties`, `self`, `this`,
-//     `require`, `constructor`, ...), and no sensitive name or
-//     zero-argument code method (`irb`, `methods`,
-//     `instance_variables`, `constructor`, `call`, ...) in it:
-//     `#{x.fork}`, `#{x.class}`, `#{a.b.c}`, `#{order.send}`,
-//     `#{file.read}`. A method reached this way runs only on an object
-//     the template already holds. Anything else in `#{ }` (a call, an
-//     index, `*`, `&.`, any other byte, an upper-case root) is code as
-//     in alpha.5.
+//     and is not a listed scope, environment or global object (`binding`,
+//     `header`, `param`, `cookie`, `initParam`, `pageScope`,
+//     `requestScope`, `sessionScope`, `applicationScope`, `viewScope`,
+//     `flowScope`, `conversationScope`, `facesContext`, `externalContext`,
+//     `systemEnvironment`, `systemProperties`, `self`, `this`, `require`,
+//     `constructor`, ...; `flashScope` is not listed), and no sensitive
+//     name or listed zero-argument code method (`irb`, `methods`,
+//     `instance_variables`, `constructor`, `call`, ...) in it: `#{x.fork}`,
+//     `#{x.class}`, `#{a.b.c}`, `#{order.send}`, `#{file.read}`. Such a
+//     path can still call any other zero-argument method: a lower-case root
+//     that is not a local variable is itself a call on `self`
+//     (`#{fork.to_s}` calls `fork`), a zero-argument mutator runs
+//     (`#{order.destroy}`), and a compound secret name is not on the
+//     sensitive list (`#{appConfig.dbPassword}`). Anything else in `#{ }`
+//     (a call, an index, `*`, `&.`, any other byte, an upper-case root) is
+//     code as in alpha.5.
 func isSSTI(s string) bool {
 	if strings.Contains(s, "${T(") || strings.Contains(s, "#{T(") ||
 		hasFreeMarkerNew(s) || eachCodeTemplate(s) {

@@ -644,6 +644,9 @@ func TestCmdIAlpha6AcceptedMisses(t *testing.T) {
 		"a `sh` b",
 		"Note: `id` here",
 		"a `ls -la` b",
+		// A bundle that holds c or e is not the flag -c or -e.
+		"a `ls -ce` b",
+		"a `id -ec` b",
 		"ab; sleep 10",
 		"x 1; sleep 5",
 		// "$(" after a blank holding one letter-only word that is not a
@@ -651,11 +654,18 @@ func TestCmdIAlpha6AcceptedMisses(t *testing.T) {
 		// dollar amount in prose ("costs $(approx) 5").
 		"a $(foo) b",
 		"$(foo)",
+		"ls $(pwd)",
+		"$(date)",
+		"x $(ps) y",
+		"x $(who) y",
 		// A line break inside a substitution ends the scan.
 		"$(echo\nhi)",
+		// echo with "$" and then a digit or "$": read as an amount.
+		"; echo $1",
+		"| echo $$",
 	})
 	// Query value: a prose line, a line break, then "id" or "ls" alone.
-	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{"foo bar\nid", "foo bar\nid\n", "foo bar\nls"})
+	assertNoHits(t, "cmdIQuery", cmdIQuery, []string{"foo bar\nid", "foo bar\nid\n", "foo bar\nls", "foo bar\n id", "foo bar\n  ls"})
 }
 
 // TestCmdISubstitutionEcho covers the alpha.6 recall rules: a "$(" or
@@ -1055,10 +1065,11 @@ func TestSSTIAlpha6Templates(t *testing.T) {
 	})
 }
 
-// TestSSTIAlpha6FixRound1 covers the review findings on the alpha.6
+// TestSSTIAlpha6FixRound1 covers the first review's findings on the alpha.6
 // template readings: operators inside a filter token, more template
 // globals, Ruby "::" in #{ }, FreeMarker bindings that do not start with a
-// literal, and the Node/Ruby/JSF names counted only where they reach code.
+// literal, and calls, indexes and upper-case constant paths in #{ }, which
+// stay code because only a plain data path is clear there.
 func TestSSTIAlpha6FixRound1(t *testing.T) {
 	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
 	assertHits(t, "SSTI", SSTI, want, []string{
@@ -1096,7 +1107,7 @@ func TestSSTIAlpha6FixRound1(t *testing.T) {
 		"<#assign e=c?new ()>${e('id')}",
 		`<#assign e="freemarker.template.utility.Execute" ? new()>${e("id")}`,
 		"<#assign e=c?NEW()>${t('id')}",
-		// I4: the code-reaching shapes of the Node/Ruby names stay caught.
+		// I4: Node and Ruby calls and paths in #{ } stay caught.
 		"#{require.main.constructor._load(foo).readdirSync(foo2)}",
 		"#{require.main.constructor._load(foo)}",
 		"#{process.binding(foo).spawn(foo2)}",
@@ -1359,8 +1370,25 @@ func TestSSTIAlpha6AcceptedMisses(t *testing.T) {
 		"${user.pass}",
 		"${user.pass()}",
 		"#{user.pass}",
-		// 4. #{ } holding a plain data path that reaches a zero-argument
-		// method not in hashCodeSegments.
+		// 4. In #{ }, a plain data path: names joined by single "." and
+		// nothing else, a root that starts with a lower-case letter or "_"
+		// and is not a listed scope, environment or global object (binding,
+		// header, param, cookie, initParam, pageScope, requestScope,
+		// sessionScope, applicationScope, viewScope, flowScope,
+		// conversationScope, facesContext, externalContext,
+		// systemEnvironment, systemProperties, self, this, require,
+		// constructor, ...; flashScope is not listed), and no sensitive name
+		// or listed zero-argument code method (irb, methods,
+		// instance_variables, constructor, call, ...) in it. Such a path can
+		// still call any other zero-argument method: a lower-case root that
+		// is not a local variable is itself a call on self ("#{fork.to_s}"
+		// calls fork), a zero-argument mutator runs ("#{order.destroy}"),
+		// and a compound secret name is not on the sensitive list
+		// ("#{appConfig.dbPassword}").
+		"#{fork.to_s}",
+		"#{order.destroy}",
+		"#{appConfig.dbPassword}",
+		"#{flashScope.order}",
 		"#{x.fork}",
 		"#{x.class}",
 		"#{a.b.c}",

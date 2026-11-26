@@ -750,12 +750,22 @@ var xssInertMarkupPositives = []string{
 var xssInertMarkupAcceptedMisses = []string{
 	// 1. A call after "javascript: k=v; " with plain spaces before the name
 	// and the '(' whose argument is one letter-only word that is no JS
-	// keyword or browser global, or words separated by blanks alone: the
-	// shape of "maybe (later)". As a script it throws a ReferenceError
-	// (or a SyntaxError) unless the page defines the name.
+	// keyword or listed browser global, or words separated by blanks alone:
+	// the shape of "maybe (later)". As a script the blank-separated form is
+	// a SyntaxError, and the one-word form throws a ReferenceError unless
+	// the name is defined, by the page or as a built-in (screen, Date,
+	// prompt, close, URL, status and event are built-ins, so those calls
+	// run).
 	"javascript: a=1; alert (x)",
 	"javascript: a=1; fetch (url)",
 	"javascript: a=1; alert (x y)",
+	"javascript: a=1; alert (screen)",
+	"javascript: a=1; alert (Date)",
+	"javascript: a=1; alert (prompt)",
+	"javascript: a=1; alert (close)",
+	"javascript: a=1; alert (URL)",
+	"javascript: a=1; alert (status)",
+	"javascript: a=1; alert (event)",
 	// 2. A bare "<object>", "<link>", "<base>", "<meta>" or "<embed>" with
 	// no attribute on any tag in the value: nothing loads or runs.
 	"<object>",
