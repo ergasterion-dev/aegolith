@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close detector gaps G1-G8 found in the prod-lab test so Aegolith's text rules are safe to rely on in enforce mode, and ship it as `v0.1.0-alpha.4`.
+**Goal:** Close detector gaps G1-G8 found in an external attack test so Aegolith's text rules are safe to rely on in enforce mode, and ship it as `v0.1.0-alpha.4`.
 
-**Architecture:** Each gap is a small, local change in `internal/detect` (G1-G7) or `adapters/fiberv2` (G8), driven test-first from the lab payloads. G1 adds a bounded rescan of the SQLi check from extra start offsets chosen at SQL-keyword and number tokens, because libinjection detects the attack when it starts at the keyword but not after leading words. The engine's existing overlapping 8 KiB windows already carry padded payloads, so the G1 fix per window covers G1c.
+**Architecture:** Each gap is a small, local change in `internal/detect` (G1-G7) or `adapters/fiberv2` (G8), driven test-first from the external test payloads. G1 adds a bounded rescan of the SQLi check from extra start offsets chosen at SQL-keyword and number tokens, because libinjection detects the attack when it starts at the keyword but not after leading words. The engine's existing overlapping 8 KiB windows already carry padded payloads, so the G1 fix per window covers G1c.
 
 **Tech Stack:** Go 1.25 stdlib, `github.com/corazawaf/libinjection-go`, Fiber v2 adapter (separate module).
 
@@ -12,9 +12,9 @@
 
 ## Global Constraints
 
-- Repo root `~/Desktop/ergasterion-dev-my-open-source-org/aegolith`; module `github.com/ergasterion-dev/aegolith`; core deps stdlib + libinjection-go only.
+- Work in the repo root; module `github.com/ergasterion-dev/aegolith`; core deps stdlib + libinjection-go only.
 - Commit straight to `main`, `git push origin main` after EVERY commit. No branches, worktrees, PRs, GitHub Actions. Conventional Commits. Never bypass the pre-commit hook.
-- The public repo must contain no QuickDrop names, hosts, IPs, customer data, in code, corpus, docs or commits. Use generic paths (`/api/v1/...`) only.
+- The public repo must contain no private product names, hosts, IPs or customer data in code, corpus, docs or commits. Use generic paths (`/api/v1/...`) only.
 - False positives are worse than misses: legit corpus stays at **0 false positives of 91**; attack gates stay at least **103/107 generic and 104/107 API-aware** (they may only rise); run `go test -run Corpus -v .` and read the per-category tables.
 - Latency: p99 under 50 us (last measured 10-21 us); every detector stays linear in input length; no per-request allocation growth on clean inputs. `make perf` only when `uptime` load is below ~10; never under `-race`.
 - Never log full request values (use `model.Redact`). Never copy GPL/AGPL code.
@@ -135,7 +135,7 @@
 
 - [ ] **Step 1:** `make ci` exit 0; `go test -run Corpus -v .` and record the new real counts; `make fuzz-quick` exit 0.
 - [ ] **Step 2:** check `uptime`; if load is below ~10 run `make perf` and `make bench` (best of 3) and record numbers; otherwise record "not re-measured" in the CHANGELOG and do NOT edit README benchmark numbers.
-- [ ] **Step 3:** Update `docs/threat-model.md` (G1-G8 now covered; G9 listed as known unsupported: MySQL-only syntax, fullwidth/`%u`/overlong encodings, nip.io SSRF, XPath, Python `__import__`; new recall/precision costs found while testing, e.g. any prose that the new rules flag), `CHANGELOG.md` (an `alpha.4` entry), and README counts from real runs only. No QuickDrop names.
+- [ ] **Step 3:** Update `docs/threat-model.md` (G1-G8 now covered; G9 listed as known unsupported: MySQL-only syntax, fullwidth/`%u`/overlong encodings, nip.io SSRF, XPath, Python `__import__`; new recall/precision costs found while testing, e.g. any prose that the new rules flag), `CHANGELOG.md` (an `alpha.4` entry), and README counts from real runs only. No private names.
 - [ ] **Step 4:** commit `docs: alpha.4 changelog, threat model and corpus counts`; push.
 
 ---
@@ -147,7 +147,7 @@
 - [ ] **Step 1:** `git fetch`; confirm `main` equals `origin/main`, `make ci` exit 0 and adapter tests pass. Tag core: `git tag v0.1.0-alpha.4 && git push origin v0.1.0-alpha.4`.
 - [ ] **Step 2:** In `adapters/fiberv2`: `GOPROXY=direct go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.4` (no `replace`), hand-review the `go.mod`/`go.sum` diff, `go test -race -count=1 ./...`; update README install notes; commit `release: pin adapter to core v0.1.0-alpha.4`; push; tag `adapters/fiberv2/v0.1.0-alpha.4` and push it.
 - [ ] **Step 3:** Verify from a clean scratch module: in a brand-new empty directory under the scratchpad, `go mod init scratch`, `GOPROXY=direct go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.4 github.com/ergasterion-dev/aegolith/adapters/fiberv2@v0.1.0-alpha.4`, build a tiny main that imports both and inspects one G1 payload. Pass paths as arguments; do not run tools inside untrusted directories. Expected: builds and detects.
-- [ ] **Step 4:** Report the tags and commit SHAs. (The QuickDrop bump, prod release and lab re-test follow in separate steps outside this public repo; they are not part of this plan.)
+- [ ] **Step 4:** Report the tags and commit SHAs. (Downstream rollout steps are tracked outside this repository; they are not part of this plan.)
 
 ---
 

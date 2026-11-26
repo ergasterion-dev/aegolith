@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove the alpha.4 prod-test false positives (`Mon; sleep 8`, `${order.total}`) and detect the base64 Java object on an unknown path (G1b), then release alpha.5.
+**Goal:** Remove the alpha.4 false positives found in external testing (`Mon; sleep 8`, `${order.total}`) and detect the base64 Java object on an unknown path (G1b), then release alpha.5.
 
 **Architecture:** Small local changes in `internal/detect` (CmdI, SSTI) and the engine's path scanning, each test-first with corpus cases.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Repo root `~/Desktop/ergasterion-dev-my-open-source-org/aegolith`, directly on `main`; commit and `git push origin main` after EVERY commit; no branches/worktrees/PRs/GitHub Actions; never bypass the pre-commit hook.
+- Work in the repo root, directly on `main`; commit and `git push origin main` after EVERY commit; no branches/worktrees/PRs/GitHub Actions; never bypass the pre-commit hook.
 - No private names, hosts, IPs or customer data in code, corpus, docs or commits (generic `/api/v1` paths only).
 - Legit corpus 0 false positives (now 118; add new near-misses); attack gates now 128/132 generic and 129/132 API-aware (corpus_test.go constants): may only rise, set them to the real counts after regenerating (`testdata/corpus/README.md`).
 - Detectors stay linear and bounded; p99 budget 50 us; `make perf` only when `uptime` load is below ~10, otherwise write "not re-measured".
@@ -40,7 +40,7 @@
 
 ### Task 3: G1b base64 Java object on an unknown path
 **Files:** investigate `internal/engine/inputs.go` (`checkRoute`, path scan), `internal/detect/scan.go` (`mayContainAttack`, `ScanText`), `internal/detect/injection.go` (`hasJavaSerialized`); Test engine test + detect test; corpus.
-- [ ] Reproduce: an unknown route path carrying `rO0AB...` (the base64 Java object used in the lab: any valid short serialized-object base64 such as `rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAB3CAAAABAAAAAAeA==` with and without the `/api/v1/probe/` prefix) gives only ROUTE-001; find the cause (e.g. `/`, `=` or `+` handling in the decoded path, the prefilter, or the path being cut at a segment) with a failing test first.
+- [ ] Reproduce: an unknown route path carrying `rO0AB...` (the base64 Java object used in the external test: any valid short serialized-object base64 such as `rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAB3CAAAABAAAAAAeA==` with and without the `/api/v1/probe/` prefix) gives only ROUTE-001; find the cause (e.g. `/`, `=` or `+` handling in the decoded path, the prefilter, or the path being cut at a segment) with a failing test first.
 - [ ] Fix without making ordinary long legit paths match (add legit path near-misses to engine tests), GREEN, corpus case, gates to real counts, `make ci`, adapter tests, commit `fix(engine): detect a serialized Java object in an unknown route path (G1b)`, push.
 
 ### Task 4: Docs and release alpha.5

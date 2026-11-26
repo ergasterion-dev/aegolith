@@ -4,7 +4,7 @@ Status: approved by the owner on 2026-11-25. Short design (small, well-bounded c
 
 ## Intent
 
-A production monitor-mode trial and a lab attack matrix found detector gaps (G1-G8). Fix them so that SQLI-001 and the other text rules can be relied on in enforce mode. The owner decides when to enforce; this release only closes the gaps.
+A downstream monitor-mode trial and an external attack matrix found detector gaps (G1-G8). Fix them so that SQLI-001 and the other text rules can be relied on in enforce mode. The owner decides when to enforce; this release only closes the gaps.
 
 ## Goals
 
@@ -28,7 +28,7 @@ A production monitor-mode trial and a lab attack matrix found detector gaps (G1-
 - Any new false positive on the legit corpus (0/91 stays 0/91) or on the known prose near-misses in the threat model.
 - Dropping the attack gates (103/107 generic, 104/107 API-aware).
 - Breaking the latency budget (p99 under 50 us; last measured 10-21 us) or linearity of the scan.
-- Any QuickDrop name, host or infra detail in the public repo.
+- Any private product name, host or infra detail in the public repo.
 
 ## Approaches considered (G1, the hard one)
 
@@ -40,7 +40,7 @@ Padding (G1c) needs no separate mechanism: the existing overlapping windows alre
 
 ## Constraints and decisions
 
-- Work test-first: each lab payload is added to `testdata/corpus/attacks.jsonl` (or the matching unit test) as a failing case, paired with legit near-miss prose in `legit.jsonl` / unit tests that must stay clean.
+- Work test-first: each external test payload is added to `testdata/corpus/attacks.jsonl` (or the matching unit test) as a failing case, paired with legit near-miss prose in `legit.jsonl` / unit tests that must stay clean.
 - Other gaps (G2-G7) are small, local changes in `internal/detect` and `internal/engine`; G8 is in `adapters/fiberv2`.
 - Update `docs/threat-model.md`, `CHANGELOG.md`, README numbers (from real runs; `make perf` only on a quiet machine, load below ~10).
 - Release order: tag core `v0.1.0-alpha.4`, pin adapter to it (no `replace`), tag `adapters/fiberv2/v0.1.0-alpha.4`, verify from a clean scratch module.

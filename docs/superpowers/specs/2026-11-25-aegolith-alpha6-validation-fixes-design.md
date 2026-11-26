@@ -28,4 +28,4 @@ Broad absolute-path LFI, loopback URLs in prose, CRS function-name signatures, I
 - Detectors linear and bounded; `make perf` only on a quiet machine, else "not re-measured".
 
 ## Release
-Docs commit, tag core `v0.1.0-alpha.6`, pin adapter, tag adapter, clean-module verify; QuickDrop bump in a fresh clone; the OWNER resumes the prod promote; prod-lab monitor re-test. Never enable enforce.
+Docs commit, tag core `v0.1.0-alpha.6`, pin adapter, tag adapter, clean-module verify; downstream rollout steps are tracked outside this repository. Never enable enforce.

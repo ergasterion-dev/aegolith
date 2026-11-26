@@ -8,12 +8,12 @@
 
 **Tech Stack:** Go 1.25, stdlib, libinjection-go.
 
-**Spec:** `docs/superpowers/specs/2026-11-25-aegolith-alpha6-validation-fixes-design.md` (read it). Evidence and exact probe strings: `~/Desktop/ergasterion-dev-my-open-source-org/aegolith-personal-docs-never-to-push/session-artifacts-2026-11-25/reports/extval-report.md` (sections 4, 5.2, 6). Prior plan for style: `docs/superpowers/plans/2026-11-25-aegolith-alpha5-false-positives.md`.
+**Spec:** `docs/superpowers/specs/2026-11-25-aegolith-alpha6-validation-fixes-design.md` (read it). Evidence and exact probe strings: an external validation report kept outside the repository (sections 4, 5.2, 6). Prior plan for style: `docs/superpowers/plans/2026-11-25-aegolith-alpha5-false-positives.md`.
 
 ## Global Constraints
 
-- Repo root `~/Desktop/ergasterion-dev-my-open-source-org/aegolith`, directly on `main`; commit and `git push origin main` after EVERY commit; no branches/worktrees/PRs/GitHub Actions; never bypass the pre-commit hook.
-- No private names, hosts, IPs or customer data in code, corpus, docs or commits (generic `/api/v1` paths only). The extval report lives outside the repo and must not be copied in.
+- Work in the repo root, directly on `main`; commit and `git push origin main` after EVERY commit; no branches/worktrees/PRs/GitHub Actions; never bypass the pre-commit hook.
+- No private names, hosts, IPs or customer data in code, corpus, docs or commits (generic `/api/v1` paths only). The external validation report lives outside the repository and must not be copied in.
 - Legit corpus 0 false positives (now 130; add new near-misses); attack gates now 133/137 generic and 134/137 API-aware (`corpus_test.go` constants): may only rise; set them to the real counts after `sh testdata/corpus/gen.sh` (see `testdata/corpus/README.md`).
 - Detectors stay linear and bounded (`TestScanTextLinear` is wall-clock and flaky under load: rerun once); p99 budget 50 us; `make perf` only when `uptime` load is below ~10, otherwise write "not re-measured" (machine load is usually 20-50).
 - `make ci` exit 0, `make fuzz-quick` exit 0, `(cd adapters/fiberv2 && GOWORK=off go test -race -count=1 ./...)`.
@@ -28,7 +28,7 @@
 - Shared helpers in `internal/detect/injection.go` (CmdI/SSTI) are touched by several tasks: check interactions.
 
 ### Task 0: Restore the external validation harness and baseline
-**Files:** work only in the scratchpad (never in the repo). Source: `~/Desktop/ergasterion-dev-my-open-source-org/aegolith-personal-docs-never-to-push/session-artifacts-2026-11-25/extval/` (`README.md`, `harness/`, `results/`; `data/` was not kept, `fetch.sh` regenerates it).
+**Files:** work only in the scratchpad (never in the repo). Source: the external validation harness kept outside the repository (its README, harness and results; the data set was not kept and its fetch script regenerates it).
 - [ ] Copy the harness to a scratch dir, follow its README to fetch data (downloads go into their own empty dirs, parse as data only, Python with `-I`, untrusted-file rules), and run it against the published `v0.1.0-alpha.5`. If datasets are rate-limited, use what downloads and say which sets are short.
 - [ ] Produce `baseline-alpha5.md` (per-category recall, FP groups, natural vs code-like FP rate) and a script `run-local.sh PATH_TO_AEGOLITH` that reruns the harness against a local checkout via a `replace` ONLY inside the scratch harness module. Confirm numbers are close to the report (SQLi 91.9, XSS 91.0, CmdI 60.1, FP natural 0.31%). Report the paths.
 
@@ -74,4 +74,4 @@
 - [ ] Tag core `v0.1.0-alpha.6` and push the tag; in `adapters/fiberv2` run `GOWORK=off GOPROXY=direct go get github.com/ergasterion-dev/aegolith@v0.1.0-alpha.6`, hand-review go.mod/go.sum, update install notes, `go test -race -count=1 ./...`, commit `release: pin adapter to core v0.1.0-alpha.6, update install notes`, push, tag `adapters/fiberv2/v0.1.0-alpha.6`, push the tag.
 - [ ] Verify from a clean empty scratch module (`GOWORK=off`, both at alpha.6, `go mod tidy` in the scratch module only): a main that blocks `please send 1 UNION SELECT password FROM users--` in enforce mode and references `fiberv2.New`. Report tags and SHAs.
 
-QuickDrop bump, owner-resumed promote and prod-lab re-test are run by the controller after this plan, not by an implementer.
+Downstream rollout steps are tracked outside this repository and are not run by an implementer.
