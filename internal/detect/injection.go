@@ -1951,6 +1951,8 @@ var hashRootsFold = map[string]bool{
 	"binding": true, "header": true, "headervalues": true, "param": true,
 	"paramvalues": true, "cookie": true, "initparam": true, "pagescope": true,
 	"requestscope": true, "sessionscope": true, "applicationscope": true,
+	"viewscope": true, "flowscope": true, "conversationscope": true, "conversation": true,
+	"cc": true, "component": true, "resource": true,
 	"facescontext": true, "externalcontext": true, "view": true, "flash": true,
 	"systemenvironment": true, "systemproperties": true, "environment": true,
 	"beanfactory": true, "applicationcontext": true, "servletcontext": true,
