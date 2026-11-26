@@ -103,14 +103,17 @@ func TestRunRejectsBadUsage(t *testing.T) {
 
 func TestHelpIsNotAnError(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {"import", "-h"}, {"target", "-h"}} {
+	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {"import", "-h"}, {"target", "-h"}, {"detect", "-h"}} {
 		var stdout, stderr bytes.Buffer
 		if err := run(args, &stdout, &stderr); err != nil {
 			t.Errorf("%v: %v", args, err)
 		}
 		want := "import"
-		if args[0] == "target" {
+		switch args[0] {
+		case "target":
 			want = "-decisions"
+		case "detect":
+			want = "-id-prefix"
 		}
 		if !strings.Contains(stdout.String()+stderr.String(), want) {
 			t.Errorf("%v: no usage text", args)
