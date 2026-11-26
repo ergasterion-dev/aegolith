@@ -144,6 +144,111 @@ func SSTI(v string) (Hit, bool) {
 	return Hit{}, false
 }
 
+// SSI reports whether v holds a server-side include directive
+// (AEG-SSTI-002): "<!--#" and a directive that runs a command, includes a
+// file or prints server state (exec, include, echo, printenv, config, set,
+// fsize, flastmod) with an attribute it takes. It checks v and, when one
+// percent-decoding pass changes it, the decoded value too. It is a detector
+// of its own, so a value whose AEG-XSS-001 hit the inert-markup guard
+// clears (a backtick inside the comment) still gets it. See
+// hasSSIDirective for the matching rules; the accepted misses are listed
+// at hasSQLToken.
+func SSI(v string) (Hit, bool) {
+	if valueOrDecoded(v, hasSSIDirective) {
+		return Hit{RuleID: "AEG-SSTI-002", Category: model.CatSSTI, Severity: model.SeverityHigh}, true
+	}
+	return Hit{}, false
+}
+
+// ssiDirectives are the SSI directives SSI flags and the attributes each
+// takes in Apache mod_include, nginx ssi and IIS. printenv takes none.
+var ssiDirectives = [...]struct {
+	name  string
+	attrs []string
+}{
+	{"exec", []string{"cmd", "cgi"}},
+	{"include", []string{"file", "virtual", "onerror", "stub", "wait", "set"}},
+	{"echo", []string{"var", "encoding", "decoding", "default"}},
+	{"printenv", nil},
+	{"config", []string{"echomsg", "errmsg", "sizefmt", "timefmt"}},
+	{"set", []string{"var", "value", "encoding", "decoding"}},
+	{"fsize", []string{"file", "virtual"}},
+	{"flastmod", []string{"file", "virtual"}},
+}
+
+// hasSSIDirective reports whether s holds an SSI directive: "<!--", '#',
+// a directive name from ssiDirectives as a whole word, case-insensitively,
+// then (except for printenv) a blank, an attribute that directive takes and
+// '='. Blanks are allowed after "<!--" (IIS writes "<!-- #include"), after
+// '#' (nginx writes "<!--# include"), and around the '=', at most tokenGap
+// bytes per gap; at least one blank separates the name and the attribute.
+// So "<!--#region-->", "<!--#if-->", "<!--#include-->" and "<!--# not ssi
+// -->" are clear, and "<!--#exec cmd=", "<!--#printenv -->" and "<!--
+// #include file=" are flagged. **False-positive cost:** a docs or CMS field
+// that quotes a real SSI or ASP include ("<!--#include virtual=\"/footer.html\"
+// -->") is flagged; exclude AEG-SSTI-002 on such a field.
+//
+// Cost: one search per "<!--", each reading at most four gaps of tokenGap
+// bytes and two short words: linear in len(s).
+func hasSSIDirective(s string) bool {
+	for i := strings.Index(s, "<!--"); i >= 0; {
+		if ssiDirectiveAt(s, i+4) {
+			return true
+		}
+		n := strings.Index(s[i+4:], "<!--")
+		if n < 0 {
+			return false
+		}
+		i += 4 + n
+	}
+	return false
+}
+
+// ssiDirectiveAt reports whether an SSI directive starts at s[k], just past
+// a "<!--".
+func ssiDirectiveAt(s string, k int) bool {
+	k, ok := skipTokenGap(s, k, false)
+	if !ok || s[k] != '#' {
+		return false
+	}
+	if k, ok = skipTokenGap(s, k+1, false); !ok {
+		return false
+	}
+	e := k
+	for e < len(s) && isIdentByte(s[e]) {
+		e++
+	}
+	name := s[k:e]
+	for _, d := range ssiDirectives {
+		if !strings.EqualFold(name, d.name) {
+			continue
+		}
+		if d.attrs == nil {
+			return true
+		}
+		a, ok := skipTokenGap(s, e, false)
+		if !ok || a == e {
+			return false
+		}
+		b := a
+		for b < len(s) && isIdentByte(s[b]) {
+			b++
+		}
+		attr := s[a:b]
+		eq, ok := skipTokenGap(s, b, false)
+		if !ok || s[eq] != '=' {
+			return false
+		}
+		for _, n := range d.attrs {
+			if strings.EqualFold(attr, n) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
 // JNDI reports whether v is a Log4Shell lookup: ${jndi: after lowercasing and
 // resolving the nested lookups attackers use to hide it (${lower:j},
 // ${upper:n}, ${::-d}, ${env:X:-i}).

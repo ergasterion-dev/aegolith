@@ -15,7 +15,7 @@ func scanTextPositives() []string {
 	for _, tbl := range [][]string{
 		sqliPositives, xssPositives, decodedOnlyPositives, copyProgramPositives, scriptURLPositives,
 		cmdIPositives, codeIPositives, codeISerializedPositives, ldapPositives, sstiPositives,
-		jndiPositives, crlfPositives,
+		jndiPositives, crlfPositives, sqlTokenPositives, ssiPositives,
 		lfiTraversalPositives, lfiFilePositives, rfiPositives, ssrfMetadataPositives, ssrfPrivatePositives,
 	} {
 		all = append(all, tbl...)
@@ -30,7 +30,7 @@ func scanTextNegatives() []string {
 	for _, tbl := range [][]string{
 		legitNegatives, xssNegatives, copyProgramNegatives, scriptURLNegatives,
 		injectionLegit, cmdINegatives, codeINegatives, ldapNegatives, sstiNegatives, jndiNegatives, crlfNegatives,
-		lfiNegatives, rfiNegatives, ssrfNegatives,
+		lfiNegatives, rfiNegatives, ssrfNegatives, sqlTokenProse, ssiNegatives,
 		legitUserAgents, legitPaths,
 	} {
 		all = append(all, tbl...)
@@ -56,7 +56,7 @@ func TestScanTextLegit(t *testing.T) {
 
 // TestScanTextPrefilterSound generates random values the prefilter lets
 // through (mayContainAttack returns false) and checks that no detector but
-// SQLi, which ScanText still runs on them, hits any of them. The alphabet
+// SQLi and SQLiToken, which ScanText still runs on them, hits any of them. The alphabet
 // mixes command, file, scheme, code-injection and SQL words, numbers in
 // several notations, and every byte outside the prefilter's set.
 func TestScanTextPrefilterSound(t *testing.T) {
@@ -66,6 +66,7 @@ func TestScanTextPrefilterSound(t *testing.T) {
 		"file php gopher dict jar expect data text html http https localhost metadata google internal " +
 		"etc passwd shadow proc self serviceaccount token win ini boot Set Cookie Location Content Type config " +
 		"__class__ T javascript vbscript alert onerror onload svg script img src " +
+		"exec include echo printenv cmd virtual var xp_cmdshell waitfor delay pg_sleep dbms_lock " +
 		"0 1 7 42 127 169 254 0x7f 0x41 1e5 1.5 .5 0b1 0177 2130706433")
 	pieces = append(pieces, " ", "  ", "\t", "\v", "\f", ",", ".", "..", "-", "--", "_", "@", "@@", "#", "+",
 		"!", "?", "^", "~", "[", "]", "é", "دودھ", "😋", " -", "1 ", " 1")
@@ -73,7 +74,7 @@ func TestScanTextPrefilterSound(t *testing.T) {
 		name string
 		fn   func(string) (Hit, bool)
 	}{
-		{"XSS", XSS}, {"CmdI", CmdI}, {"CodeI", CodeI}, {"LDAP", LDAP}, {"SSTI", SSTI},
+		{"XSS", XSS}, {"CmdI", CmdI}, {"CodeI", CodeI}, {"LDAP", LDAP}, {"SSTI", SSTI}, {"SSI", SSI},
 		{"JNDI", JNDI}, {"CRLF", CRLF}, {"LFI", LFI}, {"RFI", RFI}, {"SSRF", SSRF},
 	}
 	rng := rand.New(rand.NewPCG(1, 2))
@@ -124,9 +125,10 @@ func TestScanTextOrderAndDedup(t *testing.T) {
 	hits = ScanText("'; cat /etc/passwd; ../../etc/passwd <script>alert(1)</script>")
 	seen := map[string]bool{}
 	order := map[string]int{
-		"AEG-SQLI-001": 0, "AEG-XSS-001": 1, "AEG-CMDI-001": 2, "AEG-CODEI-001": 3, "AEG-CODEI-002": 3,
-		"AEG-LDAP-001": 4, "AEG-SSTI-001": 5, "AEG-JNDI-001": 6, "AEG-CRLF-001": 7, "AEG-LFI-001": 8,
-		"AEG-LFI-002": 8, "AEG-RFI-001": 9, "AEG-SSRF-001": 10, "AEG-SSRF-002": 10,
+		"AEG-SQLI-001": 0, "AEG-SQLI-002": 0, "AEG-XSS-001": 1, "AEG-CMDI-001": 2, "AEG-CODEI-001": 3,
+		"AEG-CODEI-002": 3, "AEG-LDAP-001": 4, "AEG-SSTI-001": 5, "AEG-SSTI-002": 5, "AEG-JNDI-001": 6,
+		"AEG-CRLF-001": 7, "AEG-LFI-001": 8, "AEG-LFI-002": 8, "AEG-RFI-001": 9, "AEG-SSRF-001": 10,
+		"AEG-SSRF-002": 10,
 	}
 	last := -1
 	for _, h := range hits {
@@ -220,6 +222,22 @@ func TestScanTextLinear(t *testing.T) {
 		"hash-path":     "#{a.b.c.d.",
 		"hash-path-big": "#{" + strings.Repeat("a.", 64) + "b} ",
 		"fm-directive":  "<#?eval [@",
+		// alpha.6 token rules: SQL names with long or unclosed gaps, SSI
+		// openers with gaps and near-miss directives.
+		"waitfor":        "waitfor ",
+		"waitfor-delay":  "WAITFOR DELAY ",
+		"waitfor-cmt":    "waitfor /* ",
+		"waitfor-line":   "waitfor -- ",
+		"pg-gap":         "pg_sleep /*" + strings.Repeat(" ", 100),
+		"dbms-dots":      "dbms_lock . dbms_lock .",
+		"dbms-sleep":     "DBMS_LOCK . SLEEP ",
+		"xp-near":        "xp_cmdshellx ",
+		"ssi-open":       "<!--#",
+		"ssi-blanks":     "<!-- #  ",
+		"ssi-exec":       "<!--#exec ",
+		"ssi-exec-attr":  "<!--#exec foo ",
+		"ssi-nested":     "<!--<!--#include  ",
+		"ssi-long-blank": "<!--#exec" + strings.Repeat(" ", 100),
 	}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
 	limit := wallLimit(2*time.Second, 20*time.Second)

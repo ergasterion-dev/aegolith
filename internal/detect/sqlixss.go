@@ -26,6 +26,222 @@ func XSS(v string) (Hit, bool) {
 	return Hit{}, false
 }
 
+// SQLiToken reports whether v holds a SQL time-delay or command-execution
+// token (AEG-SQLI-002): MSSQL WAITFOR DELAY or WAITFOR TIME followed by a
+// literal or a variable, MSSQL xp_cmdshell, a Postgres pg_sleep,
+// pg_sleep_for or pg_sleep_until call, or an Oracle DBMS_LOCK.SLEEP or
+// DBMS_SESSION.SLEEP call. It checks v and, when one percent-decoding pass
+// changes it, the decoded value too. It is a detector of its own, not part
+// of SQLi, so a value whose AEG-SQLI-001 hit a post-filter clears (percent
+// text, bare number phrases), or a field where AEG-SQLI-001 is excluded,
+// still gets it. See hasSQLToken for the matching rules and the accepted
+// misses.
+func SQLiToken(v string) (Hit, bool) {
+	if valueOrDecoded(v, hasSQLToken) {
+		return Hit{RuleID: "AEG-SQLI-002", Category: model.CatSQLi, Severity: model.SeverityCritical}, true
+	}
+	return Hit{}, false
+}
+
+// tokenGap bounds each gap hasSQLToken and hasSSIDirective skip between the
+// parts of one token (blanks, and for SQL also /* */ and -- comments): a
+// gap longer than this ends the match.
+const tokenGap = 128
+
+// hasSQLToken reports whether s holds one of the SQLiToken tokens. Every
+// name is matched as a whole identifier, case-insensitively: the byte
+// before it and the byte after it are not letters, digits or '_' (a '.' or
+// a quote may be), so "WaitForDelete", "--waitforcert",
+// "xp_cmdshell_proxy_account" and "pg_sleep_seconds" are not tokens. A name
+// may be wrapped in double quotes ("pg_sleep", "DBMS_LOCK"."SLEEP").
+//
+//   - xp_cmdshell counts on its own, wherever it appears. **False-positive
+//     cost:** text that names the procedure (a security article, a DBA
+//     ticket: "is xp_cmdshell enabled?") is flagged.
+//   - waitfor counts when DELAY or TIME follows, then a quote, N' or an
+//     @variable: "WAITFOR DELAY '0:0:5'", "WAITFOR DELAY @d". "the WAITFOR
+//     DELAY statement" and "WAITFOR DELAY 5" are clear.
+//   - pg_sleep, pg_sleep_for and pg_sleep_until count when '(' follows.
+//   - dbms_lock and dbms_session count when '.', sleep and '(' follow.
+//
+// Between the parts any blanks (space, tab, CR, LF, FF, VT), /* */
+// comments and -- line comments are skipped, at most tokenGap bytes per
+// gap. **False-positive cost:** SQL pasted into a support ticket or docs
+// field that calls these ("SELECT pg_sleep(5)", "WAITFOR DELAY '00:00:05'")
+// is flagged; exclude AEG-SQLI-002 on such a field.
+//
+// Accepted misses of AEG-SQLI-002 and AEG-SSTI-002 (the same list, word for
+// word, is in docs/threat-model.md and testdata/corpus/README.md; the test
+// lists are sqlTokenAcceptedMisses and ssiAcceptedMisses):
+//
+//  1. More than 128 bytes of blanks and comments in one gap between the
+//     parts of a token: `WAITFOR`, 130 blanks, `DELAY '0:0:5'`;
+//     `<!--#exec`, 130 blanks, `cmd="ls"-->`.
+//  2. A SQL name built at run time or hidden in a literal:
+//     `EXEC('xp_'+'cmdshell dir')`, `DECLARE @q varchar(99) SET
+//     @q=0x7761... EXEC(@q)`, `U&"pg\005fsleep"(5)`.
+//  3. A call with no `(` after the name, and `WAITFOR DELAY` or `WAITFOR
+//     TIME` followed by anything but a quote, `N'` or an `@variable`:
+//     `select pg_sleep`, `SELECT DBMS_LOCK.SLEEP FROM dual`, `WAITFOR DELAY
+//     5`. None of these runs.
+//  4. `+` as a blank outside a query or form value, where the engine does
+//     not decode it: `waitfor+delay+'0:0:5'` in a path segment or a JSON
+//     string.
+//  5. Other procedures and delay functions: `xp_regread`, `xp_dirtree`,
+//     `sp_OACreate`, `DBMS_PIPE.RECEIVE_MESSAGE(`, MySQL `SLEEP(` and
+//     `BENCHMARK(`. libinjection (`AEG-SQLI-001`) flags some of them in SQL
+//     context.
+//  6. An SSI directive other than `exec`, `include`, `echo`, `printenv`,
+//     `config`, `set`, `fsize` and `flastmod` (`<!--#if expr="..." -->`,
+//     `<!--#elif`, nginx `<!--# block name="one" -->`), and a directive
+//     whose first attribute is not one it takes (`<!--#exec foo="x"
+//     cmd="ls" -->`).
+//  7. An SSI opener written as HTML entities: `&lt;!--#exec cmd="ls"
+//     --&gt;`. The engine does not decode entities.
+//
+// Cost: one pass over the identifiers of s; each candidate name reads at
+// most three gaps of tokenGap bytes and the words between them, so the scan
+// is linear in len(s).
+func hasSQLToken(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !isLetter(s[i]) || i > 0 && isIdentByte(s[i-1]) {
+			continue
+		}
+		j := i
+		for j < len(s) && isIdentByte(s[j]) {
+			j++
+		}
+		if sqlTokenAt(s, i, j) {
+			return true
+		}
+		i = j - 1
+	}
+	return false
+}
+
+// sqlTokenAt reports whether the identifier s[i:j] starts a SQLiToken
+// token.
+func sqlTokenAt(s string, i, j int) bool {
+	if j-i < 7 || j-i > 14 { // len("waitfor") .. len("pg_sleep_until")
+		return false
+	}
+	k := closeQuote(s, i, j)
+	switch w := s[i:j]; {
+	case strings.EqualFold(w, "xp_cmdshell"):
+		return true
+	case strings.EqualFold(w, "waitfor"):
+		return waitforArgFollows(s, k)
+	case strings.EqualFold(w, "pg_sleep"), strings.EqualFold(w, "pg_sleep_for"), strings.EqualFold(w, "pg_sleep_until"):
+		return byteAfterGap(s, k, '(') >= 0
+	case strings.EqualFold(w, "dbms_lock"), strings.EqualFold(w, "dbms_session"):
+		d := byteAfterGap(s, k, '.')
+		if d < 0 {
+			return false
+		}
+		n, ok := skipTokenGap(s, d+1, true)
+		if !ok {
+			return false
+		}
+		open := s[n] == '"'
+		if open {
+			n++
+		}
+		e := n
+		for e < len(s) && isIdentByte(s[e]) {
+			e++
+		}
+		if !strings.EqualFold(s[n:e], "sleep") {
+			return false
+		}
+		if open {
+			if e >= len(s) || s[e] != '"' {
+				return false
+			}
+			e++
+		}
+		return byteAfterGap(s, e, '(') >= 0
+	}
+	return false
+}
+
+// closeQuote returns j, or j+1 when the identifier s[i:j] is wrapped in
+// double quotes ("pg_sleep").
+func closeQuote(s string, i, j int) int {
+	if i > 0 && s[i-1] == '"' && j < len(s) && s[j] == '"' {
+		return j + 1
+	}
+	return j
+}
+
+// waitforArgFollows reports whether DELAY or TIME, then a quote, N' or an
+// @variable follow position k (just past a WAITFOR).
+func waitforArgFollows(s string, k int) bool {
+	k, ok := skipTokenGap(s, k, true)
+	if !ok {
+		return false
+	}
+	e := k
+	for e < len(s) && isIdentByte(s[e]) {
+		e++
+	}
+	if w := s[k:e]; !strings.EqualFold(w, "delay") && !strings.EqualFold(w, "time") {
+		return false
+	}
+	k, ok = skipTokenGap(s, e, true)
+	if !ok {
+		return false
+	}
+	switch c := s[k]; {
+	case c == '\'' || c == '"':
+		return true
+	case c == 'N' || c == 'n':
+		return k+1 < len(s) && s[k+1] == '\''
+	case c == '@':
+		return k+1 < len(s) && (isLetter(s[k+1]) || s[k+1] == '_')
+	}
+	return false
+}
+
+// byteAfterGap returns the index of c when it follows position k after a
+// gap (skipTokenGap with SQL comments), or -1.
+func byteAfterGap(s string, k int, c byte) int {
+	k, ok := skipTokenGap(s, k, true)
+	if !ok || s[k] != c {
+		return -1
+	}
+	return k
+}
+
+// skipTokenGap skips blanks (space, tab, CR, LF, FF, VT) from i and, when
+// sql is set, /* */ and -- line comments, reading at most tokenGap bytes.
+// It returns the index of the first byte after the gap, with ok false when
+// the gap reaches the end of s, runs past tokenGap bytes or holds a
+// comment that does not close within them.
+func skipTokenGap(s string, i int, sql bool) (next int, ok bool) {
+	lim := min(len(s), i+tokenGap)
+	for i < lim {
+		switch c := s[i]; {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v':
+			i++
+		case sql && c == '/' && i+1 < lim && s[i+1] == '*':
+			e := strings.Index(s[i+2:lim], "*/")
+			if e < 0 {
+				return 0, false
+			}
+			i += 2 + e + 2
+		case sql && c == '-' && i+1 < lim && s[i+1] == '-':
+			e := strings.IndexByte(s[i+2:lim], '\n')
+			if e < 0 {
+				return 0, false
+			}
+			i += 2 + e + 1
+		default:
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func isSQLi(s string) bool {
 	if ok, fp := libinjection.IsSQLi(s); ok && !isProseNumberComment(s, fp) && !isProsePercent(s, fp) && !isBareNumberPhrase(s, fp) {
 		return true

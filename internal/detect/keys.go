@@ -73,7 +73,7 @@ func isProtoPathKey(k string) bool {
 	return false
 }
 
-// KeySQLi is SQLi for a key name. A key that is a plain identifier (an
+// KeySQLi is SQLi, then SQLiToken, for a key name. A key that is a plain identifier (an
 // ASCII letter or '_', then letters, digits and '_') is one bareword token
 // to libinjection, and a single bareword or keyword is never an injection
 // fingerprint; it has no blank, quote, ';' or escape for the other SQLi
@@ -83,7 +83,10 @@ func KeySQLi(k string) (Hit, bool) {
 	if isIdentifier(k) {
 		return Hit{}, false
 	}
-	return SQLi(k)
+	if h, ok := SQLi(k); ok {
+		return h, true
+	}
+	return SQLiToken(k)
 }
 
 func isIdentifier(k string) bool {

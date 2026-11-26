@@ -319,3 +319,59 @@ func TestPathJavaSerialized(t *testing.T) {
 		}
 	}
 }
+
+// TestTokenRulesPlacements: the alpha.6 token rules (AEG-SQLI-002,
+// AEG-SSTI-002) reach every placement ScanText covers: a path segment, a
+// query value (percent- and '+'-decoded by the engine, double-encoded once
+// more by the detector), a JSON string, a form field, a cookie and the
+// scanned headers; and AEG-SQLI-002 reaches a non-identifier key.
+func TestTokenRulesPlacements(t *testing.T) {
+	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true})
+	has := func(d model.Decision, rule string) bool {
+		for _, m := range d.Matches {
+			if m.RuleID == rule {
+				return true
+			}
+		}
+		return false
+	}
+	get := func(path, q string, h http.Header) *model.Request {
+		if h == nil {
+			h = http.Header{}
+		}
+		return &model.Request{Method: "GET", RawPath: path, RawQuery: q, Header: h}
+	}
+	post := func(ct, body string) *model.Request {
+		return &model.Request{Method: "POST", RawPath: "/api/v1/notes", Header: http.Header{"Content-Type": {ct}}, Body: []byte(body)}
+	}
+	for _, tc := range []struct {
+		name string
+		req  *model.Request
+		rule string
+	}{
+		{"path", get("/static/x%3BWAITFOR%20DELAY%20%270%3A0%3A5%27", "", nil), "AEG-SQLI-002"},
+		{"query plus", get("/api/v1/search", "q=waitfor+delay+%270%3A0%3A5%27", nil), "AEG-SQLI-002"},
+		{"query double-encoded", get("/api/v1/search", "q=pg_sleep%25285%2529", nil), "AEG-SQLI-002"},
+		{"query bare", get("/api/v1/search", "q=exec+master..xp_cmdshell", nil), "AEG-SQLI-002"},
+		{"json", post("application/json", `{"note":"1; DBMS_LOCK.SLEEP(5)"}`), "AEG-SQLI-002"},
+		{"form", post("application/x-www-form-urlencoded", "note=pg_sleep%285%29"), "AEG-SQLI-002"},
+		{"cookie", get("/api/v1/x", "", http.Header{"Cookie": {"pref=xp_cmdshell"}}), "AEG-SQLI-002"},
+		{"user-agent", get("/api/v1/x", "", http.Header{"User-Agent": {"x'; WAITFOR DELAY '0:0:5'--"}}), "AEG-SQLI-002"},
+		{"json key", post("application/json", `{"x; pg_sleep(5)":1}`), "AEG-SQLI-002"},
+		{"path ssi", get("/static/%3C!--%23exec%20cmd=%22id%22--%3E", "", nil), "AEG-SSTI-002"},
+		{"query ssi", get("/api/v1/search", "q=%3C!--%23include+virtual%3D%22%2Fetc%2Fpasswd%22+--%3E", nil), "AEG-SSTI-002"},
+		{"json ssi backtick", post("application/json", `{"note":"<!--#exec cmd=\"ls `+"`id`"+`\" -->"}`), "AEG-SSTI-002"},
+		{"form ssi", post("application/x-www-form-urlencoded", "note=%3C!--%23printenv+--%3E"), "AEG-SSTI-002"},
+		{"referer ssi", get("/api/v1/x", "", http.Header{"Referer": {`https://evil.example/<!--#echo var="DOCUMENT_URI" -->`}}), "AEG-SSTI-002"},
+	} {
+		if d := e.Inspect(tc.req); !has(d, tc.rule) {
+			t.Errorf("%s: no %s: %+v", tc.name, tc.rule, d.Matches)
+		}
+	}
+	for _, q := range []string{"q=waiting+for+delay+in+shipping", "q=delay%3A+5+days", "q=sleep+5+minutes",
+		"q=%3C!--+comment+--%3E", "q=%3C!--%23region--%3E", "q=Fixed+pg_sleep+handling"} {
+		if d := e.Inspect(get("/api/v1/search", q, nil)); len(d.Matches) != 0 {
+			t.Errorf("query %q: %+v", q, d.Matches)
+		}
+	}
+}
