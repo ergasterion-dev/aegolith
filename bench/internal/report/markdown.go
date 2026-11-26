@@ -2,6 +2,7 @@ package report
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -218,7 +219,7 @@ func diffConfig(b *strings.Builder, prev, cur Config) {
 		if pall > 0 && call > 0 {
 			change = "no change"
 			if before, after := share(pn, pall), share(cn, call); before != after {
-				change = fmt.Sprintf("%+.1f points", 100*(after-before))
+				change = points(100 * (after - before))
 			}
 		}
 		row(b, name, fraction(pn, pall), fraction(cn, call), change)
@@ -258,12 +259,45 @@ func added(prev, cur []Listed) []Listed {
 	return slices.DeleteFunc(slices.Clone(cur), func(l Listed) bool { return before[l.CaseID] })
 }
 
-// percent is n of all as a percentage, or "n/a" when all is 0.
+// percent is n of all as a percentage, or "n/a" when all is 0. It reads 0.0%
+// only when n is 0 and 100.0% only when n is all.
 func percent(n, all int) string {
-	if all == 0 {
+	switch {
+	case all == 0:
 		return "n/a"
+	case n == 0:
+		return "0.0%"
+	case n == all:
+		return "100.0%"
 	}
-	return fmt.Sprintf("%.1f%%", 100*share(n, all))
+	return between(100*share(n, all)) + "%"
+}
+
+// points is a change between two rates that differ, in percentage points. It
+// reads 100.0 only for a change from none to all or back.
+func points(change float64) string {
+	sign := "+"
+	if change < 0 {
+		sign = "-"
+	}
+	size := math.Abs(change)
+	if size == 100 {
+		return sign + "100.0 points"
+	}
+	return sign + between(size) + " points"
+}
+
+// between writes a number above 0 and below 100 with one decimal, as a bound
+// where rounding would reach either end.
+func between(v float64) string {
+	switch s := fmt.Sprintf("%.1f", v); s {
+	case "0.0":
+		return "<0.1"
+	case "100.0":
+		return ">99.9"
+	default:
+		return s
+	}
 }
 
 // fraction is percent with the numbers behind it.

@@ -433,3 +433,78 @@ func TestMarkdownEscapesNames(t *testing.T) {
 	}
 	contains(t, r.Markdown(), `a\|b`, "&lt;script&gt;", `s\|t`, "no licence", "not recorded")
 }
+
+// Rounding must not turn "all but one" into all, or "one" into none.
+func TestPercentagesNeverRoundToAllOrNothing(t *testing.T) {
+	t.Parallel()
+	// report holds attacks of which detected were blocked, and legitimate
+	// requests of which flagged were.
+	report := func(detected, attacks, flagged, legit int) Report {
+		row := func(source string, expected cases.Expected, blocked, all int) Row {
+			return Row{Source: source, Split: cases.SplitHeldOut, Expected: expected,
+				Counts: Counts{Sent: all, Blocked: blocked, Passed: all - blocked}}
+		}
+		return Report{Configs: []Config{{
+			Name: "typed",
+			Rows: []Row{
+				row(TotalSource, cases.Attack, detected, attacks), row(TotalSource, cases.Legit, flagged, legit),
+				row("third", cases.Attack, detected, attacks), row("third", cases.Legit, flagged, legit),
+			},
+			Payloads: attacks, PayloadsAny: detected, PayloadsAll: flagged,
+		}}}
+	}
+	almost := report(2499, 2500, 1, 3000)
+	exact := report(2500, 2500, 0, 3000)
+	reversed := report(0, 2500, 3000, 3000)
+
+	md := almost.Markdown()
+	contains(t, md,
+		"- Blocked rate: >99.9% (2499 of 2500 attacks)",
+		"- Detection rate (blocked or flagged): >99.9% (2499 of 2500 attacks)",
+		"- False positive rate (blocked or flagged): <0.1% (1 of 3000 legitimate requests)",
+		"- Blocked or flagged in at least one placement: >99.9% (2499 of 2500)",
+		"- Blocked or flagged in every judged placement: <0.1% (1 of 2500)",
+		// The totals and both source tables; a cell is escaped.
+		"| held-out | attack | 2500 | 2499 | 0 | 0 | 1 | 0 | 0 | 0 | &gt;99.9% | &gt;99.9% |",
+		"| held-out | legit | 3000 | 1 | 0 | 0 | 2999 | 0 | 0 | 0 | &lt;0.1% | &lt;0.1% |",
+		"| third | held-out | attack | 2500 | 2499 | 0 | 0 | 1 | 0 | 0 | 0 | &gt;99.9% | &gt;99.9% |",
+		"| third |  | held-out | legit | 3000 | 1 | 0 | 0 | 2999 | 0 | 0 | 0 | &lt;0.1% | &lt;0.1% |")
+	for _, wrong := range []string{"100.0%", " 0.0%"} {
+		if strings.Contains(md, wrong) {
+			t.Errorf("%q is shown for a rate that is not:\n%s", wrong, md)
+		}
+	}
+
+	contains(t, exact.Markdown(),
+		"- Blocked rate: 100.0% (2500 of 2500 attacks)",
+		"- False positive rate (blocked or flagged): 0.0% (0 of 3000 legitimate requests)",
+		"| held-out | attack | 2500 | 2500 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |",
+		"| held-out | legit | 3000 | 0 | 0 | 0 | 3000 | 0 | 0 | 0 | 0.0% | 0.0% |")
+
+	contains(t, Diff(exact, almost),
+		"| Detection rate | 100.0% (2500 of 2500) | &gt;99.9% (2499 of 2500) | -&lt;0.1 points |",
+		"| False positive rate | 0.0% (0 of 3000) | &lt;0.1% (1 of 3000) | +&lt;0.1 points |")
+	contains(t, Diff(reversed, almost),
+		"| Detection rate | 0.0% (0 of 2500) | &gt;99.9% (2499 of 2500) | +&gt;99.9 points |",
+		"| False positive rate | 100.0% (3000 of 3000) | &lt;0.1% (1 of 3000) | -&gt;99.9 points |")
+	contains(t, Diff(reversed, exact),
+		"| Detection rate | 0.0% (0 of 2500) | 100.0% (2500 of 2500) | +100.0 points |",
+		"| False positive rate | 100.0% (3000 of 3000) | 0.0% (0 of 3000) | -100.0 points |")
+}
+
+func TestPercentAtTheEdges(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		n, all int
+		want   string
+	}{
+		{0, 0, "n/a"}, {0, 1, "0.0%"}, {1, 1, "100.0%"}, {0, 3000, "0.0%"}, {3000, 3000, "100.0%"},
+		{1, 3000, "<0.1%"}, {2499, 2500, ">99.9%"}, {1, 1_000_000, "<0.1%"}, {999_999, 1_000_000, ">99.9%"},
+		{1, 1000, "0.1%"}, {999, 1000, "99.9%"}, {3, 4, "75.0%"},
+	}
+	for _, tt := range tests {
+		if got := percent(tt.n, tt.all); got != tt.want {
+			t.Errorf("percent(%d, %d) = %q, want %q", tt.n, tt.all, got, tt.want)
+		}
+	}
+}
