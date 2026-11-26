@@ -20,7 +20,8 @@ const (
 	// maxRewritePasses bounds the passes taken to reach a stable result.
 	maxRewritePasses = 8
 	// maxNameBytes is the longest DNS name. Hosts split over lines, and user
-	// info before a host written without slashes, are followed no further.
+	// info before a host written without slashes or holding characters only
+	// browsers accept, are followed no further.
 	maxNameBytes = 255
 )
 
@@ -46,8 +47,9 @@ const (
 // .conf and so on); the authority of php:, data:, phar:, javascript: and
 // similar URLs that open no connection; an IPv6 address without brackets;
 // anything inside base64, more than ten layers of encoding or an encoding not
-// listed above, including overlong UTF-8; and a host after user info holding
-// a space, quote, angle bracket or ?.
+// listed above, including overlong UTF-8; and a host after user info that
+// holds ?, or that holds a space, double quote, angle bracket or backtick and
+// either runs past 255 bytes or follows fewer than two slashes.
 func RewriteCallbacks(s string) string {
 	for range maxRewritePasses {
 		out := rewritePass(s)
@@ -491,7 +493,7 @@ func (s *scanner) endsAuthority(k int) bool {
 	switch c := s.text[k]; c {
 	case '\t', '\r', '\n':
 		return false // parsers drop them; host decides
-	case '/', '?', ' ', '"', '\'', '<', '>', '`', 0x7f:
+	case '/', '?', ' ', '"', '<', '>', '`', 0x7f:
 		return true
 	case '\\':
 		_, count := s.slashRun(k)
@@ -532,7 +534,35 @@ func (s *scanner) authority(i int, strict bool) (end int) {
 			s.host(k, end, strict && k == proper)
 		}
 	}
+	// No user info follows a fragment, and a space straight after the slashes
+	// of a URL without a scheme starts a comment.
+	comment := !strict && end == i && end < len(s.text) && s.text[end] == ' '
+	if hash == end && !comment {
+		s.browserUserInfo(i, end)
+	}
 	return end
+}
+
+// browserUserInfo judges the hosts after user info holding characters that end
+// an authority above but that browsers accept in user info: space, double
+// quote, angle brackets and backtick. From end, where the authority starting
+// at i stopped, any @ before a path, query or fragment and within maxNameBytes
+// of i may close such user info. The text may as well be prose, so only a host
+// that looks public is replaced.
+func (s *scanner) browserUserInfo(i, end int) {
+	for k := end; k < len(s.text) && k-i < maxNameBytes; k++ {
+		if past, ok := s.braceEnd[k]; ok {
+			k = past - 1
+			continue
+		}
+		switch c := s.text[k]; {
+		case strings.IndexByte(" \"<>`", c) >= 0:
+		case c == '#' || s.endsAuthority(k):
+			return
+		case c == '@':
+			s.host(k+1, len(s.text), false)
+		}
+	}
 }
 
 // host reads the host starting at i and, if it has to be replaced, records

@@ -1,6 +1,7 @@
 package cases
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -46,6 +47,25 @@ var public = []rewriteTest{
 	{"backslash before at", `http://127.0.0.1\@evil.com/`, `http://127.0.0.1\@callback.invalid/`},
 	{"encoded slash before at", "http://127.0.0.1%2f@evil.com/", "http://127.0.0.1%2f@callback.invalid/"},
 	{"encoded at", "http://127.0.0.1%40evil.com/", "http://127.0.0.1%40callback.invalid/"},
+
+	// A single quote is legal in user info (RFC 3986 sub-delims).
+	{"quote in user info", "http://127.0.0.1'@evil.com/", "http://127.0.0.1'@callback.invalid/"},
+	{"quote after name in user info", "http://a'@evil.com/", "http://a'@callback.invalid/"},
+	{"quote among sub delimiters", "http://a!b'c@evil.com:80/x", "http://a!b'c@callback.invalid:80/x"},
+	{"single quoted url", "url='http://evil.com'", "url='http://callback.invalid'"},
+	// Browsers also accept these in user info.
+	{"space in user info", "http://127.0.0.1 @evil.com/", "http://127.0.0.1 @callback.invalid/"},
+	{"words in user info", "http://127.0.0.1 a b@evil.com/", "http://127.0.0.1 a b@callback.invalid/"},
+	{"double quote in user info", `http://127.0.0.1"@evil.com/`, `http://127.0.0.1"@callback.invalid/`},
+	{"less than in user info", "http://127.0.0.1<@evil.com/", "http://127.0.0.1<@callback.invalid/"},
+	{"greater than in user info", "http://127.0.0.1>@evil.com/", "http://127.0.0.1>@callback.invalid/"},
+	{"backtick in user info", "http://127.0.0.1`@evil.com/", "http://127.0.0.1`@callback.invalid/"},
+	{"user info starting with a quote", `http://"@evil.com/`, `http://"@callback.invalid/`},
+	{"user info starting with a space", "http:// @evil.com/", "http:// @callback.invalid/"},
+	{"space in relative user info", "//127.0.0.1 @evil.com/", "//127.0.0.1 @callback.invalid/"},
+	// The cost of reading past those characters: a public mail domain soon
+	// after a URL that has no path is replaced too.
+	{"mail after a pathless url", "see http://127.0.0.1 and ask bob@evil.com", "see http://127.0.0.1 and ask bob@callback.invalid"},
 
 	// Slash and backslash variants.
 	{"three slashes", "///evil.com/x", "///callback.invalid/x"},
@@ -211,6 +231,20 @@ var unchanged = []string{
 	"ldap:cn=admin,dc=example",
 	`{"a":"b\/c"}`,
 	"100% sure & done; ${name}",
+	// Quotes, spaces and angle brackets around local addresses and prose.
+	"url='http://127.0.0.1'",
+	"http://127.0.0.1'@localhost/",
+	"http://127.0.0.1 @10.0.0.5/",
+	"it's on http://localhost, isn't it?",
+	"see http://127.0.0.1 for details",
+	"open http://localhost and mail admin@localhost",
+	"open http://127.0.0.1 then ask @alice",
+	`<a href="http://127.0.0.1/">bob@evil.com</a>`,
+	"http://127.0.0.1/ and bob@evil.com",
+	"http://127.0.0.1? ask bob@evil.com",
+	"http://127.0.0.1#top <bob@evil.com>",
+	"a // b: ask bob@evil.com",
+	"http://127.0.0.1 " + strings.Repeat("x ", 130) + "bob@evil.com",
 }
 
 // unrewritten pins the forms the rewrite is known to leave alone. A change
@@ -224,8 +258,8 @@ var unrewritten = []rewriteTest{
 	{name: "relative short address", in: "//8.8/x"},
 	{name: "relative host named like a file", in: "//evil.html/x"},
 	{name: "base64", in: "aHR0cDovL2V2aWwuY29tLw=="},
-	{name: "quote in user info", in: "http://127.0.0.1'@evil.com/"},
-	{name: "space in user info", in: "http://127.0.0.1 @evil.com/"},
+	{name: "question mark in user info", in: "http://127.0.0.1?@evil.com/"},
+	{name: "long user info with a space", in: "http://127.0.0.1 " + strings.Repeat("a", 260) + "@evil.com/"},
 	{name: "overlong utf-8 slashes", in: "http:%c0%af%c0%afevil.com"},
 	{name: "ipv6 without brackets", in: "http://::ffff:808:808/"},
 	{name: "single label without slashes", in: "http:evil"},
@@ -255,12 +289,35 @@ func TestRewriteCallbacks(t *testing.T) {
 	}
 }
 
+// TestRewriteCallbacksUserInfoAgainstNetURL checks the shapes net/url reads
+// as naming a public host: after the rewrite it must read callback.invalid.
+func TestRewriteCallbacksUserInfoAgainstNetURL(t *testing.T) {
+	t.Parallel()
+	hostname := func(t *testing.T, raw string) string {
+		t.Helper()
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("url.Parse(%q): %v", raw, err)
+		}
+		return u.Hostname()
+	}
+	for _, in := range []string{"http://127.0.0.1'@evil.com/", "http://a'@evil.com/", "http://a!b'c@evil.com:80/x"} {
+		if got := hostname(t, in); got != "evil.com" {
+			t.Errorf("net/url reads %q as host %q, want evil.com", in, got)
+		}
+		out := RewriteCallbacks(in)
+		if got := hostname(t, out); got != "callback.invalid" {
+			t.Errorf("net/url reads the rewrite %q of %q as host %q", out, in, got)
+		}
+	}
+}
+
 // TestRewriteCallbacksHostileInput bounds the work on inputs that would be
 // quadratic for a scanner that rereads the rest of the string.
 func TestRewriteCallbacksHostileInput(t *testing.T) {
 	t.Parallel()
 	const n = 1 << 14
-	for _, unit := range []string{"${", "//${", `\\a`, "\\\t\\a", "//a@", "//a#", "%25", "${lower:", "http:", "corbaloc:", "//a\n", "/"} {
+	for _, unit := range []string{"${", "//${", `\\a`, "\\\t\\a", "//a@", "//a#", "%25", "${lower:", "http:", "corbaloc:", "//a\n", "//a ", "//a'", "//a<@", "http:a'", "/"} {
 		in := strings.Repeat(unit, n)
 		got := RewriteCallbacks(in)
 		if again := RewriteCallbacks(got); again != got {
