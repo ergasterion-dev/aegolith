@@ -9,7 +9,7 @@ It checks the protocol and the shape of each request first, then runs targeted a
 Middleware for `net/http` and Fiber v2. Tens of microseconds per request, no infrastructure, safe to run in monitor mode first.
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status-and-roadmap)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#status-and-roadmap)
 [![Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg?logo=go&logoColor=white)](https://go.dev)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -18,7 +18,7 @@ Middleware for `net/http` and Fiber v2. Tens of microseconds per request, no inf
 </div>
 
 > [!WARNING]
-> **Aegolith is pre-alpha.** The API can change, the rules are tuned on one corpus, and it does not catch everything. Run it in **monitor mode** first, read what it would have blocked, and only then turn on enforcement. Read the [threat model](docs/threat-model.md), including its list of known gaps, before you rely on it.
+> **Aegolith is alpha.** The API can change, the rules are tuned on one corpus, and it does not catch everything. Run it in **monitor mode** first, read what it would have blocked, and only then turn on enforcement. Read the [threat model](docs/threat-model.md), including its list of known gaps, before you rely on it.
 
 The name is Greek: *aigis*, the shield of Zeus and Athena, plus *lithos*, stone. The shield stone.
 
@@ -320,16 +320,16 @@ The corpus came from the same team that tuned the rules, so these numbers show t
 
 ## Performance
 
-Measured on a developer laptop, not a server, on the alpha.6 code at commit `b0c0ec0`. To reproduce the figures, run `make bench` and `make perf` as shown below.
+Measured on a developer laptop, not a server, on the alpha.6 code at commit `b0c0ec0`. The commands are at the end of this section; the comparisons with alpha.5 need more than one checkout.
 
 | | |
 |---|---|
 | CPU | Apple M4 Pro (14 cores) |
 | Go | go1.25.12 darwin/arm64, GOMAXPROCS 14 |
 | Date | 2026-11-26 |
-| Load | The laptop was not idle: load average 5.7 to 9.3 over 1 minute and 7.7 to 10.0 over 5 minutes at the start and end of the alpha.6 benchmark and latency runs reported here. Treat the numbers as upper bounds. |
+| Load | The laptop was not idle. Load average at the start and end of the alpha.6 runs (both request sets), over 1 and 5 minutes: quoted benchmarks, 6.1 to 9.3 and 8.4 to 9.1; latency session 1, 4.7 to 10.5 and 7.7 to 10.0; latency session 2, 3.7 to 5.5 and 5.0 to 5.8. A quiet machine may read lower; loaded runs here read higher. |
 
-**Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Each number is the **lowest of 3 runs**. "Generic" is no policy, "api-aware" is the typed corpus policy.
+**Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Six rounds were run, alternating with alpha.5. Each number is the **lowest of the last three** (rounds 4 to 6): two alpha.6 runs in rounds 1 to 3 ended with a 5-minute load above the limit of 10 set for those runs (10.47 and 12.45). The lowest of all six differs in one cell (500-field body, api-aware: 381 µs). "Generic" is no policy, "api-aware" is the typed corpus policy.
 
 | Benchmark | Generic | API-aware | Allocs/op (generic) |
 |---|---|---|---|
@@ -343,18 +343,30 @@ Measured on a developer laptop, not a server, on the alpha.6 code at commit `b0c
 
 Against `v0.1.0-alpha.5`, run the same way on the same machine in the same session: the search GET and cart POST benchmarks are 14 to 21% slower, the 500-field body 3 to 4%, the three `ScanText` rows above 7 to 10% (the short word went from 105 to 115 ns) and the worst-case bodies below 4 to 6%. The corpus grew from 130 to 195 legitimate requests, so for that row both releases were also run on alpha.5's requests and policy: alpha.6 is 7% slower generic and 17% slower api-aware.
 
-**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. Six runs over the 195 legitimate corpus requests, with and without a realistic set of browser headers. p50, p99 and max are the **lowest of the 6 runs** for each figure; the last column is the worst p99 any run produced:
+Rounds 1 to 3 alone read higher for alpha.6: search GET 14.9 / 13.3 µs, cart POST 20.1 / 18.7 µs and worst-case bodies 467 / 334 / 152 ms, which would put search GET and cart POST 14 to 24% and the worst-case bodies 5 to 17% behind alpha.5.
 
-| Configuration | p50 | p99 | max | Highest p99 |
+**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. There were two sessions of six runs each, alpha.6 and alpha.5 interleaved: the first started each run with a 5-minute load below 10, the second below 6. Every run is counted here. The first table is alpha.6 on its 195 legitimate corpus requests, with and without a realistic set of browser headers, over all 12 runs: p50 and lowest p99 are the lowest any run produced, highest p99 and highest max the worst.
+
+| Configuration | p50 | Lowest p99 | Highest p99 | Highest max |
 |---|---|---|---|---|
-| generic, corpus requests | 5.8 µs | 15.8 µs | 242 µs | 39.3 µs |
-| generic, with browser headers | 15.0 µs | 30.6 µs | 263 µs | **65.7 µs (over budget)** |
-| api-aware, corpus requests | 4.5 µs | 14.1 µs | 184 µs | 20.0 µs |
-| api-aware, with browser headers | 13.7 µs | 30.1 µs | 266 µs | **84.7 µs (over budget)** |
+| generic, corpus requests | 5.4 µs | 14.9 µs | 39.3 µs | 19.5 ms |
+| generic, with browser headers | 13.8 µs | 23.8 µs | **65.7 µs (over budget)** | 6.9 ms |
+| api-aware, corpus requests | 3.8 µs | 11.5 µs | 25.6 µs | 1.7 ms |
+| api-aware, with browser headers | 12.5 µs | 22.4 µs | **84.7 µs (over budget)** | 1.3 ms |
 
-**The budget did not hold in every run.** It held on every row in four of the six. The second run failed one row (api-aware with browser headers, p99 84.7 µs, maximum 1.0 ms) and the third failed another (generic with browser headers, p99 65.7 µs, maximum 6.9 ms); the three runs after them held every row (highest p99 41.4 µs). `v0.1.0-alpha.5`, run alternately with these in the same session, failed one of its six runs on two rows (p99 112 µs). We read this as scheduling noise on a busy laptop, which a quiet server run would have to confirm. The strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
+**The budget did not hold in every run, with either release.** A run counts as over budget when any of its four rows has a p99 of 50 µs or more:
 
-**Worst case.** Cost is linear in the input and bounded, but a hostile large body is not cheap. The adversarial 1 MiB bodies in `BenchmarkInspectWorstCase` (lowest of 3):
+| Code and requests | Session 1 | Session 2 | Runs over budget | Rows over budget | p99 of those rows (µs) |
+|---|---|---|---|---|---|
+| alpha.6, its 195 requests | 2 of 6 | 1 of 6 | 3 of 12 | 3 of 48 | 56.0, 65.7, 84.7 |
+| alpha.6, alpha.5's 130 requests and policy | 3 of 6 | 1 of 6 | 4 of 12 | 4 of 48 | 62.5, 68.3, 68.7, 87.0 |
+| alpha.5, its 130 requests | 1 of 6 | 3 of 6 | 4 of 12 | 7 of 48 | 56.5, 60.8, 65.8, 84.8, 89.8, 111.6, 111.8 |
+
+Every row over budget is one with browser headers. Taking both request sets together, alpha.6 was over budget in 7 of 24 runs and alpha.5 in 4 of 12. The second session shows that the misses are not specific to alpha.6 (alpha.5 missed in 3 of 6 runs there, alpha.6 in 1 of 6 on each request set, though one of those alpha.5 runs started while another process on the laptop was using about nine cores) and that a 5-minute load below 6 did not stop them. The runs do not establish the cause, and they do not show that either release holds the budget in every run; that needs a quiet server. The strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
+
+**On identical requests alpha.6 is slower.** With alpha.6 on alpha.5's requests and policy, the median over 12 runs of each row is 13 to 19% higher than alpha.5's for p50 and 11 to 24% higher for p99. The lowest single p50 of the 12 is 11 to 22% higher; the lowest single p99 is mixed, from 10% lower to 10% higher.
+
+**Worst case.** Cost is linear in the input and bounded, but a hostile large body is not cheap. The adversarial 1 MiB bodies in `BenchmarkInspectWorstCase` (lowest of rounds 4 to 6):
 
 | Body | Time | Allocated |
 |---|---|---|
@@ -368,9 +380,22 @@ Reproduce:
 
 ```sh
 sysctl -n machdep.cpu.brand_string && go version && uptime   # machine, Go, load
-make bench      # run it 3 times and take the lowest ns/op
-make perf       # latency p50, p99, max
-make corpus     # the tables above
+make bench      # benchmarks: six rounds here; the text above says which are quoted
+make perf       # latency p50, p99, max: one run per call, 12 per row of the run table
+make corpus     # the corpus tables
+
+# alpha.5, for the comparisons: run the same two targets in a second clone
+git clone --branch v0.1.0-alpha.5 https://github.com/ergasterion-dev/aegolith ../aegolith-alpha5
+
+# alpha.6 on alpha.5's requests and policy (in a scratch clone), then restore
+git checkout v0.1.0-alpha.5 -- testdata/corpus/legit.jsonl testdata/corpus/example-api-policy.json
+make perf
+go test -run '^$' -bench InspectLegitCorpus -benchmem .
+git checkout HEAD -- testdata/corpus
+
+# libinjection-go share: one CPU profile per worst-case body; read the "% of total" line
+go test -run '^$' -bench 'InspectWorstCase/ff-lt-trailing-sqli$' -benchtime 30x -cpuprofile cpu.out .
+go tool pprof -top -nodefraction=0 -focus=libinjection-go cpu.out
 ```
 
 ## Status and roadmap
@@ -389,7 +414,7 @@ The full list, with the reasons, is in the [threat model](docs/threat-model.md#k
 - **Body over the limit.** Only the first `max_body_bytes` of a body are inspected. `AEG-PROTO-003` blocks a longer body by default; if you set it to `monitor`, an attack after the padding is not seen.
 - **Data after a JSON value.** A body with data after its first JSON value is malformed, so it gets a raw rescan that quote-parity padding can evade (`{"a":"x"}'{"q":"1' OR '1'='1"}` is allowed). No standard-library Go decoder reads that trailing value.
 - **Non-UTF-8 JSON charsets** (`charset=utf-16`, `iso-8859-1`) are accepted by the content-type check. This fails safe: the body is inspected as UTF-8 bytes, and UTF-16 is blocked for its NUL bytes.
-- **Worst-case cost.** A hostile 1 MiB body can cost about 0.46 s of CPU on an Apple M4 Pro (more on slower or loaded hardware) and 128 MB of allocation (see [Performance](#performance)). The scan budget is kept at 8x the body limit on purpose.
+- **Worst-case cost.** A hostile 1 MiB body can cost about 0.46 s of CPU on an Apple M4 Pro and 128 MB of allocation (see [Performance](#performance)); the same body took up to 0.66 s while that laptop was loaded, and slower hardware takes longer. In monitor mode an over-cap body of 2 MiB+1 bytes (the Fiber adapter hands over that much) measured about 0.44 s and 145 MB. The scan budget is kept at 8x the body limit on purpose.
 - **Recall traded for fewer false positives:** `x & cat /flag.txt` (no flag, after a prose `&`) and `Location:evil.com` in a value are allowed.
 - **Recall traded for fewer false positives (XSS, alpha.6):** five shapes are allowed: `javascript: a=1; alert (x)` (plain spaces, one plain word or blank-separated words as the argument), a bare `<object>`/`<link>`/`<base>`/`<meta>`/`<embed>` with no attribute on any tag, a `<!DOCTYPE` with no `>` or `[` after it, a backtick inside an HTML or bogus comment when nothing else in the value is flagged (no raw-text or form element, no handler, script or `javascript:` text, nothing libinjection flags with the comments read as live), and a JavaScript-string breakout followed by such a comment (``';alert(1)//<!--`-->``). The exact list is in the [threat model](docs/threat-model.md#changes-in-alpha6-and-what-they-cost). Real markup next to them is still caught.
 - **Recall traded for fewer false positives (alpha.6):** `1-1 or 1` and `9% (a) or 1` (SQL tautologies with no comparison that look like sizes or percentages), `$(pwd)` and other unlisted one-word substitutions in a prose shape, a two-letter command in a User-Agent comment, any command word with letter-only flags in a prose backtick span (``a `whoami` b``), bare template pipes such as `{{ x|config }}`, and `#{ }` data paths, which can still call a zero-argument method (`#{order.destroy}`).
@@ -401,7 +426,7 @@ Roadmap:
 - [x] `net/http` middleware and Fiber v2 adapter, decision hook with a `log/slog` helper
 - [x] Corpus gates, fuzz tests, benchmarks and a latency budget
 - [x] Architecture and threat-model documents
-- [ ] First tagged release
+- [x] First tagged release
 - [ ] v0.2: generate route policies from Go structs or OpenAPI
 - [ ] v0.2: Fiber v3, Gin and Echo adapters (Chi and Gorilla already work through `net/http`)
 - [ ] v0.2: optional Coraza-backed engine for a few risky routes
