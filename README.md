@@ -320,7 +320,7 @@ The corpus came from the same team that tuned the rules, so these numbers show t
 
 ## Performance
 
-Measured on a developer laptop, not a server, on the alpha.6 detector code (commit `4320f92`). Reproduce with the commands below.
+Measured on a developer laptop, not a server, at commit `4320f92`, before the last alpha.6 detector changes. The published figures were not re-measured on the released code. To reproduce them, check out that commit and run `make bench` and `make perf` as shown below.
 
 | | |
 |---|---|

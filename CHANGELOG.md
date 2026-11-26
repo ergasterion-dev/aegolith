@@ -40,7 +40,7 @@ Excluding `AEG-SQLI-001` or `AEG-SSTI-001` on a field leaves the new rules on; e
 
 ### Performance
 
-Re-measured on an Apple M4 Pro laptop (go1.25.12, 5-minute load average 7.5 to 8.6): latency-budget p99 11 to 24 µs per legitimate corpus request against the 50 µs budget (lowest of 3 runs per figure; one of the three runs exceeded the budget on one row, 157 µs, and three further runs held it). `ScanText` on a short word rose from 82 ns (alpha.3 figures) to 105 ns. Details in the [README](README.md#performance).
+Measured at commit `4320f92`, before the last alpha.6 detector changes; the published figures were not re-measured on the released code. On an Apple M4 Pro laptop (go1.25.12, 5-minute load average 7.5 to 8.6): latency-budget p99 11 to 24 µs per legitimate corpus request against the 50 µs budget (lowest of 3 runs per figure; one of the three runs exceeded the budget on one row, 157 µs, and three further runs held it). `ScanText` on a short word rose from 82 ns (alpha.3 figures) to 105 ns. Details in the [README](README.md#performance).
 
 ## v0.1.0-alpha.5
 
