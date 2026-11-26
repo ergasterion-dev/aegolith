@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ergasterion-dev/aegolith/internal/model"
@@ -137,4 +138,35 @@ func TestUserAgentFuzzers(t *testing.T) {
 		"Hydration/1.0",
 		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
 	}, legitUserAgents...))
+}
+
+// TestProbePathExcept: each match is offered as the range the rule read;
+// excusing one leaves the others reported.
+func TestProbePathExcept(t *testing.T) {
+	const p = "/api/v1/vault/.env/actuator/env"
+	var got []string
+	all := func(start, end int) bool { got = append(got, p[start:end]); return true }
+	if _, ok := ProbePathExcept(p, all); ok {
+		t.Fatal("all excused, still a hit")
+	}
+	if strings.Join(got, ",") != ".env,actuator/env" {
+		t.Fatalf("ranges %q", got)
+	}
+	onlyActuator := func(start, end int) bool { return p[start:end] == "actuator/env" }
+	if h, ok := ProbePathExcept(p, onlyActuator); !ok || h.RuleID != "AEG-SCANNER-002" {
+		t.Fatalf(".env not reported: %v %v", h, ok)
+	}
+	for path, want := range map[string]string{
+		"/.git/config":      ".git",
+		"/actuator":         "actuator",
+		"/wp-login.php":     "wp-login.php",
+		"/a/b/config.php~":  "config.php~",
+		"/api/v1/x.php.bak": "x.php.bak",
+	} {
+		var r []string
+		ProbePathExcept(path, func(s, e int) bool { r = append(r, path[s:e]); return true })
+		if len(r) == 0 || r[len(r)-1] != want {
+			t.Errorf("%q: ranges %q, want last %q", path, r, want)
+		}
+	}
 }

@@ -123,6 +123,11 @@
       }
     },
     {
+      "method": "GET",
+      "path": "/api/v1/stores/:id/actuator/health",
+      "path_params": {"id": {"type": "string", "max_len": 64}}
+    },
+    {
       "method": "POST",
       "path": "/api/v1/users/me/avatar",
       "body": {

@@ -337,6 +337,29 @@ func (n *node) find(segs []string, i int, fold bool, bound *[]string) (*entry, i
 	return nil, -1
 }
 
+// Segments splits a request path into segments exactly as Match does: one
+// leading and one trailing '/' are dropped, inner empty segments are kept,
+// and percent escapes are left as they are. Segment i of the result is the
+// one that Matched.Literal(i) describes.
+func Segments(path string) []string { return splitPath(path) }
+
+// Literal reports whether segment i of the matched path (as Segments splits
+// it) was matched by a literal segment of the route template, rather than
+// by a ":name" parameter or the trailing "*". A literal segment equals the
+// template's text (up to ASCII case when folding), so the route's author
+// wrote it.
+func (m Matched) Literal(i int) bool {
+	if m.Route == nil || i < 0 {
+		return false
+	}
+	segs := splitPath(m.Route.Path)
+	if i >= len(segs) {
+		return false
+	}
+	s := segs[i]
+	return s != "*" && s[0] != ':'
+}
+
 // asciiLower lower-cases ASCII letters only, as Fiber's router does; other
 // bytes (UTF-8, percent escapes) are left alone.
 func asciiLower(s string) string {

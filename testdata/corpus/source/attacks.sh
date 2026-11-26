@@ -259,6 +259,10 @@ path $A scanner "actuator under prefix" "/api/v1/actuator/env"
 hdr $A scanner "wfuzz"                 User-Agent "Wfuzz/3.1.0"
 hdr $A scanner "feroxbuster"           User-Agent "feroxbuster/2.10.4"
 hdr $A scanner "hydra"                 User-Agent "Hydra"
+# Aegolith (alpha.6): the API-aware policy declares GET /api/v1/stores/:id/actuator/health;
+# an endpoint it does not declare, or one in a parameter, is still a probe.
+path $A scanner "undeclared actuator endpoint beside a declared one" "/api/v1/stores/1/actuator/heapdump"
+path $A scanner "dotenv in the parameter of a declared actuator route" "/api/v1/stores/.env/actuator/health"
 
 # --- 14. Session fixation / misc ----------------------------------------------------------------------------------
 q $A session "session fixation"        "PHPSESSID=attacker-fixed-id"

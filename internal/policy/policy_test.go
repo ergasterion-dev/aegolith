@@ -588,3 +588,42 @@ func TestMatchFoldMostSpecific(t *testing.T) {
 		t.Fatalf("CompileFold case-duplicate err = %v", err)
 	}
 }
+
+func TestMatchedLiteral(t *testing.T) {
+	tab, err := Compile([]Route{
+		{Method: "GET", Path: "/api/v1/stores/:id/actuator/health"},
+		{Method: "GET", Path: "/api/v1/files/*"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path string
+		want []bool
+	}{
+		{"/api/v1/stores/1/actuator/health", []bool{true, true, true, false, true, true}},
+		{"/api/v1/stores/1/actuator/health/", []bool{true, true, true, false, true, true}},
+		{"/api/v1/files/a/b", []bool{true, true, true, false, false}},
+		{"/api/v1/files", []bool{true, true, true}},
+	} {
+		m, ok := tab.Match("GET", tc.path)
+		if !ok {
+			t.Fatalf("%q: no match", tc.path)
+		}
+		segs := Segments(tc.path)
+		if len(segs) != len(tc.want) {
+			t.Fatalf("%q: %d segments, want %d", tc.path, len(segs), len(tc.want))
+		}
+		for i, w := range tc.want {
+			if got := m.Literal(i); got != w {
+				t.Errorf("%q segment %d (%q): Literal = %v, want %v", tc.path, i, segs[i], got, w)
+			}
+		}
+		if m.Literal(-1) || m.Literal(len(segs)) {
+			t.Errorf("%q: out-of-range segment is literal", tc.path)
+		}
+	}
+	if (Matched{}).Literal(0) {
+		t.Error("zero Matched: literal")
+	}
+}

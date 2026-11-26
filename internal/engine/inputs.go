@@ -16,8 +16,34 @@ import (
 
 // checkProbeAndAgent runs the probe-path and backup-file rules on the
 // decoded path and the scanner rule on every User-Agent value.
+//
+// A declared route is never judged by the scanner path rules for text its
+// author wrote: a probe-path match whose text lies wholly in literal
+// segments of the route the request matched (GET
+// /api/v1/stores/:id/actuator/health) is not reported. A match that
+// touches a parameter or wildcard segment still counts, so "/:slug" or a
+// trailing "*" does not switch the rules off for "/.git/config"; so does
+// every match on an unrouted request (an undeclared path or method, a
+// literal sent percent-encoded or in another case on a case-sensitive
+// table, an empty segment). Other matches in the same path are reported
+// as before. The route is the one matchRoute found, with the router's own
+// rules (raw path, case folding, HEAD to GET). User agents and every
+// other detector are unaffected.
+//
+// Accepted misses (declared routes, alpha.6; the same list is in
+// docs/threat-model.md, testdata/corpus/README.md and
+// TestDeclaredRouteAcceptedMisses):
+//  1. A probe-path match whose text lies wholly in literal segments of
+//     the declared route the request matched: `GET
+//     /api/v1/stores/7/actuator/health` when `GET
+//     /api/v1/stores/:id/actuator/health` is declared. The route's own
+//     handler answers it.
+//  2. The same request in the forms the route table already treats as
+//     that route: one trailing slash (`/api/v1/stores/7/actuator/health/`),
+//     `HEAD` for a `GET` route, and other letter case when routes fold case
+//     (`/API/V1/Stores/7/Actuator/Health`).
 func (s *state) checkProbeAndAgent() {
-	if h, ok := detect.ProbePath(s.path); ok {
+	if h, ok := detect.ProbePathExcept(s.path, s.declaredLiteral()); ok {
 		s.hit(h, model.LocPath, "path", s.path)
 	}
 	for _, ua := range s.req.Header.Values("User-Agent") {
@@ -25,6 +51,85 @@ func (s *state) checkProbeAndAgent() {
 			s.hit(h, model.LocHeader, "header.user-agent", ua)
 		}
 	}
+}
+
+// declaredLiteral returns the excuse for ProbePathExcept: whether the
+// decoded path range [start, end) lies wholly in segments that the
+// matched route's template spells literally. It is nil without a matched
+// route. The per-byte map is built on the first call only (most requests
+// raise no probe match and pay nothing). It decodes each raw segment on
+// its own, as matchRoute decodes parameters, and joins them back; if that
+// does not rebuild s.path exactly, nothing is excused.
+func (s *state) declaredLiteral() func(start, end int) bool {
+	if !s.routed {
+		return nil
+	}
+	var mask []byte // per byte of s.path: 0 outside literal segments, 1 in one, 2 a separator
+	built := false
+	return func(start, end int) bool {
+		if !built {
+			built = true
+			mask = literalMask(s.req.RawPath, s.path, s.route)
+		}
+		if mask == nil || start < 0 || end > len(mask) || start >= end {
+			return false
+		}
+		lit := false
+		for _, b := range mask[start:end] {
+			if b == 0 {
+				return false
+			}
+			lit = lit || b == 1
+		}
+		return lit
+	}
+}
+
+// literalMask maps each byte of decoded (the decoded form of raw) to the
+// kind of raw segment it came from (see declaredLiteral), or returns nil
+// when decoding raw segment by segment does not give decoded. Segments are
+// split exactly as policy.Table.Match splits them.
+func literalMask(raw, decoded string, m policy.Matched) []byte {
+	mask := make([]byte, 0, len(decoded))
+	rest := raw
+	lead := strings.HasPrefix(rest, "/")
+	if lead {
+		mask = append(mask, 2)
+		rest = rest[1:]
+	}
+	trail := strings.HasSuffix(rest, "/")
+	if trail {
+		rest = rest[:len(rest)-1]
+	}
+	var b strings.Builder
+	if lead {
+		b.WriteByte('/')
+	}
+	if rest != "" {
+		for i, seg := range policy.Segments(raw) {
+			if i > 0 {
+				b.WriteByte('/')
+				mask = append(mask, 2)
+			}
+			d, _ := normalize.DecodeValue(seg)
+			b.WriteString(d)
+			k := byte(0)
+			if m.Literal(i) {
+				k = 1
+			}
+			for range len(d) {
+				mask = append(mask, k)
+			}
+		}
+	}
+	if trail {
+		b.WriteByte('/')
+		mask = append(mask, 2)
+	}
+	if b.String() != decoded || len(mask) != len(decoded) {
+		return nil
+	}
+	return mask
 }
 
 // checkRoute reports an unknown route and inspects the path: declared
