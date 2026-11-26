@@ -3,6 +3,7 @@ package detect
 import (
 	"bytes"
 	"strings"
+	"unicode"
 
 	"github.com/ergasterion-dev/aegolith/internal/model"
 	"github.com/ergasterion-dev/aegolith/internal/normalize"
@@ -1515,7 +1516,7 @@ func isLDAP(s string) bool {
 //     `requestScope`, `sessionScope`, `applicationScope`, `viewScope`,
 //     `flowScope`, `conversationScope`, `facesContext`, `externalContext`,
 //     `systemEnvironment`, `systemProperties`, `self`, `this`, `require`,
-//     `constructor`, ...; `flashScope` is not listed), and no sensitive
+//     `flashScope`, `constructor`, ...), and no sensitive
 //     name or listed zero-argument code method (`irb`, `methods`,
 //     `instance_variables`, `constructor`, `call`, ...) in it: `#{x.fork}`,
 //     `#{x.class}`, `#{a.b.c}`, `#{order.send}`, `#{file.read}`. Such a
@@ -1536,7 +1537,7 @@ func isSSTI(s string) bool {
 	// i18n call is read as data then ("<#assign e=c?new()>${e('id')}").
 	bind := hasFreeMarkerBinding(s)
 	return eachDelimited(s, "${", "}", func(in string) bool { return elExpr(in, bind) }) ||
-		eachDelimited(s, "#{", "}", isHashExpr) ||
+		eachHashTemplate(s) ||
 		eachDelimited(s, "{%", "%}", isJinjaStatement) ||
 		hasERBOutput(s)
 }
@@ -1630,6 +1631,37 @@ func eachCodeTemplate(s string) bool {
 			}
 		}
 		from = c + 2
+	}
+	return false
+}
+
+// eachHashTemplate is eachDelimited for "#{ }" with the same extra reading
+// as eachCodeTemplate: when the text since the previous "}" holds more than
+// one "#{", the text from the first of them is also checked for a dunder
+// walk, a call (which includes "T(") or a Ruby %x command. Ruby evaluates
+// the outer interpolation, so in `#{system("id #{a.b}")}` the call runs
+// although the inner "a.b" is a plain data path. Two plain paths
+// ("#{order.id} and #{order.total}") each end at their own "}" and are read
+// one at a time. The ranges are disjoint, so every byte is read a bounded
+// number of times.
+func eachHashTemplate(s string) bool {
+	for from := 0; from < len(s); {
+		c := strings.IndexByte(s[from:], '}')
+		if c < 0 {
+			return false
+		}
+		c += from
+		if o := strings.LastIndex(s[from:c], "#{"); o >= 0 {
+			if isHashExpr(s[from+o+2 : c]) {
+				return true
+			}
+			if f := strings.Index(s[from:c], "#{"); f < o {
+				if in := s[from+f+2 : c]; hasDunderOrCall(in) || hasRubyCommand(in) {
+					return true
+				}
+			}
+		}
+		from = c + 1
 	}
 	return false
 }
@@ -1747,7 +1779,10 @@ func isPlainPipe(in string) bool {
 		if part == "" {
 			return false
 		}
-		if seg > 0 && !bracketed && escapeFilters[strings.ToLower(part)] {
+		// The filter name is the segment's first token, split on the same
+		// blanks as below: "{{ x|safe if a else b }}" and "safe" followed by
+		// a form feed or U+00A0 still name the safe filter.
+		if seg > 0 && !bracketed && escapeFilters[strings.ToLower(firstField(part))] {
 			return false
 		}
 		allDigits := true
@@ -1846,6 +1881,16 @@ var pipeGlobals = map[string]bool{
 	"passthru": true, "shell_exec": true,
 }
 
+// firstField returns the first blank-separated field of s (as
+// strings.Fields splits it), or "" when s is all blanks.
+func firstField(s string) string {
+	s = strings.TrimLeftFunc(s, unicode.IsSpace)
+	if i := strings.IndexFunc(s, unicode.IsSpace); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // escapeFilters are the filters that turn autoescaping off or on; as a
 // filter they keep a {{ }} pipe code ("{{ value|e }}", "{{ x|safe }}").
 var escapeFilters = map[string]bool{"e": true, "escape": true, "safe": true, "raw": true}
@@ -1942,18 +1987,16 @@ var elCodeSensitive = map[string]bool{
 	"exec": true, "popen": true, "eval": true,
 }
 
-// isELExpr reports whether the inside of a ${ } (EL, Spring, Groovy,
+// elExpr reports whether the inside of a ${ } (EL, Spring, Groovy,
 // FreeMarker) holds code: number arithmetic (7*7, 7+7, 7*'7'), a dunder
 // walk, a string literal used as an object ("id".execute()), FreeMarker
 // ?new or ?api, a call with a string literal argument (ex("id")), or member
 // access (user.password) or a call that names something sensitive (see
 // elSensitive). Plain data paths such as "${order.total}", a placeholder
 // such as "${PRICE}", a number such as "${5}" and a short i18n call such as
-// "${t('cart.title')}" (see isI18nCall) are not code.
-func isELExpr(in string) bool { return elExpr(in, false) }
-
-// elExpr is isELExpr. bind is set when the value holds a FreeMarker
-// directive or binding built-in, and then no i18n call is read as data.
+// "${t('cart.title')}" (see isI18nCall) are not code. bind is set when the
+// value holds a FreeMarker directive or binding built-in, and then no i18n
+// call is read as data.
 func elExpr(in string, bind bool) bool {
 	in = strings.Trim(in, " \t")
 	if !bind && isI18nCall(in) {
@@ -2063,7 +2106,7 @@ var hashRootsFold = map[string]bool{
 	"binding": true, "header": true, "headervalues": true, "param": true,
 	"paramvalues": true, "cookie": true, "initparam": true, "pagescope": true,
 	"requestscope": true, "sessionscope": true, "applicationscope": true,
-	"viewscope": true, "flowscope": true, "conversationscope": true, "conversation": true,
+	"viewscope": true, "flowscope": true, "flashscope": true, "conversationscope": true, "conversation": true,
 	"cc": true, "component": true, "resource": true,
 	"facescontext": true, "externalcontext": true, "view": true, "flash": true,
 	"systemenvironment": true, "systemproperties": true, "environment": true,

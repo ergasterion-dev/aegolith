@@ -139,7 +139,10 @@ func isRootDump(seg string) bool {
 }
 
 // webTypes are the extensions of files a site serves precompressed.
-var webTypes = [...]string{"xml", "txt", "html", "js", "css", "json", "svg", "wasm", "csv"}
+var webTypes = [...]string{
+	"xml", "txt", "html", "htm", "js", "mjs", "css", "json", "ndjson", "svg", "wasm", "csv",
+	"rss", "webmanifest", "ico", "woff", "woff2",
+}
 
 // compressedWebFile reports whether name, a file name without its
 // compression extension, ends in one of webTypes and holds no archive

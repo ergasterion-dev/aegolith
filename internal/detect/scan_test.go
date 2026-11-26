@@ -222,6 +222,14 @@ func TestScanTextLinear(t *testing.T) {
 		"hash-path":     "#{a.b.c.d.",
 		"hash-path-big": "#{" + strings.Repeat("a.", 64) + "b} ",
 		"fm-directive":  "<#?eval [@",
+		// alpha.6 final review: nested "#{" (open and closed), a pipe
+		// filter's first token after Unicode blanks.
+		"hash-nested":        "#{a.b #{",
+		"hash-nested-closed": "#{a #{b.c}",
+		"hash-nested-x":      "#{%x #{",
+		"hash-nested-bare":   "#{ #{ ",
+		"pipe-first-field":   "{{ x|safe\u00a0y ",
+		"pipe-blank-filters": "{{ a|\f b|\v c ",
 		// alpha.6 token rules: SQL names with long or unclosed gaps, SSI
 		// openers with gaps and near-miss directives.
 		"waitfor":        "waitfor ",

