@@ -38,7 +38,8 @@ The core module depends on the standard library and `github.com/corazawaf/libinj
  2. protocol        method, content type (only with a body), body size, CR/LF/NUL, traversal,
     |               Transfer-Encoding / Content-Length, double-encoded path
     v
- 3. probe path + User-Agent    scanner rules
+ 3. probe path + User-Agent    scanner rules (a probe-path match that lies wholly in literal segments
+    |                          of the route matched in step 1 is not reported)
     |
     v
  4. route           unknown route (monitor by default); path params: typed values are validated,
@@ -66,9 +67,9 @@ Routes are matched on the **raw** (escaped) path, then each parameter is decoded
 
 ### Detectors
 
-`detect.ScanText` runs the text detectors in a fixed order: SQLi, XSS, CmdI, CodeI, LDAP, SSTI, JNDI, CRLF, LFI, RFI, SSRF. A prefilter (`mayContainAttack`) skips all but SQLi when a value has none of the bytes and markers the others need, which is most real customer text. SQLi always runs because a quote-free injection such as `1 OR 1` is made of words only, and libinjection decides that, not a copy of its dictionary here. Every detector checks the value and, when one percent-decoding pass changes it, the decoded value. Every detector is linear in the length of the value.
+`detect.ScanText` runs the text detectors in a fixed order: SQLi, SQLiToken, XSS, CmdI, CodeI, LDAP, SSTI, SSI, JNDI, CRLF, LFI, RFI, SSRF. A prefilter (`mayContainAttack`) skips all but SQLi and SQLiToken when a value has none of the bytes and markers the others need, which is most real customer text. SQLi always runs because a quote-free injection such as `1 OR 1` is made of words only, and libinjection decides that, not a copy of its dictionary here. SQLiToken always runs because `exec master..xp_cmdshell` has no special byte either. Every detector checks the value and, when one percent-decoding pass changes it, the decoded value. Every detector is linear in the length of the value.
 
-SQLi and XSS use libinjection. The rest are hand-written scans that need a structural signal (an operator plus a command, a closed template expression, a filter breaker), never a bare English word. A few rules take keys rather than values (`JSONKey`, `QueryKey`, `Session`), and `UserAgent` and `ProbePath` take the User-Agent and the path.
+SQLi and XSS use libinjection. The rest are hand-written scans that need a structural signal (an operator plus a command, a closed template expression, a filter breaker), never a bare English word (SQLiToken flags the bare name `xp_cmdshell`, which is not one). A few rules take keys rather than values (`JSONKey`, `QueryKey`, `Session`), and `UserAgent` and `ProbePath` take the User-Agent and the path.
 
 ### Scan budget and windowing
 

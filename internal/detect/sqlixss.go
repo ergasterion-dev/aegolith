@@ -98,6 +98,10 @@ const tokenGap = 128
 //     cmd="ls" -->`).
 //  7. An SSI opener written as HTML entities: `&lt;!--#exec cmd="ls"
 //     --&gt;`. The engine does not decode entities.
+//  8. A nested block comment between the parts of a SQL token: a comment
+//     ends at the first `*/`, so `pg_sleep/* /* */ */(5)` and `WAITFOR /*
+//     /* */ */ DELAY '0:0:5'` do not match. libinjection (`AEG-SQLI-001`)
+//     flags both.
 //
 // Cost: one pass over the identifiers of s; each candidate name reads at
 // most three gaps of tokenGap bytes and the words between them, so the scan
