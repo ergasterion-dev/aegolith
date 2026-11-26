@@ -320,47 +320,49 @@ The corpus came from the same team that tuned the rules, so these numbers show t
 
 ## Performance
 
-Measured on a developer laptop, not a server, at commit `4320f92`, before the last alpha.6 detector changes. The published figures were not re-measured on the released code. To reproduce them, check out that commit and run `make bench` and `make perf` as shown below.
+Measured on a developer laptop, not a server, on the alpha.6 code at commit `b0c0ec0`. To reproduce the figures, run `make bench` and `make perf` as shown below.
 
 | | |
 |---|---|
 | CPU | Apple M4 Pro (14 cores) |
 | Go | go1.25.12 darwin/arm64, GOMAXPROCS 14 |
 | Date | 2026-11-26 |
-| Load | The laptop was not idle: load average 4 to 5 over 1 minute and 7.5 to 8.6 over 5 minutes during the runs. Treat the numbers as upper bounds. |
+| Load | The laptop was not idle: load average 5.7 to 9.3 over 1 minute and 7.7 to 10.0 over 5 minutes at the start and end of the alpha.6 runs reported here. Treat the numbers as upper bounds. |
 
 **Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Each number is the **lowest of 3 runs**. "Generic" is no policy, "api-aware" is the typed corpus policy.
 
 | Benchmark | Generic | API-aware | Allocs/op (generic) |
 |---|---|---|---|
-| `Inspect`, search GET (query string, browser headers) | 12.6 µs | 11.5 µs | 144 |
-| `Inspect`, JSON cart POST | 17.1 µs | 15.6 µs | 252 |
-| `Inspect`, the legitimate corpus requests, per request (188 requests at that commit) | 5.3 µs | 3.9 µs | 90 |
-| `Inspect`, a 500-field JSON body | 341 µs | 324 µs | 9,439 |
-| `ScanText` on a short word | 105 ns | | 1 |
-| `ScanText` on a short prose sentence | 3.1 µs | | 59 |
-| `ScanText` on a SQLi payload | 0.86 µs | | 17 |
+| `Inspect`, search GET (query string, browser headers) | 14.3 µs | 13.1 µs | 144 |
+| `Inspect`, JSON cart POST | 19.9 µs | 18.0 µs | 252 |
+| `Inspect`, the legitimate corpus requests, per request (195 requests) | 6.3 µs | 5.0 µs | 91 |
+| `Inspect`, a 500-field JSON body | 382 µs | 382 µs | 9,439 |
+| `ScanText` on a short word | 115 ns | | 1 |
+| `ScanText` on a short prose sentence | 3.5 µs | | 59 |
+| `ScanText` on a SQLi payload | 0.98 µs | | 17 |
 
-**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. Lowest of 3 runs per figure, over the 188 legitimate corpus requests at that commit, with and without a realistic set of browser headers:
+Against `v0.1.0-alpha.5`, run the same way on the same machine in the same session: the search GET and cart POST benchmarks are 14 to 21% slower, the 500-field body 3 to 4%, the three `ScanText` rows above 7 to 10% (the short word went from 105 to 115 ns) and the worst-case bodies below 4 to 6%. The corpus grew from 130 to 195 legitimate requests, so for that row both releases were also run on alpha.5's requests and policy: alpha.6 is 7% slower generic and 17% slower api-aware.
 
-| Configuration | p50 | p99 | max |
-|---|---|---|---|
-| generic, corpus requests | 5.5 µs | 15.3 µs | 312 µs |
-| generic, with browser headers | 13.3 µs | 23.7 µs | 228 µs |
-| api-aware, corpus requests | 3.6 µs | 11.1 µs | 111 µs |
-| api-aware, with browser headers | 11.9 µs | 21.6 µs | 202 µs |
+**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. Six runs over the 195 legitimate corpus requests, with and without a realistic set of browser headers. p50, p99 and max are the **lowest of the 6 runs** for each figure; the last column is the worst p99 any run produced:
 
-The budget held in two of those three runs. In the other, one row (generic with browser headers) reached p99 157 µs with a maximum of 17 ms, on a machine that was doing other work; three further runs right afterwards all held it (highest p99 28 µs). The strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise. The alpha.3 figures (p99 9.7 to 20.9 µs) came from a smaller corpus of 91 requests, so the two sets are not a like-for-like comparison.
+| Configuration | p50 | p99 | max | Highest p99 |
+|---|---|---|---|---|
+| generic, corpus requests | 5.8 µs | 15.8 µs | 242 µs | 39.3 µs |
+| generic, with browser headers | 15.0 µs | 30.6 µs | 263 µs | **65.7 µs (over budget)** |
+| api-aware, corpus requests | 4.5 µs | 14.1 µs | 184 µs | 20.0 µs |
+| api-aware, with browser headers | 13.7 µs | 30.1 µs | 266 µs | **84.7 µs (over budget)** |
+
+**The budget did not hold in every run.** It held on every row in four of the six. The second run failed one row (api-aware with browser headers, p99 84.7 µs, maximum 1.0 ms) and the third failed another (generic with browser headers, p99 65.7 µs, maximum 6.9 ms); the three runs after them held every row (highest p99 41.4 µs). `v0.1.0-alpha.5`, run alternately with these in the same session, failed one of its six runs on two rows (p99 112 µs). We read this as scheduling noise on a busy laptop, which a quiet server run would have to confirm. The strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
 
 **Worst case.** Cost is linear in the input and bounded, but a hostile large body is not cheap. The adversarial 1 MiB bodies in `BenchmarkInspectWorstCase` (lowest of 3):
 
 | Body | Time | Allocated |
 |---|---|---|
-| repeated invalid UTF-8 plus `<`, trailing SQLi | 405 ms | 128 MB |
-| many tags, trailing SQLi | 268 ms | 96 MB |
-| many tags in one value | 135 ms | 50 MB |
+| repeated invalid UTF-8 plus `<`, trailing SQLi | 460 ms | 128 MB |
+| many tags, trailing SQLi | 298 ms | 96 MB |
+| many tags in one value | 149 ms | 50 MB |
 
-Most of the worst case is spent inside libinjection-go (about 93% in a profile of an earlier release; that share was not re-measured at commit `4320f92`). Front the service with a body size limit set to what you actually accept; see [resource bounds](docs/threat-model.md#resource-bounds).
+More than half of the worst case is spent inside libinjection-go: 54 to 63% of all CPU samples, garbage collection included, in CPU profiles of these three bodies at commit `b0c0ec0`. Front the service with a body size limit set to what you actually accept; see [resource bounds](docs/threat-model.md#resource-bounds).
 
 Reproduce:
 
@@ -387,7 +389,7 @@ The full list, with the reasons, is in the [threat model](docs/threat-model.md#k
 - **Body over the limit.** Only the first `max_body_bytes` of a body are inspected. `AEG-PROTO-003` blocks a longer body by default; if you set it to `monitor`, an attack after the padding is not seen.
 - **Data after a JSON value.** A body with data after its first JSON value is malformed, so it gets a raw rescan that quote-parity padding can evade (`{"a":"x"}'{"q":"1' OR '1'='1"}` is allowed). No standard-library Go decoder reads that trailing value.
 - **Non-UTF-8 JSON charsets** (`charset=utf-16`, `iso-8859-1`) are accepted by the content-type check. This fails safe: the body is inspected as UTF-8 bytes, and UTF-16 is blocked for its NUL bytes.
-- **Worst-case cost.** A hostile 1 MiB body can cost up to about 0.8 s of CPU and 128 MB of allocation (see [Performance](#performance)). The scan budget is kept at 8x the body limit on purpose.
+- **Worst-case cost.** A hostile 1 MiB body can cost about 0.46 s of CPU on an Apple M4 Pro (more on slower or loaded hardware) and 128 MB of allocation (see [Performance](#performance)). The scan budget is kept at 8x the body limit on purpose.
 - **Recall traded for fewer false positives:** `x & cat /flag.txt` (no flag, after a prose `&`) and `Location:evil.com` in a value are allowed.
 - **Recall traded for fewer false positives (XSS, alpha.6):** five shapes are allowed: `javascript: a=1; alert (x)` (plain spaces, one plain word or blank-separated words as the argument), a bare `<object>`/`<link>`/`<base>`/`<meta>`/`<embed>` with no attribute on any tag, a `<!DOCTYPE` with no `>` or `[` after it, a backtick inside an HTML or bogus comment when nothing else in the value is flagged (no raw-text or form element, no handler, script or `javascript:` text, nothing libinjection flags with the comments read as live), and a JavaScript-string breakout followed by such a comment (``';alert(1)//<!--`-->``). The exact list is in the [threat model](docs/threat-model.md#changes-in-alpha6-and-what-they-cost). Real markup next to them is still caught.
 - **Recall traded for fewer false positives (alpha.6):** `1-1 or 1` and `9% (a) or 1` (SQL tautologies with no comparison that look like sizes or percentages), `$(pwd)` and other unlisted one-word substitutions in a prose shape, a two-letter command in a User-Agent comment, any command word with letter-only flags in a prose backtick span (``a `whoami` b``), bare template pipes such as `{{ x|config }}`, and `#{ }` data paths, which can still call a zero-argument method (`#{order.destroy}`).

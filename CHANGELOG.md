@@ -40,7 +40,7 @@ Excluding `AEG-SQLI-001` or `AEG-SSTI-001` on a field leaves the new rules on; e
 
 ### Performance
 
-Measured at commit `4320f92`, before the last alpha.6 detector changes; the published figures were not re-measured on the released code. On an Apple M4 Pro laptop (go1.25.12, 5-minute load average 7.5 to 8.6): latency-budget p99 11 to 24 µs per legitimate corpus request against the 50 µs budget (lowest of 3 runs per figure; one of the three runs exceeded the budget on one row, 157 µs, and three further runs held it). `ScanText` on a short word rose from 82 ns (alpha.3 figures) to 105 ns. Details in the [README](README.md#performance).
+Measured at commit `b0c0ec0` on an Apple M4 Pro laptop (go1.25.12, 5-minute load average 7.7 to 10.0), with alpha.5 run alternately on the same machine. Latency budget: the lowest p99 of 6 runs is 14 to 31 µs per legitimate corpus request against the 50 µs budget (alpha.5, on its smaller corpus: 10 to 26 µs), but **two of the six runs each exceeded the budget on one row** (84.7 µs and 65.7 µs); alpha.5 exceeded it in one of its six runs, on two rows (112 µs). Benchmarks, best of 3, are slower than alpha.5: search GET and cart POST by 14 to 21% (generic: search GET 12.1 to 14.3 µs, cart POST 17.4 to 19.9 µs), the per-request corpus benchmark on alpha.5's requests and policy by 7% (generic) and 17% (api-aware), `ScanText` on a short word from 105 to 115 ns, and the worst-case 1 MiB bodies by 4 to 6% (up to 460 ms). Details in the [README](README.md#performance).
 
 ## v0.1.0-alpha.5
 
