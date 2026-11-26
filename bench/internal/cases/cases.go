@@ -66,9 +66,12 @@ type Line struct {
 	Source       string   `json:"source"`
 	SourceCaseID string   `json:"source_case_id"`
 	Expected     Expected `json:"expected"`
-	Payload      string   `json:"payload"`   // decoded payload, may be empty
-	Placement    string   `json:"placement"` // path, query, header, body, json, raw or empty
-	Encoder      string   `json:"encoder"`
+	Payload      string   `json:"payload"` // decoded payload, may be empty
+	// PayloadBase64, when set, holds the payload in place of Payload (for
+	// bytes a JSON string cannot carry).
+	PayloadBase64 string `json:"payload_base64,omitempty"`
+	Placement     string `json:"placement"` // path, query, header, body, json, raw or empty
+	Encoder       string `json:"encoder"`
 }
 
 // SourceRef is one source's name for a case.
@@ -81,7 +84,11 @@ type Case struct {
 	Category string
 	Expected Expected
 
-	Payload, Placement, Encoder string
+	// Payloads holds the decoded payloads the sources give for this request:
+	// distinct, sorted, nil when none gives one.
+	Payloads [][]byte
+
+	Placement, Encoder string
 
 	Method, Path, RawQuery string
 	Headers                map[string]string
@@ -105,13 +112,17 @@ func fromLine(l Line) (Case, error) {
 	if err := l.validate(); err != nil {
 		return Case{}, err
 	}
-	body := []byte(l.Body)
-	if l.BodyBase64 != "" {
-		decoded, err := base64.StdEncoding.DecodeString(l.BodyBase64)
-		if err != nil {
-			return Case{}, fmt.Errorf("decoding body_base64: %w", err)
-		}
-		body = decoded
+	body, err := textOrBase64("body", l.Body, l.BodyBase64)
+	if err != nil {
+		return Case{}, err
+	}
+	payload, err := textOrBase64("payload", l.Payload, l.PayloadBase64)
+	if err != nil {
+		return Case{}, err
+	}
+	var payloads [][]byte
+	if len(payload) > 0 {
+		payloads = [][]byte{payload}
 	}
 	headers, err := requestHeaders(l.Headers, l.ContentType)
 	if err != nil {
@@ -125,7 +136,7 @@ func fromLine(l Line) (Case, error) {
 		Sources:   []SourceRef{{Source: l.Source, CaseID: l.SourceCaseID}},
 		Category:  l.Category,
 		Expected:  l.Expected,
-		Payload:   l.Payload,
+		Payloads:  payloads,
 		Placement: l.Placement,
 		Encoder:   l.Encoder,
 		Method:    l.Method,
@@ -136,6 +147,19 @@ func fromLine(l Line) (Case, error) {
 	}
 	c.ID = requestID(c)
 	return c, nil
+}
+
+// textOrBase64 returns the bytes of the named field, which a line writes
+// either as text or, in field_base64, as base64.
+func textOrBase64(field, text, encoded string) ([]byte, error) {
+	if encoded == "" {
+		return []byte(text), nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decoding %s_base64: %w", field, err)
+	}
+	return decoded, nil
 }
 
 // validate checks everything about l that does not need decoding.
@@ -158,6 +182,8 @@ func (l Line) validate() error {
 		return errors.New("source_case_id is empty")
 	case l.Body != "" && l.BodyBase64 != "":
 		return errors.New("both body and body_base64 are set")
+	case l.Payload != "" && l.PayloadBase64 != "":
+		return errors.New("both payload and payload_base64 are set")
 	}
 	switch l.Expected {
 	case Attack, Legit, NearMiss:
@@ -278,11 +304,10 @@ func requestID(c Case) string {
 // whose cases disagree on Expected is excluded: all of its input cases are
 // returned in conflicts, so each source's claim stays visible.
 //
-// Which sources are credited, and the descriptive fields, do not depend on
-// the order of a request's cases: Sources is sorted, and the other fields
-// come from the first case in source order that has a payload (the first case
-// if none has), so the held-out split cannot move when sources are read in
-// another order.
+// The merged case keeps every source and every payload of its cases, each
+// sorted and distinct. Its other descriptive fields come from the first case
+// in source order that has a payload (the first case if none has). None of
+// this depends on the order the sources were read in.
 func Merge(cs []Case) (merged []Case, conflicts []Case) {
 	groups := make(map[string][]Case, len(cs))
 	var order []string
@@ -310,22 +335,26 @@ func combine(group []Case) Case {
 	slices.SortFunc(group, func(a, b Case) int {
 		return cmp.Or(
 			slices.CompareFunc(a.Sources, b.Sources, compareRefs),
-			cmp.Compare(a.Payload, b.Payload),
+			slices.CompareFunc(a.Payloads, b.Payloads, bytes.Compare),
 			cmp.Compare(a.Placement, b.Placement),
 			cmp.Compare(a.Encoder, b.Encoder),
 			cmp.Compare(a.Category, b.Category),
 		)
 	})
 	out := group[0]
-	if i := slices.IndexFunc(group, func(c Case) bool { return c.Payload != "" }); i >= 0 {
+	if i := slices.IndexFunc(group, func(c Case) bool { return len(c.Payloads) > 0 }); i >= 0 {
 		out = group[i]
 	}
 	var refs []SourceRef
+	var payloads [][]byte
 	for _, c := range group {
 		refs = append(refs, c.Sources...)
+		payloads = append(payloads, c.Payloads...)
 	}
 	slices.SortFunc(refs, compareRefs)
 	out.Sources = slices.Compact(refs)
+	slices.SortFunc(payloads, bytes.Compare)
+	out.Payloads = slices.CompactFunc(payloads, bytes.Equal)
 	return out
 }
 
@@ -334,19 +363,33 @@ func compareRefs(a, b SourceRef) int {
 }
 
 // Split says which set c belongs to. A case only the baseline provides is
-// SplitBaseline. Any other is assigned by an unsalted hash of its payload (of
-// its ID when it has none), so the assignment survives source version changes
-// and every placement of a payload lands in the same set.
+// SplitBaseline. Any other case with payloads is SplitHeldOut if any of them
+// is held out, and SplitDev if none is.
+//
+// Whether a payload is held out depends only on its bytes (an unsalted hash).
+// So a case with a payload filled in keeps its set across source versions
+// that keep its payloads, adding a source can only move it towards held-out,
+// and a held-out payload is never in a development case. A case without a
+// payload is assigned by its ID and has no such stability: it can change set
+// when the request changes or when a source starts to fill in a payload.
 func Split(c Case) string {
 	thirdParty := func(r SourceRef) bool { return r.Source != SourceBaseline }
 	if len(c.Sources) > 0 && !slices.ContainsFunc(c.Sources, thirdParty) {
 		return SplitBaseline
 	}
-	sum := sha256.Sum256([]byte(cmp.Or(c.Payload, c.ID)))
-	if binary.BigEndian.Uint64(sum[:8])%100 < heldOutPercent {
+	keys := c.Payloads
+	if len(keys) == 0 {
+		keys = [][]byte{[]byte(c.ID)}
+	}
+	if slices.ContainsFunc(keys, heldOut) {
 		return SplitHeldOut
 	}
 	return SplitDev
+}
+
+func heldOut(key []byte) bool {
+	sum := sha256.Sum256(key)
+	return binary.BigEndian.Uint64(sum[:8])%100 < heldOutPercent
 }
 
 // ReadLines reads JSONL case lines. Every line must be one JSON object of
@@ -391,9 +434,9 @@ func parseLine(b []byte) (Line, error) {
 }
 
 // WriteLines writes ls as JSONL. It fails rather than write a line that would
-// not read back unchanged: a string that is not valid UTF-8 (use raw_query or
-// body_base64 for such bytes) or a line too long for ReadLines. On error, w
-// may already hold some of the lines.
+// not read back unchanged: a string that is not valid UTF-8 (raw_query,
+// body_base64 and payload_base64 carry such bytes) or a line too long for
+// ReadLines. On error, w may already hold some of the lines.
 func WriteLines(w io.Writer, ls []Line) error {
 	out := bufio.NewWriter(w)
 	var buf bytes.Buffer
@@ -445,6 +488,7 @@ func (l Line) invalidUTF8Field() string {
 		{"source_case_id", l.SourceCaseID},
 		{"expected", string(l.Expected)},
 		{"payload", l.Payload},
+		{"payload_base64", l.PayloadBase64},
 		{"placement", l.Placement},
 		{"encoder", l.Encoder},
 	}

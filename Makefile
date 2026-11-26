@@ -13,6 +13,7 @@ GOFILES := git ls-files --cached --others --exclude-standard -z '*.go'
 build:
 	CGO_ENABLED=0 $(GO) build ./...
 	@if [ -d $(ADAPTERS) ]; then cd $(ADAPTERS) && $(GO) build ./...; fi
+	@if [ -d $(BENCHDIR) ]; then cd $(BENCHDIR) && $(GO) build ./...; fi
 
 # Both runs are needed: -race catches data races, and the plain run executes
 # the checks that only make sense at full speed (TestScanTextLinear's growth
@@ -26,6 +27,7 @@ test:
 test-quick:
 	$(GO) test ./...
 	@if [ -d $(ADAPTERS) ]; then cd $(ADAPTERS) && $(GO) test ./...; fi
+	@if [ -d $(BENCHDIR) ]; then cd $(BENCHDIR) && $(GO) test ./...; fi
 
 vet:
 	$(GO) vet ./...

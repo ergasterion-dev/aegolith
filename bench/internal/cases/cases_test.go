@@ -2,6 +2,7 @@ package cases
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"reflect"
 	"strings"
@@ -74,7 +75,7 @@ func TestFromLineCarriesEveryField(t *testing.T) {
 		Sources:   []SourceRef{{Source: "a", CaseID: "a-1"}},
 		Category:  "sqli",
 		Expected:  Attack,
-		Payload:   "p",
+		Payloads:  [][]byte{[]byte("p")},
 		Placement: "body",
 		Encoder:   "plain",
 		Method:    "POST",
@@ -116,6 +117,87 @@ func TestFromLineDecodesBodyBase64(t *testing.T) {
 	}
 }
 
+func TestFromLinePayloads(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, payload, payloadBase64 string
+		want                         [][]byte
+	}{
+		{name: "none", want: nil},
+		{name: "text", payload: "<é>", want: [][]byte{[]byte("<é>")}},
+		{name: "binary", payloadBase64: "/wAE", want: [][]byte{{0xff, 0x00, 0x04}}},
+		{name: "base64 of nothing", payloadBase64: "\n", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			l := line()
+			l.Payload, l.PayloadBase64 = tt.payload, tt.payloadBase64
+			if got := mustCase(t, l).Payloads; !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Payloads = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+// How a payload is written must not decide its set.
+func TestPayloadBase64HashesAsTheDecodedBytes(t *testing.T) {
+	t.Parallel()
+	for _, payload := range []string{"p1", "p7", "p20"} {
+		text, encoded := line(), line()
+		text.Payload = payload
+		encoded.PayloadBase64 = base64.StdEncoding.EncodeToString([]byte(payload))
+		a, b := mustCase(t, text), mustCase(t, encoded)
+		a.Sources[0].Source, b.Sources[0].Source = "crs", "crs"
+		if !reflect.DeepEqual(a.Payloads, b.Payloads) || Split(a) != Split(b) {
+			t.Errorf("%s: text %q %q, base64 %q %q", payload, a.Payloads, Split(a), b.Payloads, Split(b))
+		}
+	}
+}
+
+func TestBinaryPayloadSameSplitInEveryPlacement(t *testing.T) {
+	t.Parallel()
+	// First eight bytes of SHA-256, big endian, modulo 100, computed with an
+	// independent tool: /wAA = 5, /wAE = 82.
+	pinned := map[string]string{"/wAA": SplitHeldOut, "/wAE": SplitDev}
+	seen := map[string]bool{}
+	for i := range 200 {
+		encoded := base64.StdEncoding.EncodeToString([]byte{0xff, 0x00, byte(i)})
+
+		query := line()
+		query.Query, query.RawQuery = nil, fmt.Sprintf("q=%%FF%%00%%%02X", i)
+		query.PayloadBase64, query.Placement = encoded, "query"
+		body := line()
+		body.Method, body.Query = "POST", nil
+		body.BodyBase64, body.PayloadBase64, body.Placement = encoded, encoded, "body"
+
+		// The lines survive a case file.
+		var buf bytes.Buffer
+		if err := WriteLines(&buf, []Line{query, body}); err != nil {
+			t.Fatal(err)
+		}
+		read, err := ReadLines(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, b := mustCase(t, read[0]), mustCase(t, read[1])
+		if a.ID == b.ID {
+			t.Fatalf("payload %s: both placements built the same request", encoded)
+		}
+		split := Split(a)
+		if got := Split(b); got != split {
+			t.Fatalf("payload %s: query %q, body %q", encoded, split, got)
+		}
+		if want, ok := pinned[encoded]; ok && split != want {
+			t.Errorf("payload %s: %q, want %q", encoded, split, want)
+		}
+		seen[split] = true
+	}
+	if !seen[SplitDev] || !seen[SplitHeldOut] {
+		t.Errorf("splits seen = %v, want both", seen)
+	}
+}
+
 func TestFromLineRejectsBadLines(t *testing.T) {
 	t.Parallel()
 	const secret = "s3cr3t-value"
@@ -133,6 +215,8 @@ func TestFromLineRejectsBadLines(t *testing.T) {
 		{name: "query pair of 3", change: func(l *Line) { l.Query = [][]string{{"q", secret, "x"}} }},
 		{name: "body and body_base64", change: func(l *Line) { l.Body, l.BodyBase64 = secret, "eA==" }},
 		{name: "bad base64", change: func(l *Line) { l.BodyBase64 = "!!" + secret }},
+		{name: "payload and payload_base64", change: func(l *Line) { l.Payload, l.PayloadBase64 = secret, "eA==" }},
+		{name: "bad payload base64", change: func(l *Line) { l.PayloadBase64 = "!!" + secret }},
 		{name: "empty header name", change: func(l *Line) { l.Headers = map[string]string{"": secret} }},
 		{name: "header names differ only by case", change: func(l *Line) { l.Headers = map[string]string{"X-A": secret, "x-a": "2"} }},
 		{name: "empty source", change: func(l *Line) { l.Source = "" }},
@@ -342,11 +426,54 @@ func TestMergeIsIndependentOfSourceOrder(t *testing.T) {
 			t.Errorf("order %d: %#v\nwant %#v", i, merged[0], want)
 		}
 	}
-	if want.Payload != "p-crs" || want.Placement != "query" || want.Encoder != "plain" || want.Category != "sqli" {
+	if want.Placement != "query" || want.Encoder != "plain" || want.Category != "sqli" {
 		t.Errorf("metadata not taken from the first source with a payload: %#v", want)
+	}
+	if payloads := [][]byte{[]byte("p-crs"), []byte("p-gtw")}; !reflect.DeepEqual(want.Payloads, payloads) {
+		t.Errorf("Payloads = %q, want %q", want.Payloads, payloads)
 	}
 	if len(want.Sources) != 3 {
 		t.Errorf("Sources = %v, want 3 distinct", want.Sources)
+	}
+}
+
+func TestMergeKeepsPayloadsSortedAndDistinct(t *testing.T) {
+	t.Parallel()
+	var in []Case
+	for i, payload := range []string{"c", "a", "", "c", "b", "a"} {
+		l := line()
+		l.Source, l.SourceCaseID, l.Payload = fmt.Sprintf("s%d", i), "1", payload
+		in = append(in, mustCase(t, l))
+	}
+	// The same bytes as "b", written as base64.
+	l := line()
+	l.Source, l.PayloadBase64 = "s9", "Yg=="
+	in = append(in, mustCase(t, l))
+
+	merged, _ := Merge(in)
+	want := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+	if len(merged) != 1 || !reflect.DeepEqual(merged[0].Payloads, want) {
+		t.Fatalf("merged = %#v, want payloads %q", merged, want)
+	}
+	// Merging a merged case again changes nothing.
+	again, _ := Merge(merged)
+	if !reflect.DeepEqual(again, merged) {
+		t.Errorf("second merge = %#v, want %#v", again, merged)
+	}
+	for i, c := range in {
+		if len(c.Payloads) > 1 {
+			t.Errorf("input %d changed: %q", i, c.Payloads)
+		}
+	}
+}
+
+func TestMergeWithoutPayloadsHasNone(t *testing.T) {
+	t.Parallel()
+	b := line()
+	b.Source = "b"
+	merged, _ := Merge([]Case{mustCase(t, line()), mustCase(t, b)})
+	if len(merged) != 1 || merged[0].Payloads != nil {
+		t.Errorf("merged = %#v, want one case with nil Payloads", merged)
 	}
 }
 
@@ -355,16 +482,63 @@ func TestMergeLeavesInputAlone(t *testing.T) {
 	a := mustCase(t, line())
 	b := a
 	b.Sources = []SourceRef{{Source: "b", CaseID: "b-1"}}
+	b.Payloads = [][]byte{[]byte("a")}
 	// Spare capacity would let an append write into the caller's array.
 	a.Sources = append(make([]SourceRef, 0, 4), a.Sources...)
+	a.Payloads = append(make([][]byte, 0, 4), []byte("z"), []byte("y"))
 	in := []Case{b, a}
 	Merge(in)
+	if string(a.Payloads[0]) != "z" || string(a.Payloads[1]) != "y" || a.Payloads[:3][2] != nil || len(b.Payloads) != 1 {
+		t.Errorf("input payloads changed: %q %q", a.Payloads[:3], b.Payloads)
+	}
 	if len(in[0].Sources) != 1 || in[0].Sources[0].Source != "b" || in[1].Sources[0].Source != "a" {
 		t.Errorf("input sources changed: %v %v", in[0].Sources, in[1].Sources)
 	}
 	if spare := a.Sources[:2][1]; spare != (SourceRef{}) {
 		t.Errorf("wrote into the input's spare capacity: %v", spare)
 	}
+}
+
+// A request two sources provide with different payloads must not leave the
+// held-out set because of which source sorts first.
+func TestMergedHeldOutPayloadNeverLandsInDev(t *testing.T) {
+	t.Parallel()
+	// Pinned in TestSplitKnownAssignments.
+	const dev, held = "p1", "p20"
+	tests := []struct {
+		name          string
+		first, second string // payloads of the sources "a" and "b"
+	}{
+		{name: "held-out payload from the later source", first: dev, second: held},
+		{name: "held-out payload from the earlier source", first: held, second: dev},
+		{name: "held-out payload beside a source without one", first: "", second: held},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := line()
+			a.Payload = tt.first
+			b := line()
+			b.Source, b.SourceCaseID, b.Payload = "b", "b-1", tt.second
+			for order, in := range [][]Case{{mustCase(t, a), mustCase(t, b)}, {mustCase(t, b), mustCase(t, a)}} {
+				merged, conflicts := Merge(in)
+				if len(merged) != 1 || len(conflicts) != 0 {
+					t.Fatalf("order %d: merged %d, conflicts %d", order, len(merged), len(conflicts))
+				}
+				if got := Split(merged[0]); got != SplitHeldOut {
+					t.Errorf("order %d: split = %q, want %q", order, got, SplitHeldOut)
+				}
+			}
+		})
+	}
+}
+
+func payloads(ss ...string) [][]byte {
+	out := make([][]byte, len(ss))
+	for i, s := range ss {
+		out[i] = []byte(s)
+	}
+	return out
 }
 
 func TestSplitStableAndProportional(t *testing.T) {
@@ -374,8 +548,8 @@ func TestSplitStableAndProportional(t *testing.T) {
 	held := 0
 	for i := range 10000 {
 		p := fmt.Sprintf("p%d", i)
-		a := Split(Case{ID: "id-a", Payload: p, Sources: third})
-		b := Split(Case{ID: "id-b", Payload: p, Sources: third})
+		a := Split(Case{ID: "id-a", Payloads: payloads(p), Sources: third})
+		b := Split(Case{ID: "id-b", Payloads: payloads(p), Sources: third})
 		if a != b {
 			t.Fatalf("payload %s: split depends on the ID: %q and %q", p, a, b)
 		}
@@ -398,7 +572,7 @@ func TestSplitUsesIDWithoutPayload(t *testing.T) {
 	for i := range 200 {
 		id := fmt.Sprintf("id%d", i)
 		withID := Split(Case{ID: id, Sources: third})
-		asPayload := Split(Case{ID: "unused", Payload: id, Sources: third})
+		asPayload := Split(Case{ID: "unused", Payloads: payloads(id), Sources: third})
 		if withID != asPayload {
 			t.Fatalf("%s: split without payload = %q, hashing the ID gives %q", id, withID, asPayload)
 		}
@@ -413,9 +587,37 @@ func TestSplitKnownAssignments(t *testing.T) {
 	// independent tool: the two sides of the 30% boundary and one far from it.
 	tests := map[string]string{"p20": SplitHeldOut, "p7": SplitDev, "p1": SplitDev} // 29, 30, 87
 	for payload, want := range tests {
-		if got := Split(Case{Payload: payload, Sources: third}); got != want {
+		if got := Split(Case{Payloads: payloads(payload), Sources: third}); got != want {
 			t.Errorf("%s: %q, want %q", payload, got, want)
 		}
+	}
+}
+
+// Held out if any payload is, wherever it sits; dev only when none is. The
+// ID plays no part once there is a payload.
+func TestSplitAnyHeldOutPayload(t *testing.T) {
+	t.Parallel()
+	third := []SourceRef{{Source: "crs", CaseID: "1"}}
+	// From TestSplitKnownAssignments: p1 and p7 are dev, p20 is held-out. As
+	// an ID, p20 would be held out too.
+	tests := []struct {
+		name     string
+		payloads []string
+		want     string
+	}{
+		{name: "all dev", payloads: []string{"p1", "p7"}, want: SplitDev},
+		{name: "held-out first", payloads: []string{"p20", "p1", "p7"}, want: SplitHeldOut},
+		{name: "held-out middle", payloads: []string{"p1", "p20", "p7"}, want: SplitHeldOut},
+		{name: "held-out last", payloads: []string{"p1", "p7", "p20"}, want: SplitHeldOut},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := Case{ID: "p20", Payloads: payloads(tt.payloads...), Sources: third}
+			if got := Split(c); got != tt.want {
+				t.Errorf("split = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -423,13 +625,13 @@ func TestSplitBaseline(t *testing.T) {
 	t.Parallel()
 	base := SourceRef{Source: SourceBaseline, CaseID: "1"}
 	other := SourceRef{Source: "crs", CaseID: "2"}
-	if got := Split(Case{Payload: "p0", Sources: []SourceRef{base, base}}); got != SplitBaseline {
+	if got := Split(Case{Payloads: payloads("p0"), Sources: []SourceRef{base, base}}); got != SplitBaseline {
 		t.Errorf("baseline only: %q", got)
 	}
-	if got := Split(Case{Payload: "p0", Sources: []SourceRef{base, other}}); got != SplitHeldOut {
+	if got := Split(Case{Payloads: payloads("p0"), Sources: []SourceRef{base, other}}); got != SplitHeldOut {
 		t.Errorf("baseline and another source: %q, want %q", got, SplitHeldOut)
 	}
-	if got := Split(Case{Payload: "p0"}); got != SplitHeldOut {
+	if got := Split(Case{Payloads: payloads("p0")}); got != SplitHeldOut {
 		t.Errorf("no source: %q, want %q", got, SplitHeldOut)
 	}
 }
@@ -508,16 +710,18 @@ func TestWriteLinesRoundTrip(t *testing.T) {
 	}
 	empty := line()
 	empty.Query, empty.Headers = nil, nil
+	binary := line()
+	binary.PayloadBase64 = "/wAE"
 
 	var buf bytes.Buffer
-	if err := WriteLines(&buf, []Line{full, empty}); err != nil {
+	if err := WriteLines(&buf, []Line{full, empty, binary}); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if n := strings.Count(out, "\n"); n != 2 {
+	if n := strings.Count(out, "\n"); n != 3 {
 		t.Errorf("%d newlines, want one per line", n)
 	}
-	for _, key := range []string{`"content_type":`, `"source_case_id":`, `"raw_query":`, `"body_base64":`, `"expected":"attack"`, `"query":[]`, `"headers":{}`, `<script>`} {
+	for _, key := range []string{`"content_type":`, `"source_case_id":`, `"raw_query":`, `"body_base64":`, `"payload_base64":"/wAE"`, `"expected":"attack"`, `"query":[]`, `"headers":{}`, `<script>`} {
 		if !strings.Contains(out, key) {
 			t.Errorf("output lacks %s", key)
 		}
@@ -527,7 +731,10 @@ func TestWriteLinesRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty.Query, empty.Headers = [][]string{}, map[string]string{}
-	if want := []Line{full, empty}; !reflect.DeepEqual(got, want) {
+	if n := strings.Count(out, `"payload_base64"`); n != 1 {
+		t.Errorf("payload_base64 written %d times, want only when set", n)
+	}
+	if want := []Line{full, empty, binary}; !reflect.DeepEqual(got, want) {
 		t.Errorf("round trip = %#v\nwant %#v", got, want)
 	}
 }
@@ -555,6 +762,7 @@ func TestWriteLinesRejectsInvalidUTF8(t *testing.T) {
 		"source case id": func(l *Line) { l.SourceCaseID = bad },
 		"expected":       func(l *Line) { l.Expected = Expected(bad) },
 		"payload":        func(l *Line) { l.Payload = bad },
+		"payload base64": func(l *Line) { l.PayloadBase64 = bad },
 		"placement":      func(l *Line) { l.Placement = bad },
 		"encoder":        func(l *Line) { l.Encoder = bad },
 	}
