@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.1.0-alpha.6
+
+2026-11-26. Fixes the false positives found by an external validation of alpha.5 (public attack payload lists and benign text) and closes several cheap recall gaps. Corpus: 214 attacks (210 blocked generic, 211 API-aware) and 191 legitimate requests, 0 false positives (was 137 and 130). **Read [Changes in alpha.6](docs/threat-model.md#changes-in-alpha6-and-what-they-cost) and [Known gaps found in the alpha.6 review](docs/threat-model.md#known-gaps-found-in-the-alpha6-review) before upgrading:** every cost and accepted miss is listed there.
+
+### New rule IDs (both block by default)
+
+- **`AEG-SQLI-002`:** SQL time-delay and command-execution tokens: `WAITFOR DELAY` or `WAITFOR TIME` with a literal or `@variable`, `xp_cmdshell`, `pg_sleep(`, `pg_sleep_for(`, `pg_sleep_until(`, `DBMS_LOCK.SLEEP(`, `DBMS_SESSION.SLEEP(`. Also run on key names that are not plain identifiers.
+- **`AEG-SSTI-002`:** server-side include directives (`<!--#exec cmd=`, `<!--#include virtual=`, `<!--#echo var=`, `<!--#printenv -->`, `config`, `set`, `fsize`, `flastmod`).
+
+Excluding `AEG-SQLI-001` or `AEG-SSTI-001` on a field leaves the new rules on; exclude them by ID, or by a prefix such as `AEG-SQLI-*`. One exception: a key name that matches both SQL rules reports only `AEG-SQLI-001`.
+
+### Fixed false positives
+
+- **SQLi:** product and ingredient text with percentages (`Sale 20% (today only)`, `80% ACRYLIC AND 20% WOOL`) and a bare size range (`6-7 or 8`).
+- **CmdI:** the Indonesian locale token `; id;` / `; id)` in a User-Agent comment; `Tea & cat -cozy /club`; a markdown single-backtick span in a sentence (``Use `ls` to list files``) in JSON, form, header and cookie values; `id` or `ls` alone on the line after a prose line in a query value.
+- **XSS:** a backtick inside an HTML comment (GitHub-style templates); placeholder tags such as `<link>` and `<Object>`; a mention of `<!DOCTYPE`; `javascript: yes=no; maybe (later)`.
+- **SSTI:** placeholder filter pipes (`{{ price | currency }}`) and tldr option syntax (`{{[-p|--patch]}}`); `${t('cart.title')}`; `${bus.pass}`; plain data paths in `#{ }` (`#{order.total}`).
+
+### New detections
+
+- **CmdI:** `$(...)` and `$((...))` substitutions of any word (except where it reads as a prose dollar amount) and `echo` probes after a shell operator (commix's default probes); `x; sleep 10` and `1; sleep 5` are caught again.
+- **SSTI:** `${7*'7'}`, a Ruby `%x` command in `#{ }`, and a FreeMarker `?new(` on a class-name literal anywhere in a value.
+- **Scanner:** VCS directories (`.git`, `.svn`, `.hg`, `.bzr`) as whole segments at any depth; secret dotfiles and private keys at the path start; SQL dumps, SQLite files and archives as the first segment; the user agents `commix`, `netsparker`, `arachni`, `w3af`, `webinspect`, `havij`, `sqlninja`, `whatweb`, `detectify`, `jorgee`, `zmeu`, `paros`, `qualys was` and `vega/`.
+
+### Behaviour changes an operator must know
+
+- **Declared routes and scanner path rules.** A probe-path match (`AEG-SCANNER-002`, `-003`) is no longer reported when the matched text lies wholly in literal segments of the declared route the request matched, so `GET /api/v1/stores/:id/actuator/health` clears its own `actuator/health`. A match in a `:name` or `*` segment still counts, a root name such as `/actuator` or `/wp-admin` runs to the end of the path, and a trailing slash the template lacks or `%2F` in a parameter excuses nothing (so such a health check with a trailing slash stays blocked).
+- **New false positives to expect:** shell snippets with `$(...)` or `echo $...` after an operator; the bare name `xp_cmdshell`, quoted SQL delay calls and prose such as `We waitfor time "to heal"`; a quoted SSI or ASP include, or a comment such as `<!-- # Set value = 1 -->`; a `.git`, `.svn`, `.hg` or `.bzr` segment anywhere in a path and a secret file name such as `/.npmrc` or `/id_rsa` as the first segment; an SQL file or archive served as the first path segment (`/app.zip`, `/main.js.map.gz`; compressed web files such as `/sitemap.xml.gz` are clear); an application whose own user-agent token is a scanner word (`Paros/2.1`, `Vega/1.0`).
+- **`#{ }` is still stricter than `${ }`:** a call, index, `*` or member access is code unless the whole expression is a plain data path.
+
+### Recall given up
+
+- **SQLi:** comparison-free tautologies with a range or decimal, or after `N% (word)` (`1-1 or 1`, `9% (a) or 1`).
+- **CmdI:** a two-letter command in a User-Agent comment, after a prose line in a query value, or (with letter-only flags, any command word) in a prose backtick span; `x & cat -cozy /flag`.
+- **XSS:** five shapes, the first being a one-word spaced call such as `javascript: a=1; alert (x)`.
+- **SSTI:** bare filter pipes (`{{ x|config }}`), one-letter and `$t` calls with a plain string (`${e('id')}`), `${user.pass}`, and `#{ }` data paths, which can still call zero-argument methods (`#{order.destroy}`) or name a compound secret (`#{appConfig.dbPassword}`).
+- **Found in review and left as they are:** nested SQL block comments evade `AEG-SQLI-002`, `/.git;x` and `/.git\config` are not probe paths, a single dot (`%2e`) in a parameter of a declared route is excused, `javascript: a=1, alert (document.cookie)` (a spaced call after a comma) is not flagged, and only the inner `#{ }` of a nested Ruby interpolation is read.
+
+### Performance
+
+Re-measured on an Apple M4 Pro laptop (go1.25.12, 5-minute load average 7.5 to 8.6): latency-budget p99 11 to 24 µs per legitimate corpus request against the 50 µs budget (lowest of 3 runs per figure; one of the three runs exceeded the budget on one row, 157 µs, and three further runs held it). `ScanText` on a short word rose from 82 ns (alpha.3 figures) to 105 ns. Details in the [README](README.md#performance).
+
 ## v0.1.0-alpha.5
 
 False positives found in the alpha.4 production test, plus one missed deserialization shape. Corpus: 137 attacks (133 blocked generic, 134 API-aware) and 130 legitimate requests, 0 false positives (was 132 and 118). Costs and limits are in the [threat model](docs/threat-model.md#changes-in-alpha5-and-what-they-cost).

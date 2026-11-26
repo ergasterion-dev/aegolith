@@ -55,6 +55,21 @@ which beats `*`), and of templates that differ only in letter case the first
 declared wins, whereas Fiber serves the first registered handler. (Core
 `v0.1.0-alpha.1` tried the exact-case template first instead.)
 
+## Declared routes and scanner path rules (core v0.1.0-alpha.6)
+
+From core `v0.1.0-alpha.6`, a scanner probe-path match (`AEG-SCANNER-002`,
+`AEG-SCANNER-003`) is not reported when the matched text lies wholly in
+literal segments of a declared route the request matched, so a declared
+`GET /api/v1/stores/:id/actuator/health` is no longer blocked as an actuator
+probe. Text in a `:name` or `*` segment still counts. Under Fiber's default
+case-insensitive routing another letter case is excused too. Two forms excuse
+nothing, because Fiber settings change which handler serves them: a trailing
+slash the template does not have (without `StrictRouting` Fiber serves it
+with the same handler, so such a health check stays blocked) and `%2F` in a
+parameter or wildcard segment (`UnescapePath` splits on it). See the
+[threat model](../../docs/threat-model.md#changes-in-alpha6-and-what-they-cost)
+for this and every other change in alpha.6.
+
 ## Body inspection
 
 The engine inspects what the handler sees: `c.Body()`, which applies

