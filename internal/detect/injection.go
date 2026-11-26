@@ -1375,34 +1375,55 @@ func isLDAP(s string) bool {
 // is in the threat model and the corpus README; each has an entry in
 // TestSSTIAlpha6AcceptedMisses):
 //
-//  1. A `{{ }}` filter pipe made only of placeholder text: blank-separated
-//     tokens of letters, digits and `_ . / < > ? = [ ] -` (up to two leading
-//     `-` or `+`), split by `|`, with no call, quote or argument, no
-//     template global or sensitive name outside the filter names, and no
-//     `e`, `escape`, `safe` or `raw` filter unless the whole is tldr
-//     alternation in brackets: `{{ name|upper }}`, `{{ x|list }}`,
-//     `{{ x|attr }}`, `{{ x|config }}`, `{{ name|system }}`, `{{[a|b]}}`,
-//     `{{[a|b][0]}}`, `{{ x|y if a else b }}`, `{{[x|safe]}}`, `{{[g|x]}}`.
-//     Without a call or an argument a filter cannot reach a callable, and an
-//     unknown filter name does not compile in Jinja, Django, Twig or
-//     Nunjucks.
+//  1. A `{{ }}` filter pipe made only of placeholder text:
+//     blank-separated tokens of letters, digits and `_ . / < > ? = [ ]
+//     -` (up to two leading `-` or `+`), split by `|`, with no call,
+//     quote or argument, no template global or sensitive name except as
+//     a filter name (the leading name of the first token after a `|`;
+//     such a token that starts with `-` or `+` does not parse) or as a
+//     one-letter name right after a leading `-` or `+`, and no `e`,
+//     `escape`, `safe` or `raw` filter unless the whole is tldr
+//     alternation in brackets: `{{ name|upper }}`, `{{ x|list }}`, `{{
+//     x|attr }}`, `{{ x|config }}`, `{{ name|system }}`, `{{[a|b]}}`,
+//     `{{[a|b][0]}}`, `{{ x|y if a else b }}`, `{{[x|safe]}}`,
+//     `{{[c|config]}}`, `{{ -g|list }}`. Without a call or an argument
+//     a filter cannot reach a callable, and an unknown filter name does
+//     not compile in Jinja, Django, Twig or Nunjucks.
 //  2. A call of a one-letter lower-case name, `$t` or `i18n.t` with one
-//     plain string literal (letters, digits, blanks, `.`, `_`, `-`) that
-//     names no Java class, reflection or process word, when the name was
-//     bound to an executor outside the value: `${e('id')}`,
-//     `${t('whoami')}`. A FreeMarker binding in the same value (`?new(`
-//     after a dotted class-name literal) is caught.
+//     plain string literal (letters, digits, blanks, `.`, `_`, `-`)
+//     that names no Java class, reflection or process word, when the
+//     name was bound to an executor outside the value: `${e('id')}`,
+//     `${t('whoami')}`. A FreeMarker `?new(` or `?api` anywhere in the
+//     same value turns this reading off, so a binding in the value is
+//     caught.
 //  3. Member access to a field named `pass`: `${user.pass}`,
 //     `#{user.pass}`. `password`, `passwd` and `pwd` still count.
-//  4. `#{ }` with an index, a product of names, or a call on a
-//     non-sensitive name with no string-literal argument: `#{x[0]}`,
-//     `#{a*b}`, `#{foo(bar)}`. `${ }` never flagged these.
+//  4. `#{ }` with an index on a name other than `ENV`, `Dir` and the
+//     JSF scope objects (`header`, `headerValues`, `param`,
+//     `paramValues`, `cookie`, `initParam`, `requestScope`,
+//     `sessionScope`, `applicationScope`) and with no sensitive string
+//     literal, a product of names, member access on the JSF request
+//     objects `header`, `param` and `cookie`, a method called without
+//     parentheses, or a call with no string-literal argument on a name
+//     that is neither sensitive nor a code name (code names count in
+//     call position, such as `require(`, `fork(`, `spawn(`, `send(`,
+//     `public_send(`, `const_get(`, `getBean(`, `ProcessBuilder(` and
+//     `Function(`, and as `Kernel.`, `Open3.`, `ObjectSpace.`, `ENV.`
+//     and `Function.`, or `File.`, `IO.` and `Dir.` with a file or
+//     process method): `#{x[0]}`, `#{a*b}`, `#{foo(bar)}`,
+//     `#{header.title}`, `#{x.send m}`, `#{x.fork}`,
+//     `#{File.expand_path(x)}`. `${ }` never flagged these.
 func isSSTI(s string) bool {
-	return strings.Contains(s, "${T(") || strings.Contains(s, "#{T(") ||
-		hasFreeMarkerNew(s) ||
-		eachCodeTemplate(s) ||
-		eachDelimited(s, "${", "}", isELExpr) ||
-		eachDelimited(s, "#{", "}", isELExpr) ||
+	if strings.Contains(s, "${T(") || strings.Contains(s, "#{T(") ||
+		hasFreeMarkerNew(s) || eachCodeTemplate(s) {
+		return true
+	}
+	// A FreeMarker ?new or ?api anywhere in the value can bind an executor
+	// to a short name, so no i18n call is read as data then
+	// ("<#assign e=c?new()>${e('id')}").
+	bind := hasFreeMarkerBuiltin(s)
+	return eachDelimited(s, "${", "}", func(in string) bool { return elExpr(in, false, bind) }) ||
+		eachDelimited(s, "#{", "}", func(in string) bool { return elExpr(in, true, bind) }) ||
 		eachDelimited(s, "{%", "%}", isJinjaStatement) ||
 		hasERBOutput(s)
 }
@@ -1436,6 +1457,42 @@ func hasFreeMarkerNew(s string) bool {
 		off = at + 1
 	}
 }
+
+// hasFreeMarkerBuiltin reports whether s holds FreeMarker's ?new or ?api
+// built-in anywhere: "?", optional blanks, then "new", optional blanks and
+// "(", or "api" not followed by a name byte (any case). "what?news" is not
+// one. Each "?" skips blanks only up to the next non-blank, so the scan is
+// linear.
+func hasFreeMarkerBuiltin(s string) bool {
+	for off := 0; ; {
+		n := strings.IndexByte(s[off:], '?')
+		if n < 0 {
+			return false
+		}
+		j := off + n + 1
+		for j < len(s) && isBlankByte(s[j]) {
+			j++
+		}
+		switch {
+		case hasPrefixFold(s[j:], "new"):
+			k := j + 3
+			for k < len(s) && isBlankByte(s[k]) {
+				k++
+			}
+			if k < len(s) && s[k] == '(' {
+				return true
+			}
+		case hasPrefixFold(s[j:], "api"):
+			if j+3 >= len(s) || !isIdentByte(s[j+3]) {
+				return true
+			}
+		}
+		off = j
+	}
+}
+
+// isBlankByte reports whether c is a blank or a line break.
+func isBlankByte(c byte) bool { return c == ' ' || c == '\t' || c == '\r' || c == '\n' }
 
 // maxClassLiteral bounds how far hasFreeMarkerNew looks back for the
 // opening quote of a class-name literal.
@@ -1587,11 +1644,12 @@ func isPlainPipe(in string) bool {
 		}
 		allDigits := true
 		for k, tok := range strings.Fields(part) {
-			// The filter name itself (the first token after a "|") is not
-			// checked for sensitive names: Jinja, Django, Twig and Nunjucks
-			// refuse to compile an unknown filter, so "{{ x|config }}" cannot
-			// reach the config global.
-			if !isPlaceholderToken(tok, seg == 0 || k > 0) {
+			// The filter name itself (the leading name of the first token
+			// after a "|") is not checked for sensitive names: Jinja, Django,
+			// Twig and Nunjucks refuse to compile an unknown filter, so
+			// "{{ x|config }}" cannot reach the config global. What follows
+			// the name in the same token is checked ("{{ x|e[config] }}").
+			if !isPlaceholderToken(tok, seg > 0 && k == 0) {
 				return false
 			}
 			for j := 0; j < len(tok); j++ {
@@ -1612,9 +1670,14 @@ func isPlainPipe(in string) bool {
 	}
 }
 
-// isPlaceholderToken checks one blank-free token for isPlainPipe; with
-// names set it also refuses a sensitive name anywhere in the token.
-func isPlaceholderToken(tok string, names bool) bool {
+// isPlaceholderToken checks one blank-free token for isPlainPipe and
+// refuses a sensitive name in it. With filter set the token is the first
+// after a "|": its leading name is the filter name and is not checked, and
+// a token that starts with "-" or "+" there does not parse ("|--config").
+// Every name after the leading one is checked, since an operator byte ends
+// the filter name and starts an expression ("{{ x|raw??app.request... }}",
+// "{{ x|length<config.SECRET_KEY|length }}").
+func isPlaceholderToken(tok string, filter bool) bool {
 	if tok == "..." {
 		return true
 	}
@@ -1630,12 +1693,18 @@ func isPlaceholderToken(tok string, names bool) bool {
 			return false
 		}
 	}
-	if !names {
-		return true
+	start := i
+	if filter {
+		if i > 0 {
+			return true
+		}
+		for start < len(tok) && isIdentByte(tok[start]) {
+			start++
+		}
 	}
 	// Names are checked in dashed tokens too: "+" and "-" are operators,
 	// and "{{ [x]|list +config|dictsort }}" concatenates the config items.
-	for j := i; j < len(tok); {
+	for j := start; j < len(tok); {
 		if !isIdentByte(tok[j]) {
 			j++
 			continue
@@ -1644,7 +1713,10 @@ func isPlaceholderToken(tok string, names bool) bool {
 		for k < len(tok) && isIdentByte(tok[k]) {
 			k++
 		}
-		if lower := strings.ToLower(tok[j:k]); pipeGlobals[lower] || elSensitive[lower] {
+		// A one-letter name right after a leading dash is a tldr short
+		// option ("{{[-g|--global]}}"); as Jinja it negates a value, which
+		// leaks nothing from Flask's g.
+		if lower := strings.ToLower(tok[j:k]); (pipeGlobals[lower] || elSensitive[lower]) && !(i > 0 && j == i && k-j == 1) {
 			return false
 		}
 		j = k
@@ -1655,11 +1727,13 @@ func isPlaceholderToken(tok string, names bool) bool {
 // pipeGlobals holds the lower-cased names that keep a {{ }} pipe code
 // outside the filter name: Jinja, Flask, Django and Twig globals that reach
 // the runtime, the request or the app configuration ("{{ config|list }}",
-// "{{ app.request.server.all|join }}"), and attr.
+// "{{ app.request.server.all|join }}", Twig _context, Flask g, Ansible
+// ansible_env and hostvars), and attr.
 var pipeGlobals = map[string]bool{
 	"config": true, "self": true, "_self": true, "request": true, "session": true,
 	"cycler": true, "joiner": true, "namespace": true, "lipsum": true,
 	"url_for": true, "get_flashed_messages": true, "app": true, "os": true,
+	"_context": true, "g": true, "ansible_env": true, "hostvars": true,
 	"env": true, "settings": true, "application": true, "attr": true,
 	"passthru": true, "shell_exec": true,
 }
@@ -1770,9 +1844,15 @@ var elCodeSensitive = map[string]bool{
 // placeholder such as "${PRICE}", a number such as "${5}" and a short i18n
 // call such as "${t('cart.title')}" (see isI18nCall) are not code. #{ }
 // (Ruby, EL, Thymeleaf) uses the same rules from alpha.6.
-func isELExpr(in string) bool {
+func isELExpr(in string) bool { return elExpr(in, false, false) }
+
+// elExpr is isELExpr. hash is set for #{ }, where ":" is Ruby syntax
+// ("Kernel::system", "a ? b : c") rather than a Log4j lookup, so it does not
+// end the reading. bind is set when the value holds a FreeMarker ?new or
+// ?api, and then no i18n call is read as data.
+func elExpr(in string, hash, bind bool) bool {
 	in = strings.Trim(in, " \t")
-	if isI18nCall(in) {
+	if !bind && isI18nCall(in) {
 		return false
 	}
 	if hasRubyCommand(in) {
@@ -1797,7 +1877,7 @@ func isELExpr(in string) bool {
 	access := false
 	for j := 1; j < len(in); j++ {
 		c, p := in[j], in[j-1]
-		if c == ':' && !access {
+		if c == ':' && !access && !hash {
 			// A lookup such as ${jndi:ldap://host/a} or ${env:HOME} belongs
 			// to the JNDI rule, not to EL member access.
 			return false
@@ -1805,15 +1885,16 @@ func isELExpr(in string) bool {
 		switch {
 		case (c == '.' || c == '?' || c == '(') && (p == '"' || p == '\''):
 			return true // a string literal used as an object: ${"id".execute()}
-		case c == '?' && (hasPrefixFold(in[j+1:], "new") || hasPrefixFold(in[j+1:], "api")):
-			return true // FreeMarker ?new / ?api
+		case c == '?' && (hasPrefixFold(strings.TrimLeft(in[j+1:], " \t"), "new") ||
+			hasPrefixFold(strings.TrimLeft(in[j+1:], " \t"), "api")):
+			return true // FreeMarker ?new / ?api, also "? new"
 		case c == '(' && isIdentByte(p) && isLiteralStart(in[j+1:]):
 			return true // a call with a string literal: ${ex("id")}, #{open(%q(|id))}
 		case isIdentByte(p) && (c == '(' || c == '.' && j+1 < len(in) && isASCIILetter(in[j+1])):
 			access = true
 		}
 	}
-	return access && (hasSensitiveName(in) || hasRubyClassAccess(in))
+	return access && hasSensitiveName(in) || hasCodeReach(in)
 }
 
 // isLiteralStart reports whether s starts with a string literal: a quote,
@@ -1852,16 +1933,70 @@ func hasRubyCommand(in string) bool {
 	}
 }
 
-// rubyClasses holds Ruby classes whose methods read files or run processes;
-// they count only capitalised and followed by "." (File.read, IO.popen), so
-// a data path such as "file.txt" is not one.
-var rubyClasses = map[string]bool{
-	"File": true, "Dir": true, "IO": true, "Open3": true, "ObjectSpace": true,
+// codeCalls holds lower-cased Node, Ruby, Java and Spring names that reach
+// code when called, and only then: "${repo.fork}", "${book.binding}" and
+// "${order.send}" are data, "#{x.send(m, a)}", "#{spawn(x)}" and
+// "#{new ProcessBuilder(x).start()}" are not.
+var codeCalls = map[string]bool{
+	"require": true, "fork": true, "spawn": true, "syscall": true, "binding": true,
+	"constructor": true, "_load": true, "readfilesync": true, "readdirsync": true,
+	"execsync": true, "execfile": true, "spawnsync": true, "instance_eval": true,
+	"class_eval": true, "module_eval": true, "instance_exec": true, "send": true,
+	"public_send": true, "const_get": true, "getbean": true, "processbuilder": true,
+	"instance_variable_get": true, "define_method": true,
 }
 
-// hasRubyClassAccess reports whether a name in rubyClasses, matched with
-// its case, is followed by ".". Single linear pass.
-func hasRubyClassAccess(in string) bool {
+// rubyModules are Ruby modules any method of which reaches the process, the
+// environment or the object space, and JavaScript's Function; they count
+// with their case at the start of a path and followed by "." or "::" and a
+// name ("Kernel.open", "Open3::capture2", "ENV.to_h", "Function.call").
+var rubyModules = map[string]bool{
+	"Kernel": true, "Open3": true, "ObjectSpace": true, "ENV": true, "Function": true,
+}
+
+// rubyIOClasses are Ruby classes that count with their case at the start of
+// a path, followed by "." or "::" and a name in rubyIOMethods ("File.read",
+// "IO::popen", "Dir.glob"); "${File.separator}" and "${Dir.name}" are data.
+var rubyIOClasses = map[string]bool{"File": true, "IO": true, "Dir": true}
+
+var rubyIOMethods = map[string]bool{
+	"read": true, "readlines": true, "binread": true, "write": true, "binwrite": true,
+	"open": true, "popen": true, "foreach": true, "new": true, "delete": true,
+	"unlink": true, "glob": true, "entries": true, "children": true, "each_child": true,
+	"readlink": true, "sysopen": true, "rename": true, "symlink": true, "chmod": true,
+	"chown": true, "truncate": true, "mkdir": true, "rmdir": true, "chdir": true,
+	"copy_stream": true, "pipe": true, "select": true, "pwd": true, "getwd": true,
+	"home": true,
+}
+
+// indexRoots are names that read the environment, the file system or the
+// request scope when indexed at the start of a path: Ruby ENV and Dir (with
+// their case; Dir[] is a glob) and the JSF/JSP implicit objects
+// ("#{header['x']}", "#{sessionScope['user']}"). "${page.header}" is data.
+var indexRoots = map[string]bool{
+	"ENV": true, "Dir": true, "header": true, "headerValues": true, "param": true,
+	"paramValues": true, "cookie": true, "initParam": true, "requestScope": true,
+	"sessionScope": true, "applicationScope": true,
+}
+
+// hasCodeReach reports whether in uses a name where it reaches code:
+//   - a codeCalls name (any case) followed by "(", or "Function(";
+//   - binding followed by ".irb", ".eval", ".local_variable_get",
+//     ".local_variable_set" or ".receiver"; "constructor.constructor";
+//     "require" followed by ".main", ".cache" or ".resolve";
+//   - a rubyModules name, or a rubyIOClasses name with a rubyIOMethods
+//     method, at the start of a path, after "." or "::";
+//   - an indexRoots name at the start of a path followed by "[".
+//
+// "At the start of a path" means not after "." (a "::" before it is fine:
+// "::Kernel.system"). Blanks may sit before "(", ".", "::" and "[", and
+// after "." or "::". Also an index with a sensitive string literal (see
+// hasSensitiveIndex). Linear: each look-ahead reads the blanks and one name
+// after the current name, which the outer loop reads again at most once.
+func hasCodeReach(in string) bool {
+	if hasSensitiveIndex(in) {
+		return true
+	}
 	for i := 0; i < len(in); {
 		if !isIdentByte(in[i]) {
 			i++
@@ -1871,7 +2006,49 @@ func hasRubyClassAccess(in string) bool {
 		for j < len(in) && isIdentByte(in[j]) {
 			j++
 		}
-		if j < len(in) && in[j] == '.' && (i == 0 || in[i-1] != '.') && rubyClasses[in[i:j]] {
+		name := in[i:j]
+		rooted := i == 0 || in[i-1] != '.'
+		// Ruby and JavaScript allow blanks before "(", "." and "[".
+		at := j
+		for at < len(in) && (in[at] == ' ' || in[at] == '\t' || in[at] == '\r' || in[at] == '\n') {
+			at++
+		}
+		var nb byte
+		if at < len(in) {
+			nb = in[at]
+		}
+		next, after := "", in[at:]
+		if strings.HasPrefix(after, "::") {
+			after = after[2:]
+		} else if strings.HasPrefix(after, ".") {
+			after = after[1:]
+		} else {
+			after = ""
+		}
+		after = strings.TrimLeft(after, " \t\r\n")
+		if after != "" {
+			k := 0
+			for k < len(after) && isIdentByte(after[k]) {
+				k++
+			}
+			next = after[:k]
+		}
+		lower := strings.ToLower(name)
+		switch {
+		case nb == '(' && (codeCalls[lower] || name == "Function"):
+			return true
+		case lower == "binding" && (next == "irb" || next == "eval" || next == "local_variable_get" ||
+			next == "local_variable_set" || next == "receiver"):
+			return true
+		case lower == "constructor" && next == "constructor":
+			return true
+		case name == "require" && (next == "main" || next == "cache" || next == "resolve"):
+			return true
+		case rooted && next != "" && rubyModules[name]:
+			return true
+		case rooted && rubyIOClasses[name] && rubyIOMethods[next]:
+			return true
+		case rooted && nb == '[' && indexRoots[name]:
 			return true
 		}
 		i = j
@@ -1879,11 +2056,42 @@ func hasRubyClassAccess(in string) bool {
 	return false
 }
 
+// hasSensitiveIndex reports whether in indexes with a string literal that
+// names an elSensitive or codeCalls name ("x['constructor']['constructor']",
+// "obj[\"getClass\"]"). The literal is read for at most maxELName bytes.
+func hasSensitiveIndex(in string) bool {
+	for off := 0; ; {
+		n := strings.IndexByte(in[off:], '[')
+		if n < 0 {
+			return false
+		}
+		j := off + n + 1
+		for j < len(in) && (in[j] == ' ' || in[j] == '\t') {
+			j++
+		}
+		if j < len(in) && (in[j] == '\'' || in[j] == '"') {
+			q := in[j]
+			lit := in[j+1:]
+			if len(lit) > maxELName+1 {
+				lit = lit[:maxELName+1]
+			}
+			if e := strings.IndexByte(lit, q); e > 0 {
+				lower := strings.ToLower(lit[:e])
+				if elSensitive[lower] || codeCalls[lower] {
+					return true
+				}
+			}
+		}
+		off = off + n + 1
+	}
+}
+
 // elSensitive holds the lower-cased names that make member access or a call
 // inside ${ } or #{ } attack-shaped: credentials, reflection, process and
-// web-context objects, the Java package roots, and the Node and Ruby names
-// that reach a process or module loader. "pass" is not one from alpha.6: it
-// is an ordinary word ("${bus.pass}", "${ticket.pass}").
+// web-context objects (with the JSF scopes and contexts) and the Java package
+// roots. "pass" is not one from alpha.6: it is an ordinary word
+// ("${bus.pass}", "${ticket.pass}"). The Node and Ruby names that reach
+// code only in some positions are in hasCodeReach.
 var elSensitive = map[string]bool{
 	"password": true, "passwd": true, "pwd": true,
 	"secret": true, "token": true, "credential": true, "credentials": true,
@@ -1894,10 +2102,8 @@ var elSensitive = map[string]bool{
 	"popen": true, "eval": true, "import": true, "scriptengine": true,
 	"session": true, "request": true, "response": true, "pagecontext": true,
 	"java": true, "javax": true,
-	"require": true, "constructor": true, "binding": true, "spawn": true,
-	"fork": true, "kernel": true, "syscall": true, "child_process": true,
-	"readfilesync": true, "readdirsync": true, "instance_eval": true,
-	"class_eval": true, "module_eval": true, "open3": true,
+	"facescontext": true, "externalcontext": true, "sessionmap": true,
+	"sessionscope": true, "applicationscope": true, "initparam": true,
 }
 
 // maxELName bounds the identifier length hasSensitiveName looks up (longer

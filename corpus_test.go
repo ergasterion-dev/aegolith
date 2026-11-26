@@ -35,9 +35,9 @@ type corpusCase struct {
 
 // The gates of spec 9.1.
 const (
-	corpusAttacks      = 164
-	gateGenericBlocked = 160
-	gateAPIBlocked     = 161
+	corpusAttacks      = 168
+	gateGenericBlocked = 164
+	gateAPIBlocked     = 165
 	corpusMinLegit     = 32 + 20
 )
 

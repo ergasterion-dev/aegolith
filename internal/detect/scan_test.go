@@ -207,6 +207,16 @@ func TestScanTextLinear(t *testing.T) {
 		"ruby-class":    "#{File.",
 		"fm-new":        "\"a.b\"?new(",
 		"fm-new-blanks": "'a.b      ?new(",
+		// alpha.6 review fixes: FreeMarker builtins anywhere, code-reaching
+		// positions with blanks, sensitive index literals, filter tokens.
+		"fm-builtin":    "? new  ? api",
+		"fm-blanks":     "${t('a')}?      ",
+		"code-reach":    "#{a .b ",
+		"code-module":   "#{Kernel :: ",
+		"code-call":     "#{x.send  (",
+		"index-literal": "#{x['constructo",
+		"index-open":    "#{x[ '",
+		"filter-op":     "{{ x|e?a<b ",
 	}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
 	limit := wallLimit(2*time.Second, 20*time.Second)

