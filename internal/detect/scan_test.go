@@ -228,6 +228,11 @@ func TestScanTextLinear(t *testing.T) {
 		"hash-nested-closed": "#{a #{b.c}",
 		"hash-nested-x":      "#{%x #{",
 		"hash-nested-bare":   "#{ #{ ",
+		// A nested "#{" read strictly while an earlier one is still open,
+		// and a "}" inside a string.
+		"hash-open-count":    "#{ #{ } #{a} ",
+		"hash-strict-path":   "#{\"#{x}#{a}\" + ",
+		"hash-str-brace":     "#{\"}\" + \"#{a.b}\" ",
 		"pipe-first-field":   "{{ x|safe\u00a0y ",
 		"pipe-blank-filters": "{{ a|\f b|\v c ",
 		// alpha.6 token rules: SQL names with long or unclosed gaps, SSI

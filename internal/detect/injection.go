@@ -1526,7 +1526,9 @@ func isLDAP(s string) bool {
 //     (`#{order.destroy}`), and a compound secret name is not on the
 //     sensitive list (`#{appConfig.dbPassword}`). Anything else in `#{ }`
 //     (a call, an index, `*`, `&.`, any other byte, an upper-case root) is
-//     code as in alpha.5.
+//     code as in alpha.5. So is the inside of a nested `#{ }`, one that opens
+//     while another `#{` is still open, whatever path it holds
+//     (`#{order #{user.name}}`; see eachHashTemplate).
 func isSSTI(s string) bool {
 	if strings.Contains(s, "${T(") || strings.Contains(s, "#{T(") ||
 		hasFreeMarkerNew(s) || eachCodeTemplate(s) {
@@ -1635,32 +1637,56 @@ func eachCodeTemplate(s string) bool {
 	return false
 }
 
-// eachHashTemplate is eachDelimited for "#{ }" with the same extra reading
-// as eachCodeTemplate: when the text since the previous "}" holds more than
-// one "#{", the text from the first of them is also checked for a dunder
-// walk, a call (which includes "T(") or a Ruby %x command. Ruby evaluates
-// the outer interpolation, so in `#{system("id #{a.b}")}` the call runs
-// although the inner "a.b" is a plain data path. Two plain paths
-// ("#{order.id} and #{order.total}") each end at their own "}" and are read
-// one at a time. The ranges are disjoint, so every byte is read a bounded
-// number of times.
+// eachHashTemplate is eachDelimited for "#{ }" with two more readings for a
+// nested "#{": one that opens while another is still open, counting each
+// "#{" as an opener and each "}" as a close. First, the inner part gets no
+// plain-data-path exemption: it is read as alpha.5 read every "#{ }", so any
+// call, index, "*", member access or Ruby %x command in it is code. Ruby
+// evaluates the outer interpolation, and with a strict inner part the shapes
+// around it that alpha.5 caught stay caught: a call after an inner "#{ }"
+// has closed (`#{"#{a.b}" + system("id")}`, `#{"#{x}#{a.b}" + system("id")}`),
+// a spaced call (`#{ system ("id #{a.b}")}`), a backtick command, an index
+// (`#{ENV['SECRET'] + "#{a.b}"}`) or a code method. Second, as in
+// eachCodeTemplate, when the text since the previous "}" holds more than one
+// "#{", the text from the first is checked for a dunder walk, a call (which
+// includes "T(") or a Ruby %x command, so `#{system("id #{1}")}` is caught
+// although its inner part is a number. The cost, as at alpha.5: text such as
+// "#{order #{user.name}} ready" or an unclosed "#{" in prose before a data
+// path ("Use #{ to interpolate, as in #{user.name}") is flagged, and so is a
+// call after an unclosed "#{" (`Ruby uses #{ for interpolation, see
+// puts("hi #{name}") in the docs`). A plain path alone and several closed
+// ones ("#{order.id} and #{order.total}") are each read alone and keep the
+// exemption. Missed: a "}" that does not close an interpolation (in a string,
+// a block or a hash) still counts as a close, so in
+// `#{"}" + "#{a.b}" + system("id")}` the inner path is read alone (alpha.5
+// flagged it through the member access). The ranges are disjoint, so every
+// byte is read a bounded number of times.
 func eachHashTemplate(s string) bool {
+	open := 0 // "#{" left unclosed before s[from:]
 	for from := 0; from < len(s); {
 		c := strings.IndexByte(s[from:], '}')
 		if c < 0 {
 			return false
 		}
 		c += from
-		if o := strings.LastIndex(s[from:c], "#{"); o >= 0 {
-			if isHashExpr(s[from+o+2 : c]) {
-				return true
-			}
-			if f := strings.Index(s[from:c], "#{"); f < o {
-				if in := s[from+f+2 : c]; hasDunderOrCall(in) || hasRubyCommand(in) {
+		seg := s[from:c]
+		n := strings.Count(seg, "#{")
+		if o := strings.LastIndex(seg, "#{"); o >= 0 {
+			inner := seg[o+2:]
+			if open+n > 1 {
+				if isHashCode(inner) {
 					return true
 				}
+				if f := strings.Index(seg, "#{"); f < o {
+					if in := seg[f+2:]; hasDunderOrCall(in) || hasRubyCommand(in) {
+						return true
+					}
+				}
+			} else if isHashExpr(inner) {
+				return true
 			}
 		}
+		open = max(open+n-1, 0)
 		from = c + 1
 	}
 	return false
@@ -2048,12 +2074,16 @@ func elExpr(in string, bind bool) bool {
 // "#{order.total}", "#{user.name}", "#{repo.fork}" and "#{bus.pass}" are
 // data. "#{12}" or "#{3B}" in an address has none of these.
 func isHashExpr(in string) bool {
-	t := strings.Trim(in, " \t\r\n")
-	if hasRubyCommand(t) {
+	// A data path is names and dots only, so it never holds a %x command.
+	return !isHashDataPath(strings.Trim(in, " \t\r\n")) && isHashCode(in)
+}
+
+// isHashCode is the alpha.5 reading of a #{ } inside, with no data-path
+// exemption: a call, an index, a "*" or member access ("#{a.b}"), or a Ruby
+// %x command.
+func isHashCode(in string) bool {
+	if hasRubyCommand(in) {
 		return true
-	}
-	if isHashDataPath(t) {
-		return false
 	}
 	for i := 0; i < len(in); i++ {
 		switch in[i] {

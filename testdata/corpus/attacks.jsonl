@@ -141,6 +141,9 @@
 {"name":"ssi set variable","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#set var=\"a\" value=\"b\" -->"]],"headers":{},"content_type":"","body":""}
 {"name":"ruby call around nested data path","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{system(\"id #{a.b}\")}"]],"headers":{},"content_type":"","body":""}
 {"name":"ruby call around nested number","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"#{system(\\\"id #{1}\\\")}\"}"}
+{"name":"ruby call after a nested data path","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{\"#{a.b}\" + system(\"id\")}"]],"headers":{},"content_type":"","body":""}
+{"name":"ruby spaced call around nested data path","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{ system (\"id #{a.b}\")}"]],"headers":{},"content_type":"","body":""}
+{"name":"ruby backtick around nested data path","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"#{`id #{a.b}`}\"}"}
 {"name":"jinja safe filter in a conditional","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ x|safe if a else b }}"]],"headers":{},"content_type":"","body":""}
 {"name":"ssi fsize","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#fsize file=\"index.html\" -->"]],"headers":{},"content_type":"","body":""}
 {"name":"ssi flastmod","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<!--#flastmod virtual=\"/index.html\" -->"]],"headers":{},"content_type":"","body":""}

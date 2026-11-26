@@ -258,7 +258,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-CODEI-001` | codei | block | PHP open tags, `eval`/`assert` of `base64_decode`, Node `child_process` access. |
 | `AEG-CODEI-002` | codei | block | A Java serialized object (`rO0AB`, `aced0005`). |
 | `AEG-LDAP-001` | ldap | block | LDAP filter breakers (`*)(`, `)(\|`, `)(&`, `)(!`). |
-| `AEG-SSTI-001` | ssti | block | Template expressions with code in them (`{{ ... }}` including Go template actions such as `printf` and `call` and filter pipes with a call, argument or sensitive name, `${T(`, `${7*7}`, `${a.b}` with a sensitive name and calls in `${...}`, any call, index, `*` or member access in `#{...}` except a plain data path, `<%= %>`, `{% %}`). |
+| `AEG-SSTI-001` | ssti | block | Template expressions with code in them (`{{ ... }}` including Go template actions such as `printf` and `call` and filter pipes with a call, argument or sensitive name, `${T(`, `${7*7}`, `${a.b}` with a sensitive name and calls in `${...}`, any call, index, `*` or member access in `#{...}` except a plain data path that is not nested in another `#{`, `<%= %>`, `{% %}`). |
 | `AEG-SSTI-002` | ssti | block | Server-side include directives: `<!--#` and `exec`, `include`, `echo`, `config`, `set`, `fsize` or `flastmod` with an attribute it takes, or `printenv` (`<!--#exec cmd=`, `<!-- #include file=`). `<!--#region-->` and `<!--#if-->` are clear. |
 | `AEG-JNDI-001` | jndi | block | Log4Shell `${jndi:` lookups, including nested obfuscation. |
 | `AEG-CRLF-001` | crlf | block | CR or LF (raw or encoded) followed by a response header name. |
@@ -280,10 +280,10 @@ Each rule's known gaps and false-positive shapes are in the [threat model](docs/
 
 ## Corpus results
 
-The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **227 attacks and 195 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 120 attacks and 163 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
+The acceptance corpus in [`testdata/corpus`](testdata/corpus) has **230 attacks and 195 legitimate requests**: an attack and false-positive suite taken from a production API's tests (107 attacks and 32 legitimate requests), plus 123 attacks and 163 legitimate requests added for Aegolith (prose with `&`, `;`, `#`, `<`, `%`, Urdu and Hindi text, apostrophes, links in reviews, decimal prices, multipart uploads). It runs twice in enforce mode with **no exclusions**:
 
-- **Generic**: no routes, every input untyped. Gate: at least 223 of 227 blocked.
-- **API-aware**: a route policy that types the fields. Gate: at least 224 of 227 blocked, and every legitimate request must fit the policy.
+- **Generic**: no routes, every input untyped. Gate: at least 226 of 230 blocked.
+- **API-aware**: a route policy that types the fields. Gate: at least 227 of 230 blocked, and every legitimate request must fit the policy.
 
 Both gates also require **0 false positives**. Output of `make corpus` (`go test -run Corpus -v .`) on 2026-11-26:
 
@@ -294,7 +294,7 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | lfi | 11 | 11 | 11 |
 | rfi | 3 | 3 | 3 |
 | cmdi | 29 | 29 | 29 |
-| ssti | 35 | 35 | 35 |
+| ssti | 38 | 38 | 38 |
 | log4shell | 3 | 4 | 4 |
 | ssrf | 5 | 5 | 5 |
 | xxe | 3 | 3 | 3 |
@@ -304,7 +304,7 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | scanner | 46 | 46 | 46 |
 | session | 1 | 1 | 1 |
 | misc | 1 | 1 | 2 |
-| **Attacks** | **223** | **224** | **227** |
+| **Attacks** | **226** | **227** | **230** |
 | **False positives** | **0** | **0** | **195** |
 
 **What it misses**, listed honestly (4 attacks generic, 3 API-aware; all four were also missed before alpha.4 and are unchanged in alpha.6):
@@ -376,7 +376,7 @@ make corpus     # the tables above
 Aegolith v0.1 is **alpha**. What that means:
 
 - **Alpha release (`v0.1.0-alpha.5`, see the [changelog](CHANGELOG.md)).** Pin the version. The public API, the config format and rule behaviour can change without notice before a release.
-- **Tuned on one corpus.** It blocks 223 and 224 of the 227 corpus attacks with no false positives on 195 legitimate requests. That says nothing about your traffic. Start in monitor mode.
+- **Tuned on one corpus.** It blocks 226 and 227 of the 230 corpus attacks with no false positives on 195 legitimate requests. That says nothing about your traffic. Start in monitor mode.
 - **Not promised:** that it catches every attack in a class, that it never flags a legitimate request, protection against anything in [what it does not protect against](docs/threat-model.md#what-it-does-not-protect-against), or a fixed upgrade path for config files.
 - **Your responsibilities remain:** parameterised queries, output escaping, authorization checks, rate limiting and a body size limit in front of the service (at or below `max_body_bytes`; see [Turning on enforcement](#turning-on-enforcement)).
 

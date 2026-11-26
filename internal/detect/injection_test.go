@@ -440,7 +440,7 @@ func TestCmdISleepPrefix(t *testing.T) {
 	})
 }
 
-// TestCmdIVariants covers the G4 lab payloads: a quote- or
+// TestCmdIVariants covers more command shapes: a quote- or
 // backslash-split command word, sleep with a number, and a bare command
 // after a line break that arrived percent-encoded (the query string, where
 // ScanQueryText applies).
@@ -1396,6 +1396,52 @@ func TestSSTIAlpha6AcceptedMisses(t *testing.T) {
 	})
 }
 
+// TestSSTINestedHashStrictInner covers a nested "#{": when more than one
+// "#{" sits since the previous "}", the inner part gets no plain-data-path
+// exemption and is read as alpha.5 read it (any call, index, "*" or member
+// access is code); the same holds while an earlier "#{" is still open. Ruby evaluates the outer interpolation, so a call after
+// an inner "#{ }" has closed, a spaced call, a backtick command or an index
+// around it runs. The cost is text such as "#{order #{user.name}} ready",
+// an unclosed "#{" in prose before a plain path, and Ruby documentation
+// prose with a call after an unclosed "#{" (threat model, "Changes in
+// alpha.6"). Separate closed paths stay clear.
+func TestSSTINestedHashStrictInner(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertHits(t, "SSTI", SSTI, want, []string{
+		`#{"#{a.b}" + system("id")}`,
+		`#{"#{a.b}" + system("id #{c.d}")}`,
+		`#{ system ("id #{a.b}")}`,
+		"#{system\t(\"id #{a.b}\")}",
+		"#{`id #{a.b}`}",
+		`#{ENV['SECRET'] + "#{a.b}"}`,
+		`#{x.instance_variables #{a.b}}`,
+		`#{T (java.lang.Runtime) #{a.b}}`,
+		`#{ #{a.b}}`,
+		`#{#{x[0]}}`,
+		`#{a #{7*7}}`,
+		`#{"#{x}#{a.b}" + system("id")}`,
+		// The cost: text that alpha.5 flagged too.
+		"#{order #{user.name}} ready",
+		"#{a #{b.c}",
+		"Use #{ to interpolate, as in #{user.name}",
+		"Use #{ to interpolate, as in #{name} and #{user.name}",
+		`Ruby uses #{ for interpolation, see puts("hi #{name}") in the docs`,
+	})
+	assertNoHits(t, "SSTI", SSTI, []string{
+		"#{user.name}",
+		"#{a.b} #{c.d}",
+		"#{order.id} and #{order.total}",
+		"Order #{order.id} for #{user.name} (#{order.total})",
+		"#{a.b}#{c.d}",
+		"#{order #{id}} ready",
+		"Use #{ to interpolate, as in #{name}",
+		"#{order #{id}} and #{user.name}",
+		// Documented miss: a "}" that does not close an interpolation (here
+		// inside a string) counts as one, so the path after it is read alone.
+		`#{"}" + "#{a.b}" + system("id")}`,
+	})
+}
+
 func TestJNDIPositives(t *testing.T) {
 	want := Hit{RuleID: "AEG-JNDI-001", Category: model.CatJNDI, Severity: model.SeverityCritical}
 	assertHits(t, "JNDI", JNDI, want, jndiPositives)
@@ -1568,8 +1614,6 @@ func TestSSTIAlpha6FinalReview(t *testing.T) {
 		"#{order.id} and #{order.total}",
 		"#{a.b} #{c.d}",
 		"Order #{order.id} for #{user.name} (#{order.total})",
-		"#{a #{b.c}",
-		"#{order #{user.name}} ready",
 		"#{flasher.notice}",
 		"{{[-p|--patch]}}",
 		"{{ x|y if a else b }}",

@@ -515,13 +515,16 @@ var sqliPercentAndRangePositives = []string{
 // sqliPercentAndRangeAcceptedMisses are attack-shaped values the two guards
 // deliberately let through (the documented recall cost): a comparison-free
 // tautology with a range or decimal, or after "N% (word)" with plain or/and,
-// not or in. If one of them starts to hit, update the threat model.
+// not, in or is, or the operands true and false. If one of them starts to
+// hit, update the threat model.
 var sqliPercentAndRangeAcceptedMisses = []string{
 	"1-1 or 1",
 	"6-7 or 8 or 1",
 	"9% (a) or 1",
 	"9% (a) or not 0",
 	"9% (a) or 1 in (1)",
+	"5% (x) or true",
+	"1% (a) or 1 is true",
 }
 
 func TestSQLiPercentAndRange(t *testing.T) {

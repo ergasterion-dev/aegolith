@@ -219,6 +219,10 @@ q $A ssti "ssi set variable"            '<!--#set var="a" value="b" -->'
 # Aegolith (alpha.6 final review): a call around a nested #{ }, the safe filter read by its first token.
 q $A ssti "ruby call around nested data path" '#{system("id #{a.b}")}'
 json $A ssti "ruby call around nested number" '{"note":"#{system(\"id #{1}\")}"}'
+# Aegolith (alpha.6): a nested #{ } is read with no data-path exemption.
+q $A ssti "ruby call after a nested data path" '#{"#{a.b}" + system("id")}'
+q $A ssti "ruby spaced call around nested data path" '#{ system ("id #{a.b}")}'
+json $A ssti "ruby backtick around nested data path" '{"note":"#{`id #{a.b}`}"}'
 q $A ssti "jinja safe filter in a conditional" "{{ x|safe if a else b }}"
 # Aegolith (alpha.6 final review): the other SSI directives.
 q $A ssti "ssi fsize"                  '<!--#fsize file="index.html" -->'

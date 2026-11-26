@@ -277,9 +277,11 @@ func isSQLi(s string) bool {
 //   - libinjection does not flag the value with every '%' read as a blank.
 //
 // Accepted cost: a value that starts with "N% (word)" or "N% word" and then
-// writes a tautology with "or"/"and" and no comparison or operator word
-// ("9% (a) or 1", "9% (a) or not 0", "9% (a) or 1 in (1)") is not flagged;
-// it has the shape of "Sale 20% (today only)". One extra libinjection call,
+// writes a tautology with "or"/"and" and no comparison or operator word, with
+// "not", "in" or "is", or the operands "true" and "false" ("9% (a) or 1",
+// "9% (a) or not 0", "9% (a) or 1 in (1)", "5% (x) or true",
+// "1% (a) or 1 is true") is not flagged; it has the shape of
+// "Sale 20% (today only)". One extra libinjection call,
 // only for a value that holds a '%' and passes the cheaper checks: linear.
 func isProsePercent(s, fp string) bool {
 	if strings.IndexByte(s, '%') < 0 || !onlyArithmeticTokens(fp) || !percentSignsOnly(s) ||

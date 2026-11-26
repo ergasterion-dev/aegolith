@@ -2,7 +2,7 @@
 
 ## v0.1.0-alpha.6
 
-2026-11-26. Fixes the false positives found by an external validation of alpha.5 (public attack payload lists and benign text) and closes several cheap recall gaps. Corpus: 227 attacks (223 blocked generic, 224 API-aware) and 195 legitimate requests, 0 false positives (was 137 and 130). **Read [Changes in alpha.6](docs/threat-model.md#changes-in-alpha6-and-what-they-cost) and [Known gaps found in the alpha.6 review](docs/threat-model.md#known-gaps-found-in-the-alpha6-review) before upgrading:** every cost and accepted miss is listed there.
+2026-11-26. Fixes the false positives found by an external validation of alpha.5 (public attack payload lists and benign text) and closes several cheap recall gaps. Corpus: 230 attacks (226 blocked generic, 227 API-aware) and 195 legitimate requests, 0 false positives (was 137 and 130). **Read [Changes in alpha.6](docs/threat-model.md#changes-in-alpha6-and-what-they-cost) and [Known gaps found in the alpha.6 review](docs/threat-model.md#known-gaps-found-in-the-alpha6-review) before upgrading:** every cost and accepted miss is listed there.
 
 ### New rule IDs (both block by default)
 
@@ -21,21 +21,21 @@ Excluding `AEG-SQLI-001` or `AEG-SSTI-001` on a field leaves the new rules on; e
 ### New detections
 
 - **CmdI:** `$(...)` and `$((...))` substitutions of any word (except where it reads as a prose dollar amount) and `echo` probes after a shell operator (commix's default probes); `x; sleep 10` and `1; sleep 5` are caught again.
-- **SSTI:** `${7*'7'}`, a Ruby `%x` command in `#{ }`, a call before a nested `#{ }` (`#{system("id #{1}")}`; `#{system("id #{a.b}")}` stays flagged as at alpha.5 although its inner part is a plain data path), and a FreeMarker `?new(` on a class-name literal anywhere in a value.
+- **SSTI:** `${7*'7'}`, a Ruby `%x` command in `#{ }`, a call before a nested `#{ }` (`#{system("id #{1}")}`), and a FreeMarker `?new(` on a class-name literal anywhere in a value. A nested `#{ }` is read as strictly as alpha.5 read it, with no plain-data-path exemption, so `#{system("id #{a.b}")}`, `#{"#{a.b}" + system("id")}` and ``#{`id #{a.b}`}`` stay flagged.
 - **Scanner:** VCS directories (`.git`, `.svn`, `.hg`, `.bzr`) as whole segments at any depth; secret dotfiles and private keys at the path start; SQL dumps, SQLite files and archives as the first segment; the user agents `commix`, `netsparker`, `arachni`, `w3af`, `webinspect`, `havij`, `sqlninja`, `whatweb`, `detectify`, `jorgee`, `zmeu`, `paros`, `qualys was` and `vega/`.
 
 ### Behaviour changes an operator must know
 
 - **Declared routes and scanner path rules.** A probe-path match (`AEG-SCANNER-002`, `-003`) is no longer reported when the matched text lies wholly in literal segments of the declared route the request matched, so `GET /api/v1/stores/:id/actuator/health` clears its own `actuator/health`. A match in a `:name` or `*` segment still counts, a root name such as `/actuator` or `/wp-admin` runs to the end of the path, and a trailing slash the template lacks or `%2F` in a parameter excuses nothing (so such a health check with a trailing slash stays blocked).
-- **New false positives to expect:** shell snippets with `$(...)` or `echo $...` after an operator; the bare name `xp_cmdshell`, quoted SQL delay calls and prose such as `We waitfor time "to heal"`; a quoted SSI or ASP include, or a comment such as `<!-- # Set value = 1 -->`; a `.git`, `.svn`, `.hg` or `.bzr` segment anywhere in a path and a secret file name such as `/.npmrc` or `/id_rsa` as the first segment; an SQL file or archive served as the first path segment (`/app.zip`, `/main.js.map.gz`; compressed web, feed, manifest, icon and font files such as `/sitemap.xml.gz`, `/app.mjs.gz` or `/font.woff2.gz` are clear); an application whose own user-agent token is a scanner word (`Paros/2.1`, `Vega/1.0`).
-- **`#{ }` is still stricter than `${ }`:** a call, index, `*` or member access is code unless the whole expression is a plain data path.
+- **New false positives to expect:** shell snippets with `$(...)` or `echo $...` after an operator; the bare name `xp_cmdshell`, quoted SQL delay calls and prose such as `We waitfor time "to heal"`; a quoted SSI or ASP include, or a comment such as `<!-- # Set value = 1 -->`; a `.git`, `.svn`, `.hg` or `.bzr` segment anywhere in a path and a secret file name such as `/.npmrc` or `/id_rsa` as the first segment; an SQL file or archive served as the first path segment (`/app.zip`, `/main.js.map.gz`; compressed web, feed, manifest, icon and font files such as `/sitemap.xml.gz`, `/app.mjs.gz` or `/font.woff2.gz` are clear); an application whose own user-agent token is a scanner word (`Paros/2.1`, `Vega/1.0`); Ruby documentation prose with a call after an unclosed `#{` (`Ruby uses #{ for interpolation, see puts("hi #{name}") in the docs`). Text with a nested `#{` (`#{order #{user.name}} ready`) or an unclosed `#{` before a data path (`Use #{ to interpolate, as in #{user.name}`) is flagged as at alpha.5.
+- **`#{ }` is still stricter than `${ }`:** a call, index, `*` or member access is code unless the whole expression is a plain data path that is not nested in another `#{`.
 
 ### Recall given up
 
 - **SQLi:** comparison-free tautologies with a range or decimal, or after `N% (word)` (`1-1 or 1`, `9% (a) or 1`, `5% (x) or true`); a nested block comment inside an `AEG-SQLI-002` token (`pg_sleep/* /* */ */(5)`, which `AEG-SQLI-001` still flags).
 - **CmdI:** a two-letter command in a User-Agent comment, after a prose line in a query value, or (with letter-only flags, any command word) in a prose backtick span; `x & cat -cozy /flag`.
 - **XSS:** five shapes, the first being a one-word spaced call such as `javascript: a=1; alert (x)`.
-- **SSTI:** bare filter pipes (`{{ x|config }}`), one-letter and `$t` calls with a plain string (`${e('id')}`), `${user.pass}`, and `#{ }` data paths, which can still call zero-argument methods (`#{order.destroy}`) or name a compound secret (`#{appConfig.dbPassword}`).
+- **SSTI:** bare filter pipes (`{{ x|config }}`), one-letter and `$t` calls with a plain string (`${e('id')}`), `${user.pass}`, and `#{ }` data paths, which can still call zero-argument methods (`#{order.destroy}`) or name a compound secret (`#{appConfig.dbPassword}`); a data path after a `}` inside a string, which counts as a close (`#{"}" + "#{a.b}" + system("id")}`).
 - **Found in review and left as they are:** `/.git;x` and `/.git\config` are not probe paths, a single dot (`%2e`) in a parameter of a declared route is excused, `javascript: a=1, alert (document.cookie)` (a spaced call after a comma) is not flagged, and a Ruby call without parentheses (`#{system 'id'}`, also clear at alpha.5) is not flagged.
 
 ### Performance
