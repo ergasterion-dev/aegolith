@@ -106,6 +106,10 @@ q $A xss "img onerror after comment"   "<!-- x --><img src=x onerror=alert(1)>"
 q $A xss "backtick href after comment" "<!-- \`x\` --><a href=\`javascript:alert(1)\`>x</a>"
 json $A xss "handler in open comment"  '{"note":"<!--` onerror=alert(1)"}'
 q $A xss "javascript call after stmt"  "javascript: a=1; alert (document.cookie)"
+# Aegolith: a real tag after "<title><!--" (the "<!--" is title text to a browser), and a spaced call whose argument
+# is a nested spaced call (alpha.6).
+q $A xss "img after title comment"     "<title><!--</title><img src=x onerror=alert(1)>\`-->"
+q $A xss "spaced eval after stmt"      "javascript: a=1; eval (atob ('YWxlcnQoZG9jdW1lbnQuY29va2llKQ=='))"
 json $A xss "stored xss in review"     '{"review":"<script>alert(1)</script>","rating":5}'
 json $A xss "xss in address field"     '{"address_line1":"<img src=x onerror=alert(1)>"}'
 hdr $A xss "xss in referer"            Referer "<script>alert(1)</script>"

