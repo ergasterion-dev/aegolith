@@ -66,7 +66,13 @@ case-insensitive routing another letter case is excused too. Two forms excuse
 nothing, because Fiber settings change which handler serves them: a trailing
 slash the template does not have (without `StrictRouting` Fiber serves it
 with the same handler, so such a health check stays blocked) and `%2F` in a
-parameter or wildcard segment (`UnescapePath` splits on it). See the
+parameter or wildcard segment (`UnescapePath` splits on it). Not every such
+form is covered: a declared template that ends in `/`, requested without that
+slash, is excused, and with `StrictRouting` a template without parameters is
+then served by a later `:name`, `*` or catch-all handler, if there is one (see
+[known gaps](../../docs/threat-model.md#known-gaps-found-in-the-alpha6-review)).
+If that could happen, register the route and declare its template without the
+final slash. See the
 [threat model](../../docs/threat-model.md#changes-in-alpha6-and-what-they-cost)
 for this and every other change in alpha.6.
 
@@ -86,9 +92,8 @@ request `Content-Encoding` other than `identity` before this middleware.
 inspection (default 1 MiB, so 2 MiB+1), matching what the engine inspects of
 an over-cap body. A body over `MaxBodyBytes` raises `AEG-PROTO-003`, which
 blocks by default and stops the inspection there, so enforce mode is
-unaffected and a padded body is refused. (Core `v0.1.0-alpha.1` still monitored it;
-this adapter release pins core `v0.1.0-alpha.6`. With the older core, set
-`RuleActions: map[string]aegolith.Action{"AEG-PROTO-003": aegolith.ActionBlock}`.)
+unaffected and a padded body is refused. (Core `v0.1.0-alpha.1` only monitored
+it; this adapter requires core `v0.1.0-alpha.6` or later.)
 If you set it back to monitor, an attack placed after `2 x MaxBodyBytes` of
 padding reaches the handler. Fiber's default `BodyLimit` (4 MiB) is larger than `max_body_bytes`,
 so set `fiber.Config{BodyLimit: ...}` at or below it as well.
@@ -98,7 +103,8 @@ so set `fiber.Config{BodyLimit: ...}` at or below it as well.
 Since alpha.4 the copy is always `2 x MaxBodyBytes+1` for an over-cap body, in
 enforce mode too (one extra copy of at most `MaxBodyBytes`), and monitor mode
 inspects up to that size. A JSON or multipart body cut only by the cap does
-not raise `AEG-PROTO-020` (this adapter release pins core alpha.6, which has that fix).
+not raise `AEG-PROTO-020` (this adapter requires core alpha.6 or later, which has
+that fix).
 
 The handler still receives the complete, unmodified body.
 

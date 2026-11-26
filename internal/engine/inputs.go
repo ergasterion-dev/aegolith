@@ -39,7 +39,11 @@ import (
 //     /api/v1/stores/:id/actuator/health` is declared, and `GET
 //     /actuator/health` when `GET /actuator/health` is declared (for a
 //     root name such as `/actuator` or `/wp-admin` the text runs to the
-//     end of the path). The route's own handler answers it.
+//     end of the path). The route's own handler answers it only if the
+//     server picks that handler: Fiber serves the first registered
+//     handler that matches, not the most specific one (with
+//     `/actuator/:ep` registered before `/actuator/health` and both
+//     declared, the `:ep` handler answers `GET /actuator/health`).
 //  2. The same request as `HEAD` for a `GET` route, and in other letter
 //     case when routes fold case (`/API/V1/Stores/7/Actuator/Health`). A
 //     trailing slash the template does not have, and `%2F` in any case in
@@ -68,10 +72,23 @@ func (s *state) declaredLiteral() func(start, end int) bool {
 	if !s.routed {
 		return nil
 	}
-	// Forms a common Go router may send to another handler than the
-	// declared one excuse nothing: a trailing slash the template does not
-	// have (ServeMux, Fiber StrictRouting), and an encoded '/' in a
-	// parameter or wildcard segment (Fiber UnescapePath splits on it).
+	// Two forms excuse nothing, because a common Go router may send them
+	// to another handler than the declared one: a trailing slash the
+	// template does not have (ServeMux, Fiber StrictRouting), and an
+	// encoded '/' in a parameter or wildcard segment (Fiber UnescapePath
+	// splits on it). They are not all such forms.
+	//
+	// Known gap, found after the v0.1.0-alpha.6 tag: a declared template
+	// that ends in `/`, requested without that slash, is excused: with
+	// `GET /actuator/health/` declared, `GET /actuator/health` is not
+	// flagged (alpha.5 flagged it), and another handler may answer it.
+	// Fiber with `StrictRouting` serves it with a later `/actuator/:ep`,
+	// `/actuator/*` or catch-all handler, if there is one, when the
+	// template has no parameter; Go's `ServeMux` serves it with a
+	// pattern that matches the slashless path itself, such as
+	// `/actuator/{ep}`. If another handler could answer that path,
+	// register the route and declare its template without the final
+	// slash.
 	raw := s.req.RawPath
 	if len(raw) > 1 && strings.HasSuffix(raw, "/") && !strings.HasSuffix(s.route.Route.Path, "/") {
 		return nil

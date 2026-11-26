@@ -43,9 +43,11 @@ func scannerRouteApp(appCfg fiber.Config, mw ...fiber.Handler) *fiber.App {
 
 // TestFiberDeclaredRouteScannerPath: behind the middleware, a request for a
 // declared route is not refused for a probe name its template spells
-// literally. Every form that a Fiber app could send to another handler, and
-// every probe name that arrives in a parameter or wildcard, is still refused
-// by a scanner path rule.
+// literally. For this test's routes (no template ends in '/', and the
+// declared handler is registered first), each listed form that a Fiber app
+// could send to another handler, and each listed probe name that arrives in a
+// parameter or wildcard, is still refused by a scanner path rule. The claim
+// does not extend to other route sets.
 func TestFiberDeclaredRouteScannerPath(t *testing.T) {
 	configs := []struct {
 		name          string
