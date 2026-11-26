@@ -169,7 +169,7 @@ flowchart TD
     V --> I["8. Decision<br/>enforce blocks,<br/>monitor reports"]
 ```
 
-Every match passes through rule actions, then exclusions, then de-duplication (rule plus field) as soon as it is found, so an excluded match never stops the pipeline. Each value in steps 4 to 7 is handled like this (an undeclared value also gets the detectors after `AEG-SCHEMA-002`; path parameters never raise it):
+Every match passes through rule actions, then exclusions, then de-duplication (rule plus field) as soon as it is found, so an excluded match never stops the pipeline. Each value in steps 4 to 7 is handled like this (after `AEG-SCHEMA-002`, an undeclared string value is still scanned unless that match blocked in enforce mode, which stops the inspection; JSON numbers and booleans are not scanned, and path parameters never raise it):
 
 ```mermaid
 flowchart TD
@@ -414,7 +414,7 @@ Aegolith is a Go library and supports Go only.
 
 ## Rules
 
-Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are meant to stay stable. "Block" and "monitor" are the default action; change them with `rule_actions` or `exclusions`. In monitor mode nothing is blocked whatever the action. Each rule's known gaps and false-positive shapes are in the [threat model](docs/threat-model.md#known-gaps-and-trade-offs).
+Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are meant to stay stable. "Block" and "monitor" are the default action; change them with `rule_actions` or `exclusions`. In monitor mode no match is blocked whatever the action (an internal error still blocks when `fail_open` is `false`). Each rule's known gaps and false-positive shapes are in the [threat model](docs/threat-model.md#known-gaps-and-trade-offs).
 
 <details open>
 <summary><b>Protocol, route and schema</b> (13 rules)</summary>
