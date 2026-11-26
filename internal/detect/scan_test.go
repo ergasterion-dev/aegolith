@@ -194,6 +194,19 @@ func TestScanTextLinear(t *testing.T) {
 		"entity-handler":      "<!--` onx&#x3d",
 		"js-prose-call":       "javascript: a=1; f (a b) ",
 		"js-open-call":        "javascript: a=1; f (a b -, ",
+		// alpha.6 SSTI passes: plain pipes, nested "{{", i18n calls, #{ } as
+		// ${ }, Ruby %x and class access, FreeMarker ?new after a literal.
+		"pipe":          "{{ a.b|c d ",
+		"pipe-closed":   "{{ a.b|c|... }}",
+		"pipe-tldr":     "{{[-a|--b c]}}",
+		"nested-tpl":    "{{ x {{ a|b }}",
+		"i18n":          "${t('a.b')}",
+		"i18n-open":     "${t('a ",
+		"hash-el":       "#{a.b(",
+		"ruby-x":        "#{%x",
+		"ruby-class":    "#{File.",
+		"fm-new":        "\"a.b\"?new(",
+		"fm-new-blanks": "'a.b      ?new(",
 	}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
 	limit := wallLimit(2*time.Second, 20*time.Second)

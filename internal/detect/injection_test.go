@@ -854,7 +854,6 @@ func TestSSTIELMemberAccess(t *testing.T) {
 		"${__import__('os').popen('id').read()}",
 		"${self.__init__.__globals__}",
 		"${pageContext.servletContext.classLoader}",
-		"${user.pass}",
 		"${user.pwd}",
 		"${db.credentials}",
 		"${app.apiKey}",
@@ -865,6 +864,229 @@ func TestSSTIELMemberAccess(t *testing.T) {
 
 func TestSSTINegatives(t *testing.T) {
 	assertNoHits(t, "SSTI", SSTI, sstiNegatives)
+}
+
+// TestSSTIAlpha6Templates covers the alpha.6 template readings: a filter
+// pipe in {{ }} is code only when attack-shaped, a short i18n call in ${ }
+// is data, and #{ } follows the ${ } rules.
+func TestSSTIAlpha6Templates(t *testing.T) {
+	want := Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}
+	assertNoHits(t, "SSTI", SSTI, []string{
+		// Plain filter pipes (Jinja, Django, Liquid) on a data path.
+		"{{ price | currency }}",
+		"Dear {{ name|title }},",
+		"{{ user.name | upper }}",
+		"{{ name | lower | title }}",
+		"{{name|title}}",
+		"Hi {{ first_name|capfirst }}, your order {{ order.id }} shipped",
+		"{{ a|b }}",
+		"{{zsh|sh|ksh|csh}}",
+		"{{ name\n| title }}",
+		// tldr option alternation.
+		"git stash {{[-p|--patch]}}",
+		"flox {{[l|list]}}",
+		"id {{[-u|--user]}}",
+		"trafilatura {{[-u|--URL]}} {{url}} {{[-o|--output-dir]}} {{path/to/output.txt}}",
+		"docker {{[images|image ls]}}",
+		"tool {{[e|edit]}} {{[-un|--user --name]}} {{[-g|--global]}}",
+		"deploy {{dev|test|production|...}}",
+		"open {{path/to/file|url}}",
+		"press {{<ArrowLeft>|<ArrowRight>}}",
+		"export {{--csv|--tsv}} {{[-w|--width=]}} {{[-?|--help]}}",
+		"rotate {{180|360|720}}",
+		"stty {{raw|cooked}}",
+		"kubectl {{[g|get]}} {{[c|config]}} {{[ns|namespace]}} {{b|k|m|g}}",
+		"fake {{name|email|password|...}}",
+		"tar {{[-c|--create]}} {{[-f|--file]}} {{path/to/target.tar}}",
+		// A short i18n call with a plain key.
+		"${t('cart.title')}",
+		`${t("checkout.submit")}`,
+		"${t('Save changes')}",
+		"${$t('nav.home')}",
+		"${i18n.t('order.status-shipped')}",
+		"${t('auth.password.label')}",
+		"${t('session.expired')}",
+		"Total: ${t('cart.total')} ${order.total}",
+		// pass is a word ("bus pass", "boarding pass").
+		"${bus.pass}",
+		"${ticket.pass}",
+		// #{ } as ${ }: a data path is not code.
+		"#{order.total}",
+		"Order #{order.id} ready",
+		"#{user.name}",
+		"#{price}",
+		"#{amount(usd)}",
+		// ?new or ?api after a quote in prose is not a FreeMarker binding.
+		`He said "hi"?new(ish)`,
+		`"x"?api`,
+		"Is it 'new'?api docs",
+	})
+	assertHits(t, "SSTI", SSTI, want, []string{
+		"{{7*7}}",
+		"{{config|attr('__class__')}}",
+		"{{ ''.__class__.__mro__ }}",
+		"{{ cycler.__init__.__globals__.os.popen('id').read() }}",
+		"{{ request|attr('application') }}",
+		"${7*7}",
+		"${user.password}",
+		`${"id".execute()}`,
+		"#{7*7}",
+		"#{T(java.lang.Runtime).getRuntime()}",
+		// Pipe counter-cases: call-shaped, sensitive or non-path roots and
+		// filters, a second expression after a cleared one, odd spacing.
+		"{{ x | safe }}",
+		"{{ value|e }}",
+		"<dd>{{ value|e }}</dd>",
+		"{{ name|raw }}",
+		"{{ name|escape }}",
+		"{{ config|list }}",
+		"{{ config | upper }}",
+		"{{ self|string }}",
+		"{{ request.args.x | upper }}",
+		"{{ _self|upper }}",
+		"{{ cycler|upper }}",
+		"{{ lipsum|string }}",
+		"{{ user.password | upper }}",
+		"{{ secret|upper }}",
+		"{{ name|title }}{{7*7}}",
+		"{{ name|title }} {{ config.items() }}",
+		"{{ name | title(1) }}",
+		"{{ name|truncate (20) }}",
+		"{{ name|join(',') }}",
+		"{{ name|format('%s') }}",
+		"{{['id']|filter('system')}}",
+		"{{ ['id']|map('system')|join }}",
+		"{{ name | date:'Y' }}",
+		"{{364|add:733}}",
+		"{{ 7|upper }}",
+		"{{ 'a'|upper }}",
+		"{{ \"a\"|upper }}",
+		"{{ user['name']|upper }}",
+		"{{ name ~ 'x' | upper }}",
+		"{{ name + 1 | upper }}",
+		"{{ .Name | html }}",
+		"{{ name | }}",
+		"{{ | upper }}",
+		"{{ name || upper }}",
+		"{{ request|attr(request.args.f|format(request.args.a)) }}",
+		"{{app.request.server.all|join(',')}}",
+		"{{ x | e('html') }}",
+		"{{ name|title }}\n{{ self }}",
+		"{{ 7|int }}",
+		"{{ name|title if config else x }}",
+		"{{ name | upper and request }}",
+		"{{ a|b,c }}",
+		"{{ a|b:c }}",
+		"{{ a|b@c }}",
+		"{{ .Name|html }}",
+		"{{ x|y }}{{ .Env }}",
+		"{{ x|safe|upper }}",
+		"{{ name|Safe }}",
+		"{{ REQUEST|upper }}",
+		"{{ x | y !z }}",
+		"{{ x | y\\z }}",
+		"{{ x | y#z }}",
+		"{{ [x]|list +config|dictsort }}",
+		"{{ [x]|list -config|dictsort }}",
+		"{{ x|upper if config else y }}",
+		"{{ app.request.server.all|join }}",
+		"{{ x|upper +request.environ|list }}",
+		"{{ --config|list }}",
+		// tldr alternation counter-cases.
+		"{{[config|list]}}",
+		"{{['id'|e]}}",
+		"{{[-p|--patch()]}}",
+		"{{[-p|]}}",
+		"{{[|-p]}}",
+		"{{[a|b].__class__}}",
+		"{{[request|e]}}",
+		// i18n counter-cases: a sensitive key, a longer root, a second
+		// expression, a member or call after the call, a non-literal
+		// argument, FreeMarker ?new.
+		"${t('java.lang.Runtime')}",
+		"${t('freemarker.template.utility.Execute')}",
+		"${t('x').getClass()}",
+		"${t('id').execute()}",
+		"${t('a')}${ex('id')}",
+		"${t('a') + \"id\".execute()}",
+		"${t('a'+'b')}",
+		"${t('a', 'b')}",
+		"${t(\"a'b\")}",
+		"${t('a\\'b')}",
+		"${tt('id')}",
+		"${ex('id')}",
+		"${T('java.lang.Runtime')}",
+		"${t('a').t('b')}",
+		"<#assign t = \"freemarker.template.utility.Execute\"?new()>${t(\"id\")}",
+		"[#assign t='freemarker.template.utility.Execute'?new()]${t('id')}",
+		// pass is gone; the other credential names stay.
+		"${user.password}",
+		"${user.passwd}",
+		"${user.pwd}",
+		// #{ } counter-cases.
+		"#{ 7 * 7 }",
+		"#{3*3}",
+		"#{runtime.exec('id')}",
+		"#{session.getAttribute(\"rtc\").getRuntime()}",
+		"#{process.binding(foo).spawn(foo2)}",
+		"#{require.main.constructor._load(foo).readdirSync(foo2)}",
+		`#{"freemarker.template.utility.Execute"?new()("id")}`,
+		"#{T(Runtime)}",
+		"#{user.password}",
+		"#{''.class.forName('x')}",
+		"#{system(params[:cmd])}",
+		"#{%x(id)}",
+		"#{%x[id]}",
+		"#{File.read(x)}",
+		"#{IO.popen(x)}",
+		"#{Kernel.exec(x)}",
+		"#{Dir.entries(x)}",
+		"#{exec(x)}",
+		"#{order.total}#{7*7}",
+		"#{7*'7'}",
+		"${7*'7'}",
+		"#{open(%q(|id))}",
+		"${ex(`id`)}",
+		// Jinja balances braces in an expression: the call runs before an
+		// inner {{ }} set literal fails.
+		"{{ lipsum.__globals__.os.popen('id').read() ~ {{a|b}} }}",
+		"{{ cycler.x('id') ~ {{ name|title }} }}",
+		// A FreeMarker binding of a class name anywhere in the value.
+		`<#assign ex = "freemarker.template.utility.Execute"?new()>`,
+		`<#assign x="freemarker.template.utility.ObjectConstructor"?NEW()>`,
+	})
+}
+
+// TestSSTIAlpha6AcceptedMisses pins the attack shapes alpha.6 lets through
+// to clear the template text above (threat model, "Changes in alpha.6";
+// corpus README trade-off section). If one starts to hit, update those
+// documents.
+func TestSSTIAlpha6AcceptedMisses(t *testing.T) {
+	assertNoHits(t, "SSTI", SSTI, []string{
+		// 1. A {{ }} filter pipe made only of placeholder text.
+		"{{ name|upper }}",
+		"{{ x|list }}",
+		"{{ x|attr }}",
+		"{{ x|config }}",
+		"{{ name|system }}",
+		"{{[a|b]}}",
+		"{{[a|b][0]}}",
+		"{{ x|y if a else b }}",
+		"{{[x|safe]}}",
+		"{{[g|x]}}",
+		// 2. A one-letter, $t or i18n.t call with one plain string literal,
+		// when the name was bound to an executor outside the value.
+		"${e('id')}",
+		"${t('whoami')}",
+		// 3. Member access to a field named pass.
+		"${user.pass}",
+		"#{user.pass}",
+		// 4. #{ } with an index, a product of names, or a call with no
+		// string-literal argument on a non-sensitive name.
+		"#{x[0]}",
+		"#{a*b}",
+		"#{foo(bar)}",
+	})
 }
 
 func TestJNDIPositives(t *testing.T) {

