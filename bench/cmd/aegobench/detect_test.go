@@ -254,3 +254,36 @@ func TestDetectRejectsBadUsage(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectSendsOnlyToLoopback(t *testing.T) {
+	t.Parallel()
+	parse := func(base string) error {
+		var stderr bytes.Buffer
+		_, _, err := parseDetect([]string{"--cases", "c", "--base", base, "--access", "a",
+			"--decisions", "d", "--out", "o"}, &stderr)
+		if err != nil && strings.Contains(err.Error()+stderr.String(), "secret-host") {
+			t.Errorf("%s: the value is repeated: %v", base, err)
+		}
+		return err
+	}
+	for _, base := range []string{"http://localhost", "http://LocalHost:8088", "https://127.0.0.1:8088",
+		"http://127.255.0.9", "http://[::1]:8088"} {
+		if err := parse(base); err != nil {
+			t.Errorf("%s: %v", base, err)
+		}
+	}
+	for _, base := range []string{"http://secret-host.example.test:8088", "https://localhost.secret-host.example.test",
+		"http://127.0.0.1.secret-host.example.test", "http://secret-host", "http://192.0.2.1:8088",
+		"http://128.0.0.1", "http://0.0.0.0:8088", "http://[::]:8088", "http://[2001:db8::1]",
+		"http://[::ffff:192.0.2.1]", "http://2130706433"} {
+		err := parse(base)
+		if !errors.Is(err, errUsage) {
+			t.Errorf("%s: err = %v, want a usage error", base, err)
+			continue
+		}
+		u := strings.SplitN(base, "//", 2)[1]
+		if strings.Contains(err.Error(), u) {
+			t.Errorf("%s: the value is repeated: %v", base, err)
+		}
+	}
+}

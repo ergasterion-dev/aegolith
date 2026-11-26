@@ -1,6 +1,6 @@
 // Command aegobench measures Aegolith against request sets: it imports each
-// source into case lines, serves the target they are replayed against, and
-// sends them to it and judges the outcome of each.
+// source into case lines, serves the target they are replayed against, sends
+// them to it, judges the outcome of each and reports the results.
 package main
 
 import (
@@ -14,6 +14,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -37,6 +38,7 @@ commands:
   import    convert a source into case lines
   target    serve the firewall-wrapped server that cases are sent to
   detect    send every case to the target once and record each outcome
+  report    count the outcomes and compare them with an earlier report
   help      show this text
 
 Run "aegobench <command> -h" for a command's flags.
@@ -75,6 +77,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		ctx, stop := signalContext()
 		defer stop()
 		return runDetect(ctx, args[1:], stdout, stderr)
+	case "report":
+		return runReport(args[1:], stdout, stderr)
 	default:
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
@@ -370,7 +374,7 @@ func parseDetect(args []string, stderr io.Writer) (o detectOptions, help bool, e
 	fs := flag.NewFlagSet("aegobench detect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	caseFiles := fs.String("cases", "", "case files to send, separated by commas")
-	base := fs.String("base", "", "URL of the target, such as http://127.0.0.1:8088")
+	base := fs.String("base", "", "URL of a target on this machine, such as http://127.0.0.1:8088")
 	fs.StringVar(&o.access, "access", "", "access log the target writes")
 	fs.StringVar(&o.decisions, "decisions", "", "decision log the target writes")
 	fs.StringVar(&o.out, "out", "", "results file to write")
@@ -388,6 +392,11 @@ func parseDetect(args []string, stderr io.Writer) (o detectOptions, help bool, e
 	}
 	if o.base, err = parseBase(*base); err != nil {
 		return o, false, err
+	}
+	// Other hosts are for remote mode, which has the limits that sending to
+	// them needs. The value is not repeated.
+	if !isLoopback(o.base.Hostname()) {
+		return o, false, fmt.Errorf("%w: --base must name a loopback host: localhost, 127.0.0.0/8 or ::1", errUsage)
 	}
 	if o.rps < 1 {
 		return o, false, fmt.Errorf("%w: --rps must be at least 1", errUsage)
@@ -413,6 +422,16 @@ func parseBase(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("%w: --base must be http://host[:port] or https://host[:port]", errUsage)
 	}
 	return u, nil
+}
+
+// isLoopback reports whether host is "localhost" or a loopback address. No
+// name is looked up.
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.IsLoopback()
 }
 
 // sameFile reports whether the two paths name one existing file.
@@ -486,7 +505,7 @@ func readCases(paths []string) (merged []cases.Case, conflicting int, err error)
 	}
 	merged, conflicts := cases.Merge(all)
 	if len(merged) == 0 {
-		return nil, 0, errors.New("there are no cases to send")
+		return nil, 0, errors.New("the case files hold no cases to use")
 	}
 	return merged, len(conflicts), nil
 }
@@ -504,7 +523,9 @@ func readCaseFile(path string) (out []cases.Case, err error) {
 	for i, l := range lines {
 		c, err := cases.FromLine(l)
 		if err != nil {
-			return nil, fmt.Errorf("line %d: %w", i+1, err)
+			// Without the source and case ID that FromLine adds: the case may
+			// be held out.
+			return nil, fmt.Errorf("line %d: %w", i+1, errors.Unwrap(err))
 		}
 		out = append(out, c)
 	}
