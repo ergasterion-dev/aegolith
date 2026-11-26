@@ -25,4 +25,4 @@ Not a vulnerability, but welcome as a normal issue: a false positive (use the fa
 
 ## Supported versions
 
-Aegolith is pre-alpha. Only the latest commit on `main` receives fixes.
+Aegolith is alpha. Only the latest commit on `main` receives fixes.

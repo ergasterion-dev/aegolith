@@ -329,7 +329,7 @@ Measured on a developer laptop, not a server, on the alpha.6 code at commit `b0c
 | Date | 2026-11-26 |
 | Load | The laptop was not idle. Load average at the start and end of the alpha.6 runs (both request sets), over 1 and 5 minutes: quoted benchmarks, 6.1 to 9.3 and 8.4 to 9.1; latency session 1, 4.7 to 10.5 and 7.7 to 10.0; latency session 2, 3.7 to 5.5 and 5.0 to 5.8. A quiet machine may read lower; loaded runs here read higher. |
 
-**Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Six rounds were run, alternating with alpha.5. Each number is the **lowest of the last three** (rounds 4 to 6): two alpha.6 runs in rounds 1 to 3 ended with a 5-minute load above the limit of 10 set for those runs (10.47 and 12.45). The lowest of all six differs in one cell (500-field body, api-aware: 381 µs). "Generic" is no policy, "api-aware" is the typed corpus policy.
+**Benchmarks** (`make bench`, `go test -run '^$' -bench . -benchmem ./...`). Six rounds were run, alternating with alpha.5. Each number is the **lowest of the last three** (rounds 4 to 6): two alpha.6 runs in rounds 1 to 3 ended with a 5-minute load above 10, the level each run had to start below (10.47 and 12.45). The lowest of all six differs in one cell (500-field body, api-aware: 381 µs). "Generic" is no policy, "api-aware" is the typed corpus policy.
 
 | Benchmark | Generic | API-aware | Allocs/op (generic) |
 |---|---|---|---|
@@ -362,7 +362,7 @@ Rounds 1 to 3 alone read higher for alpha.6: search GET 14.9 / 13.3 µs, cart PO
 | alpha.6, alpha.5's 130 requests and policy | 3 of 6 | 1 of 6 | 4 of 12 | 4 of 48 | 62.5, 68.3, 68.7, 87.0 |
 | alpha.5, its 130 requests | 1 of 6 | 3 of 6 | 4 of 12 | 7 of 48 | 56.5, 60.8, 65.8, 84.8, 89.8, 111.6, 111.8 |
 
-Every row over budget is one with browser headers. Taking both request sets together, alpha.6 was over budget in 7 of 24 runs and alpha.5 in 4 of 12. The second session shows that the misses are not specific to alpha.6 (alpha.5 missed in 3 of 6 runs there, alpha.6 in 1 of 6 on each request set, though one of those alpha.5 runs started while another process on the laptop was using about nine cores) and that a 5-minute load below 6 did not stop them. The runs do not establish the cause, and they do not show that either release holds the budget in every run; that needs a quiet server. The strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
+Every row over budget is one with browser headers. Taking both request sets together, alpha.6 was over budget in 7 of 24 runs and alpha.5 in 4 of 12. The second session shows that the misses are not specific to alpha.6 (alpha.5 missed in 3 of 6 runs there, alpha.6 in 1 of 6 on each request set, though two of those alpha.5 runs started while another process on the laptop was using about four cores in one case and about nine in the other) and that a 5-minute load below 6 did not stop them. The runs do not establish the cause, and they do not show that either release holds the budget in every run; that needs a quiet server. The strict check only runs with `AEGOLITH_PERF=1` and is a coarse sanity bound otherwise.
 
 **On identical requests alpha.6 is slower.** With alpha.6 on alpha.5's requests and policy, the median over 12 runs of each row is 13 to 19% higher than alpha.5's for p50 and 11 to 24% higher for p99. The lowest single p50 of the 12 is 11 to 22% higher; the lowest single p99 is mixed, from 10% lower to 10% higher.
 

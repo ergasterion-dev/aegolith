@@ -1,6 +1,6 @@
 # Contributing to Aegolith
 
-Thanks for helping. Aegolith is pre-alpha, so the design is still moving. For anything bigger than a small fix, open an issue first so we can agree on the approach before you write code.
+Thanks for helping. Aegolith is alpha, so the design is still moving. For anything bigger than a small fix, open an issue first so we can agree on the approach before you write code.
 
 ## Ground rules
 
