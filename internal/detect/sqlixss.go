@@ -29,9 +29,10 @@ func XSS(v string) (Hit, bool) {
 // SQLiToken reports whether v holds a SQL time-delay or command-execution
 // token (AEG-SQLI-002): MSSQL WAITFOR DELAY or WAITFOR TIME followed by a
 // literal or a variable, MSSQL xp_cmdshell, a Postgres pg_sleep,
-// pg_sleep_for or pg_sleep_until call, or an Oracle DBMS_LOCK.SLEEP or
-// DBMS_SESSION.SLEEP call. It checks v and, when one percent-decoding pass
-// changes it, the decoded value too. It is a detector of its own, not part
+// pg_sleep_for or pg_sleep_until call, an Oracle DBMS_LOCK.SLEEP or
+// DBMS_SESSION.SLEEP call, or a MySQL sleep( or benchmark( inside an
+// expression (see delayCallAt). It checks v and, when one percent-decoding
+// pass changes it, the decoded value too. It is a detector of its own, not part
 // of SQLi, so a value whose AEG-SQLI-001 hit a post-filter clears (percent
 // text, bare number phrases), or a field where AEG-SQLI-001 is excluded,
 // still gets it. See hasSQLToken for the matching rules and the accepted
@@ -63,12 +64,15 @@ const tokenGap = 128
 //     DELAY statement" and "WAITFOR DELAY 5" are clear.
 //   - pg_sleep, pg_sleep_for and pg_sleep_until count when '(' follows.
 //   - dbms_lock and dbms_session count when '.', sleep and '(' follow.
+//   - sleep and benchmark count inside an expression only: delayCallAt has
+//     its own rules for what stands before and after them.
 //
-// Between the parts any blanks (space, tab, CR, LF, FF, VT), /* */
-// comments and -- line comments are skipped, at most tokenGap bytes per
-// gap. **False-positive cost:** SQL pasted into a support ticket or docs
-// field that calls these ("SELECT pg_sleep(5)", "WAITFOR DELAY '00:00:05'")
-// is flagged; exclude AEG-SQLI-002 on such a field.
+// Between the parts of the other tokens any blanks (space, tab, CR, LF, FF,
+// VT), /* */ comments and -- line comments are skipped, at most tokenGap
+// bytes per gap. **False-positive cost:** SQL pasted into a support ticket or
+// docs field that calls these ("SELECT pg_sleep(5)", "WAITFOR DELAY
+// '00:00:05'") is flagged, and so is prose written like a delay call
+// ("recover by sleep(8)"); exclude AEG-SQLI-002 on such a field.
 //
 // Accepted misses of AEG-SQLI-002 and AEG-SSTI-002 (the same list, word for
 // word, is in docs/threat-model.md and testdata/corpus/README.md; the test
@@ -88,9 +92,10 @@ const tokenGap = 128
 //     not decode it: `waitfor+delay+'0:0:5'` in a path segment or a JSON
 //     string.
 //  5. Other procedures and delay functions: `xp_regread`, `xp_dirtree`,
-//     `sp_OACreate`, `DBMS_PIPE.RECEIVE_MESSAGE(`, MySQL `SLEEP(` and
-//     `BENCHMARK(`. libinjection (`AEG-SQLI-001`) flags some of them in SQL
-//     context.
+//     `sp_OACreate`, `DBMS_PIPE.RECEIVE_MESSAGE(`, and MySQL `SLEEP(` and
+//     `BENCHMARK(` outside the expression shapes of the delay rule (`9,
+//     sleep(5)`, `x or sleep (5)`, `x||sleep(5)`, `x or sleep(@d)`).
+//     libinjection (`AEG-SQLI-001`) flags some of them in SQL context.
 //  6. An SSI directive other than `exec`, `include`, `echo`, `printenv`,
 //     `config`, `set`, `fsize` and `flastmod` (`<!--#if expr="..." -->`,
 //     `<!--#elif`, nginx `<!--# block name="one" -->`), and a directive
@@ -104,8 +109,8 @@ const tokenGap = 128
 //     flags both.
 //
 // Cost: one pass over the identifiers of s; each candidate name reads at
-// most three gaps of tokenGap bytes and the words between them, so the scan
-// is linear in len(s).
+// most three gaps of tokenGap bytes and the words or the number between
+// them, which no other candidate reads, so the scan is linear in len(s).
 func hasSQLToken(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if !isLetter(s[i]) || i > 0 && isIdentByte(s[i-1]) {
@@ -126,6 +131,9 @@ func hasSQLToken(s string) bool {
 // sqlTokenAt reports whether the identifier s[i:j] starts a SQLiToken
 // token.
 func sqlTokenAt(s string, i, j int) bool {
+	if delayCallAt(s, i, j) {
+		return true
+	}
 	if j-i < 7 || j-i > 14 { // len("waitfor") .. len("pg_sleep_until")
 		return false
 	}
@@ -250,7 +258,7 @@ func isSQLi(s string) bool {
 	if ok, fp := libinjection.IsSQLi(s); ok && !isProseNumberComment(s, fp) && !isProsePercent(s, fp) && !isBareNumberPhrase(s, fp) {
 		return true
 	}
-	return hasStackedCopyProgram(s) || sqliFromKeywordStarts(s)
+	return hasStackedCopyProgram(s) || hasSQLTechnique(s) || sqliFromKeywordStarts(s)
 }
 
 // isProsePercent reports whether a libinjection hit comes only from a '%'

