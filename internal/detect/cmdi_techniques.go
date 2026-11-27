@@ -292,18 +292,20 @@ const (
 // in any letter case. The same loop with no operator before it, as in a
 // batch snippet, does not match.
 //
-// The blanks after an operator are skipped once, and everything after "for"
-// is bounded by the constants above: linear in len(s).
+// The blanks after an operator are skipped once, everything after "for" is
+// bounded by the constants above, and a stretch of "(...)" found not to
+// close is not searched again (see forSetMemo): linear in len(s).
 func hasChainedFor(s string) bool {
 	if strings.IndexByte(s, '%') < 0 || strings.IndexByte(s, '(') < 0 {
 		return false
 	}
+	var memo forSetMemo
 	for i := 0; i < len(s); i++ {
 		if c := s[i]; c != '&' && c != '|' && c != ';' {
 			continue
 		}
 		j := skipBlanks(s, i+1)
-		if hasPrefixFold(s[j:], "for") && forLoopAt(s, j+3) {
+		if hasPrefixFold(s[j:], "for") && forLoopAt(s, j+3, &memo) {
 			return true
 		}
 		i = j - 1
@@ -313,7 +315,7 @@ func hasChainedFor(s string) bool {
 
 // forLoopAt reports whether the rest of a FOR loop starts at s[j], just past
 // the word "for": switches, then forBodyAt.
-func forLoopAt(s string, j int) bool {
+func forLoopAt(s string, j int, memo *forSetMemo) bool {
 	if j >= len(s) || s[j] != ' ' && s[j] != '\t' && s[j] != '/' {
 		return false
 	}
@@ -329,7 +331,7 @@ func forLoopAt(s string, j int) bool {
 				return false
 			}
 			j = skipForGap(s, j+q+2)
-		case forBodyAt(s, j):
+		case forBodyAt(s, j, memo):
 			return true
 		default: // a path, such as /R's directory, before the variable
 			e := j
@@ -339,7 +341,7 @@ func forLoopAt(s string, j int) bool {
 			j = skipForGap(s, e)
 		}
 	}
-	return forBodyAt(s, j)
+	return forBodyAt(s, j, memo)
 }
 
 // forSwitchAt reports whether a FOR switch starts at s[j]: /D, /L, /R or /F,
@@ -356,7 +358,7 @@ func forSwitchAt(s string, j int) bool {
 // and "]", blanks, "in", "(", then a ")" within maxForSet bytes that is
 // followed (after blanks) by the word "do". Any ")" in that stretch may
 // close the set, so a set holding a command with parentheses is read.
-func forBodyAt(s string, j int) bool {
+func forBodyAt(s string, j int, memo *forSetMemo) bool {
 	if j >= len(s) || s[j] != '%' {
 		return false
 	}
@@ -378,17 +380,35 @@ func forBodyAt(s string, j int) bool {
 	if open >= len(s) || s[open] != '(' {
 		return false
 	}
-	end := min(len(s), open+2+maxForSet)
-	for q := open + 1; ; {
+	return memo.closes(s, open+1, min(len(s), open+2+maxForSet))
+}
+
+// forSetMemo is a stretch s[from:to] known to hold no ")" followed by "do".
+// Many loops share the bytes after their "(", so without it each would read
+// them again.
+type forSetMemo struct{ from, to int }
+
+// closes reports whether s[from:end] holds a ")" followed by "do". It
+// starts where the memo ends when from lies inside the memo.
+func (m *forSetMemo) closes(s string, from, end int) bool {
+	q := from
+	if from >= m.from && from <= m.to {
+		q = m.to
+	} else {
+		m.from, m.to = from, from
+	}
+	for q < end {
 		n := strings.IndexByte(s[q:end], ')')
 		if n < 0 {
-			return false
+			break
 		}
 		q += n + 1
 		if forDoAt(s, q) {
 			return true
 		}
 	}
+	m.to = max(m.to, end)
+	return false
 }
 
 // forDoAt reports whether the word "do" follows s[j:] after blanks.

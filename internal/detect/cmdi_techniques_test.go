@@ -211,6 +211,28 @@ func TestCmdIChainedFor(t *testing.T) {
 	})
 }
 
+// TestCmdIChainedForSharedSet: several loops whose sets share bytes are
+// each judged by their own bounds, also after an earlier loop in the value
+// found no close, and when a quoted option makes an earlier operator read
+// further than a later one.
+func TestCmdIChainedForSharedSet(t *testing.T) {
+	pad := strings.Repeat("a", 500)
+	assertCmdI(t, true, []string{
+		// The second loop's set reaches past the first one's bound.
+		"&for %a in(" + pad + " &for %b in(" + pad + ") do y",
+		// The first set holds no close; a later one, far away, does.
+		"&for %a in(x) y " + pad + pad + " &for %b in(z) do y",
+		// A short loop inside the quoted option of a longer one.
+		`&for /f "&for %b in(z) do y" %a in(x) y`,
+		`&for /f "&for %b in(z) y" %a in(x) do y`,
+		`&for /f "&for %b in(" %a in(x) y &for %c in(z) do y`,
+	})
+	assertCmdI(t, false, []string{
+		"&for %a in(" + pad + " &for %b in(" + pad + pad + ") do y",
+		`&for /f "&for %b in(z) y" %a in(x) y`,
+	})
+}
+
 // TestCmdITechniquesAcceptedFalsePositives pins the legitimate shapes the
 // here-string, system glob and chained FOR checks flag (threat model,
 // "Command injection techniques added in alpha.7"). If one stops matching,
@@ -369,7 +391,7 @@ func techniqueSuperLinear(s, m string) bool {
 // cmdTechniqueWorst are 8 KiB inputs that make the three checks do the most
 // work without matching.
 var cmdTechniqueWorst = []struct{ name, v string }{
-	{"here", strings.Repeat("a<<<", 2<<10)},
+	{"here", strings.Repeat("a<<<$", 8<<10/5)},
 	{"glob-short", strings.Repeat(" /?", 8<<10/3)},
 	{"glob-bracket", strings.Repeat(" /*["+strings.Repeat("a", 56)+"]x", 8<<10/62)},
 	{"glob-brackets", strings.Repeat(" /*"+strings.Repeat("[a]", 19)+"x", 8<<10/61)},
@@ -383,6 +405,9 @@ func BenchmarkCmdTechnique(b *testing.B) {
 		b.Run(in.name, func(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(in.v)))
+			if hasCmdTechnique(in.v) {
+				b.Fatal("the input matches, want a worst case without a match")
+			}
 			for b.Loop() {
 				hasCmdTechnique(in.v)
 			}
