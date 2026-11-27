@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -28,6 +29,10 @@ const (
 	// the canonical form in braces and "urn:uuid:" plus the canonical form.
 	// Use it only where the handler parses the id that leniently.
 	TypeUUIDLenient = "uuid_lenient"
+
+	// TypeBase64 is text sent as base64 (see DecodeBase64). The engine runs
+	// the detectors on the decoded value.
+	TypeBase64 = "base64"
 )
 
 // Hard caps that keep every validator linear and cheap whatever the input.
@@ -40,8 +45,9 @@ const (
 
 // FieldSpec declares the type of one path parameter, query value or JSON
 // body value. Only Type is required; the other fields refine it:
-// Min/Max bound int and number, MaxLen (in runes) bounds string and text,
-// Pattern (RE2, whole-value match) refines string, Enum lists enum values.
+// Min/Max bound int and number, MaxLen (in runes) bounds string, text and
+// base64 (the encoded value, not the decoded one), Pattern (RE2, whole-value
+// match) refines string, Enum lists enum values.
 // A url value must be an absolute http(s) URL in ASCII: non-ASCII bytes are
 // rejected, so clients must percent-encode them.
 type FieldSpec struct {
@@ -58,7 +64,7 @@ type FieldSpec struct {
 // knownTypes lists every type name, in the order error messages show it.
 var knownTypes = []string{
 	TypeUUID, TypeUUIDLenient, TypeInt, TypeNumber, TypeBool, TypeEnum,
-	TypeString, TypeText, TypeEmail, TypePhone, TypeURL,
+	TypeString, TypeText, TypeEmail, TypePhone, TypeURL, TypeBase64,
 }
 
 func knownType(t string) bool { return slices.Contains(knownTypes, t) }
@@ -175,6 +181,12 @@ func Validate(spec FieldSpec, value string, isString bool) bool {
 		return isPhone(value)
 	case TypeURL:
 		return isHTTPURL(value)
+	case TypeBase64:
+		if !withinRunes(value, spec.MaxLen) {
+			return false
+		}
+		_, _, ok := base64Form(value)
+		return ok
 	}
 	return false
 }
@@ -444,4 +456,62 @@ func isHTTPURL(s string) bool {
 
 func isURLByte(c byte) bool {
 	return isAlnum(c) || strings.IndexByte("-._~:/?#[]@!$&()*+,;=%", c) >= 0
+}
+
+// DecodeBase64 returns the bytes v encodes, and false when v is not base64.
+// CR and LF are ignored wherever they are. The alphabet is the standard one
+// ('+' and '/') or the URL-safe one ('-' and '_'), never both. Padding is
+// optional, but when present it must complete the last group of four. No
+// other byte is accepted. The empty string is valid. The result may hold any
+// bytes, not only text.
+func DecodeBase64(v string) (string, bool) {
+	enc, n, ok := base64Form(v)
+	if !ok {
+		return "", false
+	}
+	// The decoder skips CR and LF itself; v[:n] stops before the padding.
+	b, err := enc.DecodeString(v[:n])
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// base64Form checks v against the grammar of DecodeBase64 in one pass,
+// without allocating. It returns the unpadded encoding that reads v and n,
+// the length of v up to and including its last alphabet byte.
+func base64Form(v string) (enc *base64.Encoding, n int, ok bool) {
+	var data, pad int
+	var std, urlSafe bool
+	for i := range len(v) {
+		switch c := v[i]; {
+		case c == '\r' || c == '\n':
+			continue
+		case c == '=':
+			pad++
+			continue
+		case isAlnum(c):
+		case c == '+' || c == '/':
+			std = true
+		case c == '-' || c == '_':
+			urlSafe = true
+		default:
+			return nil, 0, false
+		}
+		if pad > 0 { // data after padding
+			return nil, 0, false
+		}
+		data++
+		n = i + 1
+	}
+	// A last group of one byte holds no whole byte; one of two or three
+	// takes two or one padding bytes, or none.
+	last := data % 4
+	if std && urlSafe || last == 1 || pad > 0 && (last == 0 || pad != 4-last) {
+		return nil, 0, false
+	}
+	if urlSafe {
+		return base64.RawURLEncoding, n, true
+	}
+	return base64.RawStdEncoding, n, true
 }

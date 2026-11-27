@@ -109,6 +109,11 @@ const (
 	// braces and a "urn:uuid:" prefix. Declare it only where the handler
 	// parses the id that leniently; TypeUUID stays canonical-only.
 	TypeUUIDLenient = policy.TypeUUIDLenient
+
+	// TypeBase64 ("base64") is text sent as base64, standard or URL-safe,
+	// padded or not, CR and LF ignored. The detectors judge the decoded
+	// value as they judge a TypeText value; MaxLen bounds the encoded one.
+	TypeBase64 = policy.TypeBase64
 )
 
 // DefaultLimits returns the default inspection limits: 1 MiB body, JSON

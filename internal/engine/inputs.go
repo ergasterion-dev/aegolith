@@ -207,9 +207,10 @@ func (s *state) checkRoute() {
 
 // typed validates a declared value. A mismatch is AEG-SCHEMA-001 (block).
 // Valid string-like values (string, text, email, url) are still scanned as
-// defense in depth; url values also get the SSRF rules. Fully constrained
-// types (uuid, uuid_lenient, int, number, bool, enum, phone) skip the
-// detectors.
+// defense in depth; url values also get the SSRF rules. Of a base64 value
+// the decoded form is scanned, as a text value, and the encoded one is not.
+// Fully constrained types (uuid, uuid_lenient, int, number, bool, enum,
+// phone) skip the detectors.
 func (s *state) typed(loc model.Location, field string, spec policy.FieldSpec, v string, isString bool) {
 	if s.stop {
 		return
@@ -223,7 +224,26 @@ func (s *state) typed(loc model.Location, field string, spec policy.FieldSpec, v
 		s.scanWindows(loc, field, v, detect.SSRF, "")
 	case policy.TypeString, policy.TypeText, policy.TypeEmail:
 		s.scan(loc, field, v)
+	case policy.TypeBase64:
+		s.decoded(loc, field, v)
 	}
+}
+
+// decoded inspects the text a valid base64 value encodes as a text value in
+// the same place is inspected. A query, form or JSON value also gets the
+// session identifier rule, which its caller ran on the encoded value (that
+// call covers the key); then the text detectors run.
+func (s *state) decoded(loc model.Location, field, v string) {
+	text, ok := policy.DecodeBase64(v)
+	if !ok { // typed validated v
+		return
+	}
+	if loc != model.LocPath {
+		if h, ok := detect.Session("", s.capped(text)); ok {
+			s.hit(h, loc, field, text)
+		}
+	}
+	s.scan(loc, field, text)
 }
 
 // value inspects one query, form or JSON value. On a matched route whose

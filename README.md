@@ -180,6 +180,8 @@ flowchart TD
     T -- "no" --> X["AEG-SCHEMA-001"]
     T -- "yes: uuid, uuid_lenient, int,<br/>number, bool, enum, phone" --> K["Not scanned:<br/>it cannot carry an injection"]
     T -- "yes: string, email,<br/>text, url" --> S
+    T -- "yes: base64" --> D["Decoded"]
+    D --> S
 ```
 
 | Stage | What it does |
@@ -330,6 +332,7 @@ Both this file and the Go example above are compiled and loaded by the tests in 
 | `email` | An email address | Yes |
 | `text` | Free text, optional `max_len` | Yes, full detector set |
 | `url` | An absolute http(s) URL | Yes, plus the SSRF rules |
+| `base64` | Base64, standard or URL-safe, optional `max_len` on the encoded value (see below) | Yes, the decoded value, as `text` |
 
 Field paths, in exclusions and in match results: `path.<param>`, `query.<name>`, `body.<json.path>` (arrays as `items[]`), `form.<name>`, `header.<lowercase name>`, `cookie.<name>`. A route key is `"METHOD /template"`, as declared.
 
@@ -337,6 +340,19 @@ Field paths, in exclusions and in match results: `path.<param>`, `query.<name>`,
 <summary><b>When to use <code>uuid_lenient</code></b></summary>
 
 `uuid` accepts only the canonical form, `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, hex digits in any case. If a handler parses ids with Go's `github.com/google/uuid` `Parse`, it also accepts 32 hex digits without dashes, the canonical form in braces (`{...}`) and a `urn:uuid:` prefix, so a strict `uuid` field blocks ids the application would take. Declare such a field `uuid_lenient` (`aegolith.TypeUUIDLenient`): it accepts exactly those four forms (hex and the `urn:uuid:` prefix in any ASCII case) and nothing else, so whitespace, NUL bytes, other brackets, nested braces and partial or over-long values are still `AEG-SCHEMA-001`. It is stricter than `Parse` in one respect: `Parse` takes any two bytes around a 38-byte value, while `uuid_lenient` requires `{` and `}`. In a config file it is `{ "type": "uuid_lenient" }`, like any other type. Use it only where the handler itself parses leniently (see the [threat model](docs/threat-model.md#what-it-does-not-protect-against)).
+
+</details>
+
+<details>
+<summary><b>When to use <code>base64</code></b></summary>
+
+Use `base64` (`aegolith.TypeBase64`) for a field in which a client sends text as base64 and the handler decodes it: `{ "type": "base64", "max_len": 8000 }`. Declared as `string` or `text`, such a field is scanned as the encoded text, so an attack inside it passes. Declared as `base64`, the value is decoded and judged exactly like a `text` value in the same place, under the same field name in matches and exclusions; the encoded text is not scanned.
+
+- Accepted: the standard (`+` `/`) or the URL-safe (`-` `_`) alphabet, never both; padding optional, but correct when present; CR and LF ignored; the empty string. Anything else, other whitespace included, is `AEG-SCHEMA-001`, and so is a JSON number or boolean.
+- `max_len` bounds the encoded value, CR and LF included, not the decoded one.
+- In a query string or urlencoded form a bare `+` means a space, so the client must send it as `%2B` (or use the URL-safe alphabet). In a path parameter a `/` must be sent as `%2F`.
+- Only declared fields are decoded, and once: base64 inside the decoded text stays encoded.
+- It is meant for text. Binary content (an image, a compressed file) is scanned as text too and can block, for example as `AEG-LFI-001` for a NUL byte; leave such a field `string`.
 
 </details>
 

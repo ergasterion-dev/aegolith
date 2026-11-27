@@ -102,7 +102,7 @@ func TestResultsByEncoderAndPlacement(t *testing.T) {
 	contains(t, section(t, none, "### By source and placement"), "No cases.")
 }
 
-// The report says that base64 is not decoded, and how much of the source's
+// The report says where base64 is decoded, and how much of the source's
 // attacks arrive that way, counted from the case lines.
 func TestBase64ShareInSourceNote(t *testing.T) {
 	t.Parallel()
@@ -124,11 +124,11 @@ func TestBase64ShareInSourceNote(t *testing.T) {
 	note := func(in *Input) string {
 		return unwrapped(section(t, Report{Meta: Meta{Sources: sources, Input: in}}.Markdown(), "## Sources"))
 	}
-	contains(t, note(&in), "Aegolith does not decode base64", "Base64 or Base64Flat",
+	contains(t, note(&in), "Aegolith decodes base64 only in a field a route declares base64", "Base64 or Base64Flat",
 		"40.0% (2 of 5) of the attack case lines read from this source use one of these two encoders.")
 	for _, without := range []*Input{nil, {}} {
 		s := note(without)
-		contains(t, s, "Aegolith does not decode base64")
+		contains(t, s, "Aegolith decodes base64 only in a field a route declares base64")
 		if strings.Contains(s, "attack case lines read from this source") {
 			t.Errorf("a share is given without its lines:\n%s", s)
 		}
