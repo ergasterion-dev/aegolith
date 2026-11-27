@@ -12,7 +12,9 @@ import (
 // xmlWorstBodies are in-limit (at most 1 MiB) XML bodies that make the walk
 // do the most work per byte, each with an attack at the end. The costliest
 // shapes read every value and then fail late, so the raw body is rescanned
-// as well ("then a mismatched end tag", "then an error").
+// as well ("then a mismatched end tag", "then an error"); a declared
+// charset read byte by byte makes each high byte two UTF-8 bytes in the
+// values ("high bytes").
 func xmlWorstBodies() map[string]string {
 	const sql = `<q>1' UNION SELECT password FROM users--</q>`
 	room := 1<<20 - 300
@@ -30,6 +32,11 @@ func xmlWorstBodies() map[string]string {
 		"instructions then an error":                `<r>` + strings.Repeat(`<?a <a ?>`, room/9) + sql + `</b>`,
 		"script elements then a mismatched end tag": `<r>` + strings.Repeat(`<script/>`, room/9) + sql + `</b>`,
 		"unclosed tiny elements then an error":      `<r>` + strings.Repeat(`x<a>`, room/4) + sql + `</b>`,
+		"two-byte values then a mismatched end tag": `<r>` + strings.Repeat(`xx<a/>`, room/6) + sql + `</b>`,
+		"Shift_JIS high bytes then an error": `<?xml version="1.0" encoding="Shift_JIS"?><r>` +
+			strings.Repeat("\x95\x5c<a/>", room/6) + sql + `</b>`,
+		"ISO-8859-1 high bytes then an error": `<?xml version="1.0" encoding="ISO-8859-1"?><r>` +
+			strings.Repeat("\xe9\x5c<a/>", room/6) + sql + `</b>`,
 	}
 }
 
@@ -58,12 +65,19 @@ func minInspect(fw *aegolith.Firewall, r *aegolith.Request, runs int) (time.Dura
 // body (ff-lt-trailing-sqli) in the same process, and checks that the
 // attack at the end is still seen, so the walk and the raw rescan stay
 // within the scan budget. Measured on a loaded machine (load average about
-// 60, Apple M4 Pro, no -race): see docs/threat-model.md; to be re-measured
-// on a quiet machine before the tag.
+// 40 to 60, Apple M4 Pro, no -race): the high-byte shapes cost about as
+// much as the JSON body; see docs/threat-model.md. To be re-measured on a
+// quiet machine before the tag.
 func TestInspectXMLWorstCaseBounded(t *testing.T) {
 	runs := 3
 	if raceSlowdown != 1 || testing.Short() {
 		runs = 1
+	}
+	// The race detector's instrumentation allocates too: about 200 MiB for
+	// the high-byte shapes under -race, 127 MiB without.
+	allocLimit := uint64(192 << 20)
+	if raceSlowdown != 1 {
+		allocLimit = 320 << 20
 	}
 	fw := mustNew(t, aegolith.Config{Mode: aegolith.ModeMonitor, AllowXML: true})
 	fw.Inspect(get("/warm"))
@@ -78,8 +92,8 @@ func TestInspectXMLWorstCaseBounded(t *testing.T) {
 		if lim := wallLimit(2*time.Second, 20*time.Second); !testing.Short() && el > lim {
 			t.Errorf("%s took %v, want under %v", name, el, lim)
 		}
-		if alloc > 192<<20 {
-			t.Errorf("%s allocated %d MiB, want under 192 MiB", name, alloc>>20)
+		if alloc > allocLimit {
+			t.Errorf("%s allocated %d MiB, want under %d MiB", name, alloc>>20, allocLimit>>20)
 		}
 		mustHave(t, d, "AEG-SQLI-001", "body")
 	}

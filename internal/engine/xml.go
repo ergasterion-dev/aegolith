@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -271,42 +272,108 @@ const (
 	charsetBytes        // ASCII-compatible: read byte by byte
 )
 
-// xmlCharset sorts a declared encoding (any case). The ASCII-compatible
-// charsets tokenized are ISO-8859-1 and the other ISO-8859-* parts, Latin-1,
-// Windows-125x, US-ASCII, Shift_JIS, EUC-JP, EUC-KR, GB2312, GBK, GB18030,
-// Big5, KOI8-R and KOI8-U. Each of them is read byte by byte, each byte
-// becoming the code point of the same value: ASCII bytes stay exact, and no
-// byte of those charsets that belongs to a multi-byte character is one of
-// the ASCII bytes XML markup is made of (<, >, &, quotes), so the markup is
-// read as the application's parser reads it. Every other charset (UTF-16,
-// UTF-7, EBCDIC, an unknown name) could spell markup or an attack in bytes
-// this read would not see, so it is not tokenized.
+// xmlCharset sorts a declared encoding name (any case). Tokenized are
+// UTF-8 and these ASCII-compatible, stateless encodings, under their
+// standard (WHATWG and IANA) names and aliases: US-ASCII, the ISO-8859
+// parts and Latin-N names, Windows-874 (TIS-620) and Windows-1250 to 1258,
+// KOI8-R and KOI8-U, Shift_JIS (Windows-31J), EUC-JP, EUC-KR (Windows-949),
+// GB2312, GBK (Windows-936, EUC-CN), GB18030 and Big5. Each of them except
+// UTF-8 is read byte by byte, each byte becoming the code point of the same
+// value: ASCII bytes stay exact, and no byte of a multi-byte character in
+// those encodings is one of the ASCII bytes XML markup is made of (<, >,
+// &, quotes), so the markup is read as the application's parser reads it.
+// Every other encoding (UTF-7, UTF-16, UTF-32, ISO-2022-JP, HZ, EBCDIC, an
+// unknown name) could spell markup or an attack in bytes this read would
+// not see, so it is not tokenized.
 func xmlCharset(enc string) int {
-	if enc == "" || strings.EqualFold(enc, "UTF-8") {
+	e := strings.ToLower(enc)
+	if e == "" || utf8Names[e] {
 		return charsetUTF8
 	}
-	for _, c := range [...]string{
-		"Latin-1", "US-ASCII", "Shift_JIS", "EUC-JP", "EUC-KR", "GB2312", "GBK",
-		"GB18030", "Big5", "KOI8-R", "KOI8-U",
-	} {
-		if strings.EqualFold(enc, c) {
-			return charsetBytes
-		}
-	}
-	if part, ok := cutPrefixFold(enc, "ISO-8859-"); ok && digits(part) {
-		return charsetBytes
-	}
-	if part, ok := cutPrefixFold(enc, "Windows-125"); ok && len(part) == 1 && digits(part) {
+	if byteNames[e] || isoLatinName(e) || windowsName(e) {
 		return charsetBytes
 	}
 	return charsetOther
 }
 
-func cutPrefixFold(s, prefix string) (string, bool) {
-	if len(s) < len(prefix) || !strings.EqualFold(s[:len(prefix)], prefix) {
-		return "", false
+var utf8Names = map[string]bool{
+	"utf-8": true, "utf8": true, "unicode-1-1-utf-8": true, "unicode11utf8": true,
+	"unicode20utf8": true, "x-unicode20utf8": true,
+}
+
+// byteNames are the aliases xmlCharset reads byte by byte that the
+// patterns in isoLatinName and windowsName do not cover.
+var byteNames = map[string]bool{
+	// US-ASCII
+	"us-ascii": true, "ascii": true, "us": true, "csascii": true, "ansi_x3.4-1968": true,
+	"iso-ir-6": true, "iso646-us": true, "ibm367": true, "cp367": true,
+	// ISO-8859-1
+	"cp819": true, "ibm819": true, "iso-ir-100": true,
+	// other ISO-8859 parts
+	"iso-ir-101": true, "iso-ir-109": true, "iso-ir-110": true, "iso-ir-144": true,
+	"iso-ir-127": true, "iso-ir-126": true, "iso-ir-138": true, "iso-ir-148": true,
+	"cyrillic": true, "csisolatincyrillic": true, "arabic": true, "asmo-708": true,
+	"ecma-114": true, "csisolatinarabic": true, "iso-8859-6-e": true, "iso-8859-6-i": true,
+	"csiso88596e": true, "csiso88596i": true, "greek": true, "greek8": true,
+	"ecma-118": true, "elot_928": true, "csisolatingreek": true, "hebrew": true,
+	"csisolatinhebrew": true, "iso-8859-8-e": true, "iso-8859-8-i": true,
+	"csiso88598e": true, "csiso88598i": true, "visual": true, "logical": true,
+	"csisolatin9": true, "csiso885913": true, "csiso885914": true, "csiso885915": true,
+	"csiso885916": true, "iso-ir-157": true, "iso-ir-226": true,
+	// Windows-874
+	"dos-874": true, "tis-620": true, "cp874": true,
+	// KOI8
+	"koi8-r": true, "koi8_r": true, "koi8": true, "koi": true, "cskoi8r": true,
+	"koi8-u": true, "koi8-ru": true,
+	// Shift_JIS
+	"shift_jis": true, "shift-jis": true, "sjis": true, "x-sjis": true, "ms_kanji": true,
+	"csshiftjis": true, "windows-31j": true, "cp932": true, "ms932": true,
+	// EUC-JP
+	"euc-jp": true, "eucjp": true, "x-euc-jp": true, "cseucpkdfmtjapanese": true, "ujis": true,
+	// EUC-KR
+	"euc-kr": true, "euckr": true, "cseuckr": true, "csksc56011987": true, "iso-ir-149": true,
+	"korean": true, "ks_c_5601-1987": true, "ks_c_5601-1989": true, "ksc5601": true,
+	"ksc_5601": true, "windows-949": true, "cp949": true, "uhc": true,
+	// GBK, GB2312, GB18030
+	"gbk": true, "x-gbk": true, "gb2312": true, "gb_2312": true, "gb_2312-80": true,
+	"chinese": true, "csgb2312": true, "csiso58gb231280": true, "iso-ir-58": true,
+	"cp936": true, "ms936": true, "windows-936": true, "euc-cn": true, "euccn": true,
+	"gb18030": true,
+	// Big5
+	"big5": true, "big5-hkscs": true, "cn-big5": true, "csbig5": true, "x-x-big5": true,
+}
+
+// isoLatinName matches the ISO-8859 parts (1 to 11, 13 to 16) spelled
+// iso-8859-N, iso8859-N, iso_8859-N or iso8859N, and the Latin names
+// latinN, latin-N, lN and csisolatinN (N from 1 to 10).
+func isoLatinName(e string) bool {
+	for _, p := range [...]string{"iso-8859-", "iso8859-", "iso_8859-", "iso8859"} {
+		if part, ok := strings.CutPrefix(e, p); ok && digits(part) {
+			n, _ := strconv.Atoi(part)
+			return n >= 1 && n <= 16 && n != 12
+		}
 	}
-	return s[len(prefix):], true
+	for _, p := range [...]string{"latin-", "latin", "csisolatin", "l"} {
+		if part, ok := strings.CutPrefix(e, p); ok && digits(part) {
+			n, _ := strconv.Atoi(part)
+			return n >= 1 && n <= 10
+		}
+	}
+	return false
+}
+
+// windowsName matches windows-125N, cp125N and x-cp125N (N from 0 to 8)
+// and windows-874.
+func windowsName(e string) bool {
+	if e == "windows-874" {
+		return true
+	}
+	for _, p := range [...]string{"windows-125", "cp125", "x-cp125"} {
+		if part, ok := strings.CutPrefix(e, p); ok && len(part) == 1 && part[0] >= '0' && part[0] <= '8' {
+			return true
+		}
+	}
+	return false
 }
 
 func digits(s string) bool {

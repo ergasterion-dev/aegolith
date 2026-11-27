@@ -176,6 +176,9 @@ func TestXMLFallback(t *testing.T) {
 		{"UTF-16", model.Limits{}, `<?xml version="1.0" encoding="UTF-16"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
 		{"EBCDIC", model.Limits{}, `<?xml version="1.0" encoding="IBM037"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
 		{"unknown charset", model.Limits{}, `<?xml version="1.0" encoding="x-made-up"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
+		{"ISO-2022-JP", model.Limits{}, `<?xml version="1.0" encoding="ISO-2022-JP"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
+		{"UTF-32", model.Limits{}, `<?xml version="1.0" encoding="UTF-32"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
+		{"HZ", model.Limits{}, `<?xml version="1.0" encoding="HZ-GB-2312"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := postBody(xmlEngine(t, model.ModeMonitor, tc.lim), "application/xml", tc.body)
@@ -212,13 +215,26 @@ func TestXMLDeclaredCharsets(t *testing.T) {
 		"UTF-8", "utf-8", "ISO-8859-1", "latin-1", "Windows-1252", "US-ASCII", "ISO-8859-2", "iso-8859-15",
 		"Windows-1250", "windows-1251", "Shift_JIS", "shift_jis", "EUC-JP", "EUC-KR", "GB2312", "GBK",
 		"GB18030", "Big5", "KOI8-R", "koi8-u",
+		// Standard (WHATWG and IANA) aliases of the same encodings.
+		"utf8", "UTF8", "unicode-1-1-utf-8", "ascii", "us", "csASCII", "ANSI_X3.4-1968", "iso-ir-6",
+		"latin1", "l1", "cp819", "IBM819", "csisolatin1", "iso-ir-100", "ISO8859-1", "iso88591",
+		"iso_8859-1", "cp1252", "x-cp1252", "x-cp1250", "cp1251", "windows-1258",
+		"ISO8859-5", "iso_8859-2", "iso-8859-8-i", "iso-8859-6-e", "latin2", "l9",
+		"csisolatin5", "cyrillic", "greek", "hebrew", "arabic", "iso-8859-11", "Windows-874", "TIS-620",
+		"dos-874", "sjis", "x-sjis", "Windows-31J", "MS932", "cp932", "ms_kanji", "csshiftjis",
+		"shift-jis", "x-euc-jp", "cseucpkdfmtjapanese", "cseuckr", "ks_c_5601-1987", "korean",
+		"windows-949", "CP936", "ms936", "windows-936", "x-gbk", "EUC-CN", "chinese", "csgb2312",
+		"gb_2312-80", "iso-ir-58", "big5-hkscs", "cn-big5", "csbig5", "x-x-big5", "koi8", "koi", "koi8_r",
+		"cskoi8r", "koi8-ru",
 	} {
 		t.Run(enc, func(t *testing.T) {
 			decl := `<?xml version="1.0" encoding="` + enc + `"?>`
 			text := "\x82\xa0\xb1\xe9\xfe"
-			if strings.EqualFold(enc, "UTF-8") {
+			if xmlCharset(enc) == charsetUTF8 {
 				text = "é"
 			}
+			// Ordinary XML with this declaration is a clean allow.
+			wantClean(t, postBody(xmlEngine(t, model.ModeEnforce, model.Limits{}), "application/xml", decl+`<order><id>1</id></order>`))
 			wantClean(t, postBody(xmlEngine(t, model.ModeEnforce, model.Limits{}), "application/xml", decl+`<a xmlns="urn:x">`+text+`</a>`))
 			d := postBody(xmlEngine(t, model.ModeMonitor, model.Limits{}), "application/xml", decl+`<a>`+text+` `+xmlSQL+`</a>`)
 			wantRule(t, d, "AEG-SQLI-001")
