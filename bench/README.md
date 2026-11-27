@@ -39,6 +39,20 @@ Settings are environment variables (`SOURCES=baseline make bench-waf` runs only 
 | unknown | the answer and the logs do not say what happened; in no rate |
 | not-sent | the client cannot send the case as given (the report gives the reasons); in no rate |
 
+**What was detected.** A detection need not mean that an attack was recognised. The report splits every detection, of attacks and of legitimate requests alike, by the rules that matched, under the headline rates and in the tables of totals, sources, categories, encoders and placements:
+
+| Part | Meaning |
+|---|---|
+| content rule | at least one rule that looks for an attack in what the request says (`AEG-SQLI-*`, `AEG-XSS-*`, `AEG-CMDI-*` and the other attack families) |
+| protocol rules only | only `AEG-PROTO-*` matched: the method, content type, body size, control characters, raw path or transfer encoding, an inspection limit or a body that cannot be parsed |
+| schema rules only | only `AEG-SCHEMA-*`: a declared field of the wrong type, or a field that is not declared |
+| scanner rules only | only `AEG-SCANNER-*`: a scanner's `User-Agent`, or a probe or backup path |
+| anything else | more than one of the last three, a block by a route rule alone, or a block without a rule |
+
+Route rules are left out of this split, except that a block by them alone is "anything else". Read the content rule figures beside the detection rate. With the pinned sets, most of the protocol-only detections are `AEG-PROTO-002`, the refusal of a body whose content type is not allowed: by default only JSON, form and multipart bodies are, so XML and text bodies are refused. **A deployment that allows more content types would lose those blocks.** In enforce mode the first blocking match ends the inspection, so a refused body was never read and the bench does not measure what the content rules would find in it. Once a type is allowed, the content rules read `text/*` bodies, and XML bodies under `allow_xml`; besides JSON (including `+json` types), form and multipart, a body of any other allowed type is read by none of them. The report counts the rules behind the protocol-only detections.
+
+**Encoders, placements and headers.** The report also counts results by source and encoder, and by source and placement (where the importer says the payload is). Aegolith does not decode base64, so a payload that a source sends in base64 is read as the encoded text; the report says what share of GoTestWAF's attack lines are sent that way. By default the values of `User-Agent` and `Referer` (SSRF results there are ignored) and of the cookies are scanned, and a scanner rule judges `User-Agent`; any other header's value is scanned only if the configuration lists it in `inspect_headers`, as the example policy does with `X-Api-Version`. Protocol rules check every header for CR, LF and NUL, and check `Content-Type` and `Transfer-Encoding`.
+
 **Held-out and development sets.** A case from any source but the project's own corpus (`baseline`), **the generated traffic included**, is *held out* if the first 8 bytes of the SHA-256 of any of its decoded payloads, read as a number, are below 30 modulo 100: a fixed 30%, unsalted. A case without a payload is assigned by the same test on its case ID. All others are the *development* set; cases only `baseline` provides are in neither. **Headline numbers use the held-out set.** This is a reporting discipline, not a secret: anyone can compute which cases are held out, and the case files, results and logs of a run name them. The rule is that detectors are not tuned on held-out cases and held-out cases are not looked at one by one; the report counts them and never lists them.
 
 **False positives.** Read them by source and category. The total depends on the mix of legitimate requests: in the generated set, punctuation-heavy prose and pasted code are 25% of the lines by choice, and text in other languages is 10%. Near-miss requests resemble attacks without being expected to be detected; they are counted apart and enter no detection or false positive rate.
@@ -51,9 +65,9 @@ The third-party sets are pinned by commit in [`sources.json`](sources.json): the
 
 **What "attack" means differs by source.**
 
-- **CRS:** a test that requires the rule set to log at least one rule ID. That includes rules of every paranoia level up to 4, because the importer does not filter by level, and protocol checks, such as a test that expects a request without an `Accept` header to be flagged (in release v4.31.0, 553 of the 5,054 imported lines, attack and near-miss together, are category `protocol`). CRS detection rates are therefore expected to be lower than a paranoia-level-1 view would give; the bench computes no such view. A test that only forbids rule IDs is near-miss.
+- **CRS:** a test that requires the rule set to log at least one rule ID. That includes rules of every paranoia level up to 4, because the importer does not filter by level, and protocol checks, such as a test that expects a request without an `Accept` header to be flagged (in release v4.31.0, 553 of the 5,054 imported lines, attack and near-miss together, are category `protocol`). A test that only forbids rule IDs is near-miss. A test file belongs to one rule and each imported test is one request, written to check what the rule set logs for it: the request need not be a working exploit, and some hold only a fragment of an attack, such as a bare function or class name.
 - **CRS payloads** are identified by a heuristic. In v4.31.0, 1,762 of the 5,054 lines have no identifiable payload and are split into held-out and development by case ID. Such a case has no stable set across source versions.
-- **GoTestWAF:** one case per payload, encoder and placeholder. A test set whose name holds `false` is legitimate; everything else is an attack.
+- **GoTestWAF:** one case per payload, encoder and placeholder. A test set whose name holds `false` is legitimate; everything else is an attack. Some of the encoders are base64, which the firewall does not decode.
 - **Conflicts:** requests whose sources, or lines of one source, disagree on what to expect are left out, and the report counts them.
 
 **How the requests differ from the tools' own.** The CRS importer reproduces what go-ftw v2.3.0, the runner the pinned tree uses, sends; it was read from that version's source. Headers are sent in canonical case and in the sender's order, `X-Request-Id` is added, and stages the sender cannot reproduce are skipped and counted by reason. The details are in the package comments of [`internal/sources/crs`](internal/sources/crs/crs.go) and [`internal/sources/gotestwaf`](internal/sources/gotestwaf/gotestwaf.go).
@@ -73,7 +87,7 @@ There is no public set of real legitimate traffic here: two candidates are liste
 ## Logs, results and privacy
 
 - Results, case files and the target's logs identify cases, **held-out ones included**: a request ID is a prefix and the case ID. Only the report keeps held-out cases to counts.
-- The access log records the escaped path, cut at 256 bytes, so a payload sent in a path is in it. Neither log holds a query string, a body or a header other than the request ID; the decision log holds rule IDs and, for a failed inspection, its error text.
+- The access log records the request ID, the method, the escaped path, cut at 256 bytes, and the time, so a payload sent in a path is in it. The decision log records the request ID, the action, whether the request was only monitored, the rule IDs, the template of the matched route, the firewall's decision latency and, for a failed inspection, its error text. Neither holds a query string, a body or a header other than the request ID.
 - One run per log file: `detect` joins by request ID, so the logs it reads must hold that run alone. A target empties its logs when it starts.
 - Go's `net/http` trims blanks at the edges of header values, and answers some malformed requests (400, 414, 417, 431, 501) before any handler runs. Those cases are *rejected* and say nothing about the firewall.
 

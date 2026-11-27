@@ -1,6 +1,7 @@
 package report
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"math"
@@ -51,8 +52,9 @@ func (r Report) Markdown() string {
 		environmentMarkdown(&b, r.Meta.Environment)
 	}
 	b.WriteString(explanation)
+	b.WriteString(matchedExplanation())
 
-	sourcesMarkdown(&b, r.Meta.Sources)
+	sourcesMarkdown(&b, r.Meta.Sources, r.Meta.Input)
 	if r.Meta.Input != nil {
 		r.Meta.Input.markdown(&b)
 	}
@@ -192,8 +194,10 @@ func (c Config) markdown(b *strings.Builder) {
 	fmt.Fprintf(b, "- Blocked rate: %s\n", described(attacks.Blocked, attacks.judged(), "attack"))
 	fmt.Fprintf(b, "- Detection rate (blocked or flagged): %s\n",
 		described(attacks.detected(), attacks.judged(), "attack"))
+	matchedMarkdown(b, attacks, "Detected", "attack")
 	fmt.Fprintf(b, "- False positive rate (blocked or flagged): %s\n",
 		described(legit.detected(), legit.judged(), "legitimate request"))
+	matchedMarkdown(b, legit, "Blocked or flagged", "legitimate request")
 	fmt.Fprintf(b, "- Attacks outside the rates: %s\n", outside(attacks))
 	fmt.Fprintf(b, "- Legitimate requests outside the rates: %s\n", outside(legit))
 	b.WriteString("\nThe false positive total depends on which legitimate requests the sources hold " +
@@ -215,12 +219,15 @@ func (c Config) markdown(b *strings.Builder) {
 	b.WriteString("\nA case with several sources is counted under each of them below.\n")
 	b.WriteString("\n### False positives by source and category\n\n")
 	b.WriteString("Legitimate requests blocked or flagged, of those judged. \"All splits\" includes " +
-		"baseline.\n\n")
+		"baseline. What matched them is counted in the tables by source below.\n\n")
 	c.rateTable(b, cases.Legit)
 	b.WriteString("\n### Near-miss requests blocked or flagged, by source and category\n\n")
 	b.WriteString("Near-misses are in no false positive rate and no detection rate.\n\n")
 	c.rateTable(b, cases.NearMiss)
 	b.WriteString("\n### By source\n\n")
+	b.WriteString("The last six columns split what was blocked or flagged by what matched: the content " +
+		"rule rate is the share of judged cases with a content rule, and the five counts after it add up " +
+		"to the blocked and flagged cases.\n\n")
 	countTable(b, []string{"Source", "Split", "Expected"}, c.grouped(false, func(r Row) []string {
 		return []string{r.Source, r.Split, string(r.Expected)}
 	}))
@@ -228,6 +235,18 @@ func (c Config) markdown(b *strings.Builder) {
 	countTable(b, []string{"Source", "Category", "Split", "Expected"}, c.grouped(false, func(r Row) []string {
 		return []string{r.Source, r.Category, r.Split, string(r.Expected)}
 	}))
+	b.WriteString("\n### By source and encoder\n\n")
+	b.WriteString("The sources that name an encoder for their payloads. A request that a source gives under " +
+		"several encoders is counted under each, so these rows can add up to more than the source's cases.\n\n")
+	variantTable(b, "Encoder", c.Encoders)
+	b.WriteString("\n### By source and placement\n\n")
+	b.WriteString(placementNote)
+	variantTable(b, "Placement", c.Placements)
+	b.WriteString("\n### Protocol-only detections by rule\n\n")
+	b.WriteString("The cases counted as protocol rules only, under each protocol rule that matched. \"All " +
+		"splits\" includes baseline. AEG-PROTO-002 is the refusal of a body whose content type the " +
+		"configuration does not allow.\n\n")
+	protocolTable(b, c.ProtocolOnlyRules)
 
 	b.WriteString("\n### Distinct attack payloads (all splits)\n\n")
 	if c.Payloads == 0 {
@@ -242,6 +261,63 @@ func (c Config) markdown(b *strings.Builder) {
 	listTable(b, c.Missed)
 	b.WriteString("\n### Flagged legitimate requests (development and baseline)\n\n")
 	listTable(b, c.FlaggedLegit)
+}
+
+// placementNote says what a placement is and which headers are read.
+const placementNote = `Where the source's importer says the payload of a case is; "(none named)" is a
+case whose payload it did not place. A request that a source places in several
+ways is counted under each.
+
+Which headers are read: by default the values of User-Agent and Referer are
+scanned for attacks (SSRF results in Referer are ignored), as are the values of
+the cookies in the Cookie header, and a scanner rule judges User-Agent. The value
+of any other header is scanned only if the configuration lists it in
+inspect\_headers (the repository's example policy lists X-Api-Version). Protocol
+rules check every header for CR, LF and NUL, and check Content-Type and
+Transfer-Encoding.
+
+`
+
+// matchedMarkdown writes, under a headline rate, what matched the detections.
+func matchedMarkdown(b *strings.Builder, c Counts, verb, what string) {
+	m := c.Matched
+	fmt.Fprintf(b, "  - What matched in those %d: a content rule in %d, protocol rules only in %d, "+
+		"schema rules only in %d, scanner rules only in %d, anything else in %d\n",
+		c.detected(), m.Content, m.ProtocolOnly, m.SchemaOnly, m.ScannerOnly, m.Other)
+	fmt.Fprintf(b, "  - %s with a content rule: %s\n", verb, described(m.Content, c.judged(), what))
+}
+
+func variantTable(b *strings.Builder, name string, vs []Variant) {
+	var groups []group
+	for _, v := range vs {
+		value := cmp.Or(v.Value, "(none named)")
+		groups = append(groups, group{[]string{v.Source, value, v.Split, string(v.Expected)}, v.Counts})
+	}
+	countTable(b, []string{"Source", name, "Split", "Expected"}, groups)
+}
+
+// protocolTable writes the rules behind the protocol-only detections, held out,
+// in development and over all splits.
+func protocolTable(b *strings.Builder, rs []RuleCount) {
+	if len(rs) == 0 {
+		b.WriteString("None.\n")
+		return
+	}
+	header(b, "Rule", "Expected", "Held-out", "Development", "All splits")
+	// The counts are sorted by expectation, then rule.
+	for start := 0; start < len(rs); {
+		first, bySplit, all, end := rs[start], map[string]int{}, 0, start
+		for ; end < len(rs) && rs[end].Rule == first.Rule && rs[end].Expected == first.Expected; end++ {
+			bySplit[rs[end].Split] += rs[end].Cases
+			all += rs[end].Cases
+		}
+		cells := []string{first.Rule, string(first.Expected)}
+		for _, split := range splits {
+			cells = append(cells, strconv.Itoa(bySplit[split]))
+		}
+		row(b, append(cells, strconv.Itoa(all))...)
+		start = end
+	}
 }
 
 // splits are the columns of a table of rates, before the one over all splits.
@@ -356,14 +432,21 @@ func countTable(b *strings.Builder, labels []string, groups []group) {
 		return
 	}
 	header(b, append(slices.Clone(labels), "Sent", "Blocked", "Flagged", "Route only", "Passed",
-		"Rejected", "Unknown", "Not sent", "Blocked rate", "Blocked or flagged rate")...)
+		"Rejected", "Unknown", "Not sent", "Blocked rate", "Blocked or flagged rate", "Content rule rate",
+		"Content rule", "Protocol only", "Schema only", "Scanner only", "Other")...)
 	for _, g := range groups {
 		n := g.counts
 		cells := slices.Clone(g.labels)
 		for _, v := range []int{n.Sent, n.Blocked, n.Flagged, n.RouteOnly, n.Passed, n.Rejected, n.Unknown, n.NotSent} {
 			cells = append(cells, fmt.Sprint(v))
 		}
-		row(b, append(cells, percent(n.Blocked, n.judged()), percent(n.detected(), n.judged()))...)
+		cells = append(cells, percent(n.Blocked, n.judged()), percent(n.detected(), n.judged()),
+			percent(n.Matched.Content, n.judged()))
+		m := n.Matched
+		for _, v := range []int{m.Content, m.ProtocolOnly, m.SchemaOnly, m.ScannerOnly, m.Other} {
+			cells = append(cells, fmt.Sprint(v))
+		}
+		row(b, cells...)
 	}
 }
 

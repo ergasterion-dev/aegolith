@@ -105,7 +105,7 @@ func TestRatesExcludeRejectedAndUnknown(t *testing.T) {
 	cfg := BuildConfig("none", cs, rs)
 
 	got := total(cfg, cases.SplitHeldOut, cases.Attack)
-	want := Counts{Sent: 16, Blocked: 6, Passed: 2, Rejected: 5, Unknown: 3, NotSent: 1}
+	want := Counts{Sent: 16, Blocked: 6, Passed: 2, Rejected: 5, Unknown: 3, NotSent: 1, Matched: Matched{Other: 6}}
 	if got != want {
 		t.Errorf("counts = %+v, want %+v", got, want)
 	}
@@ -158,7 +158,7 @@ func TestCaseWithoutResultIsNotSent(t *testing.T) {
 		{CaseID: "no-such-case", Outcome: run.Blocked},
 	}
 	got := total(BuildConfig("none", cs, rs), cases.SplitDev, cases.Attack)
-	want := Counts{Sent: 2, Blocked: 1, Unknown: 1, NotSent: 1}
+	want := Counts{Sent: 2, Blocked: 1, Unknown: 1, NotSent: 1, Matched: Matched{Other: 1}}
 	if got != want {
 		t.Errorf("counts = %+v, want %+v", got, want)
 	}
@@ -283,7 +283,7 @@ func TestNearMissNotInFalsePositiveRate(t *testing.T) {
 	if got := total(cfg, cases.SplitHeldOut, cases.Legit); got != (Counts{Sent: 4, Passed: 4}) {
 		t.Errorf("legit counts = %+v, want four passed", got)
 	}
-	if got := total(cfg, cases.SplitHeldOut, cases.NearMiss); got != (Counts{Sent: 3, Blocked: 3}) {
+	if got := total(cfg, cases.SplitHeldOut, cases.NearMiss); got != (Counts{Sent: 3, Blocked: 3, Matched: Matched{Other: 3}}) {
 		t.Errorf("near-miss counts = %+v, want three blocked", got)
 	}
 	if len(cfg.FlaggedLegit) != 0 || len(cfg.Missed) != 0 {
@@ -442,7 +442,7 @@ func TestPercentagesNeverRoundToAllOrNothing(t *testing.T) {
 	report := func(detected, attacks, flagged, legit int) Report {
 		row := func(source string, expected cases.Expected, blocked, all int) Row {
 			return Row{Source: source, Split: cases.SplitHeldOut, Expected: expected,
-				Counts: Counts{Sent: all, Blocked: blocked, Passed: all - blocked}}
+				Counts: Counts{Sent: all, Blocked: blocked, Passed: all - blocked, Matched: Matched{Content: blocked}}}
 		}
 		return Report{Configs: []Config{{
 			Name: "typed",
@@ -465,10 +465,10 @@ func TestPercentagesNeverRoundToAllOrNothing(t *testing.T) {
 		"- Blocked or flagged in at least one placement: >99.9% (2499 of 2500)",
 		"- Blocked or flagged in every judged placement: <0.1% (1 of 2500)",
 		// The totals and both source tables; a cell is escaped.
-		"| held-out | attack | 2500 | 2499 | 0 | 0 | 1 | 0 | 0 | 0 | &gt;99.9% | &gt;99.9% |",
-		"| held-out | legit | 3000 | 1 | 0 | 0 | 2999 | 0 | 0 | 0 | &lt;0.1% | &lt;0.1% |",
-		"| third | held-out | attack | 2500 | 2499 | 0 | 0 | 1 | 0 | 0 | 0 | &gt;99.9% | &gt;99.9% |",
-		"| third |  | held-out | legit | 3000 | 1 | 0 | 0 | 2999 | 0 | 0 | 0 | &lt;0.1% | &lt;0.1% |")
+		"| held-out | attack | 2500 | 2499 | 0 | 0 | 1 | 0 | 0 | 0 | &gt;99.9% | &gt;99.9% | &gt;99.9% | 2499 | 0 | 0 | 0 | 0 |",
+		"| held-out | legit | 3000 | 1 | 0 | 0 | 2999 | 0 | 0 | 0 | &lt;0.1% | &lt;0.1% | &lt;0.1% | 1 | 0 | 0 | 0 | 0 |",
+		"| third | held-out | attack | 2500 | 2499 | 0 | 0 | 1 | 0 | 0 | 0 | &gt;99.9% | &gt;99.9% | &gt;99.9% | 2499 | 0 | 0 | 0 | 0 |",
+		"| third |  | held-out | legit | 3000 | 1 | 0 | 0 | 2999 | 0 | 0 | 0 | &lt;0.1% | &lt;0.1% | &lt;0.1% | 1 | 0 | 0 | 0 | 0 |")
 	for _, wrong := range []string{"100.0%", " 0.0%"} {
 		if strings.Contains(md, wrong) {
 			t.Errorf("%q is shown for a rate that is not:\n%s", wrong, md)
@@ -478,8 +478,8 @@ func TestPercentagesNeverRoundToAllOrNothing(t *testing.T) {
 	contains(t, exact.Markdown(),
 		"- Blocked rate: 100.0% (2500 of 2500 attacks)",
 		"- False positive rate (blocked or flagged): 0.0% (0 of 3000 legitimate requests)",
-		"| held-out | attack | 2500 | 2500 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |",
-		"| held-out | legit | 3000 | 0 | 0 | 0 | 3000 | 0 | 0 | 0 | 0.0% | 0.0% |")
+		"| held-out | attack | 2500 | 2500 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 2500 | 0 | 0 | 0 | 0 |",
+		"| held-out | legit | 3000 | 0 | 0 | 0 | 3000 | 0 | 0 | 0 | 0.0% | 0.0% | 0.0% | 0 | 0 | 0 | 0 | 0 |")
 
 	contains(t, Diff(exact, almost),
 		"| Detection rate | 100.0% (2500 of 2500) | &gt;99.9% (2499 of 2500) | -&lt;0.1 points |",

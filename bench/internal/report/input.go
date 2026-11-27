@@ -32,6 +32,8 @@ type SourceInput struct {
 	// NoPayload counts the lines that name no payload, Conflicting those left
 	// out as conflicting.
 	NoPayload, Conflicting int
+	// Base64Attack counts the attack lines whose encoder is a base64 one.
+	Base64Attack int `json:",omitempty"`
 	// Skipped is the number of source cases the importer left out, and nil
 	// when that was not recorded.
 	Skipped     *int          `json:",omitempty"`
@@ -43,6 +45,9 @@ type ReasonCount struct {
 	Reason string
 	Count  int
 }
+
+// base64Encoders are the encoder names that write a payload in base64.
+var base64Encoders = []string{"Base64", "Base64Flat"}
 
 // Conflict counts the conflicting requests whose lines come from one set of
 // sources.
@@ -70,6 +75,9 @@ func CountInput(cs []cases.Case) Input {
 			switch c.Expected {
 			case cases.Attack:
 				s.Attack++
+				if slices.Contains(base64Encoders, c.Encoder) {
+					s.Base64Attack++
+				}
 			case cases.Legit:
 				s.Legit++
 			case cases.NearMiss:

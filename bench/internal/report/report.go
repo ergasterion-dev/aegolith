@@ -38,7 +38,11 @@ type SourceInfo struct {
 
 // Counts is the number of cases per outcome. Sent counts every case but those
 // that were not sent.
-type Counts struct{ Sent, Blocked, Flagged, RouteOnly, Passed, Rejected, Unknown, NotSent int }
+type Counts struct {
+	Sent, Blocked, Flagged, RouteOnly, Passed, Rejected, Unknown, NotSent int
+	// Matched splits the blocked and flagged cases by what matched them.
+	Matched Matched
+}
 
 // TotalSource is the Source of the rows that count each case once, whatever
 // its sources and category. No case has an empty source.
@@ -69,6 +73,13 @@ type Config struct {
 	// NotSentReasons counts, over all splits and expectations, why cases were
 	// not sent.
 	NotSentReasons []ReasonCount `json:",omitempty"`
+	// Encoders and Placements count the cases of the sources that name an
+	// encoder or a place of the payload, by that name. A request that a source
+	// writes in several ways is counted under each.
+	Encoders, Placements []Variant `json:",omitempty"`
+	// ProtocolOnlyRules counts the rules behind the detections by protocol
+	// rules only.
+	ProtocolOnlyRules []RuleCount `json:",omitempty"`
 }
 
 // Listed names one case. SourceCaseID is empty when each name the case has is
@@ -108,6 +119,9 @@ func BuildConfig(name string, cs []cases.Case, rs []run.Result) Config {
 	rows := map[rowKey]Counts{}
 	payloads := map[string]placements{}
 	notSent := map[string]int{}
+	encoders := newVariants(cs, func(c cases.Case) string { return c.Encoder })
+	places := newVariants(cs, func(c cases.Case) string { return c.Placement })
+	protocolOnly := map[ruleKey]int{}
 	for _, c := range merged {
 		r, ok := results[c.ID]
 		if !ok {
@@ -117,7 +131,16 @@ func BuildConfig(name string, cs []cases.Case, rs []run.Result) Config {
 			notSent[cmp.Or(r.Reason, notRecorded)]++
 		}
 		split := cases.Split(c)
-		one := countOf(r.Outcome)
+		one := countOf(r.Outcome, r.Rules)
+		encoders.add(c, split, one)
+		places.add(c, split, one)
+		if one.Matched.ProtocolOnly > 0 {
+			for _, id := range r.Rules {
+				if family(id) == familyProtocol {
+					protocolOnly[ruleKey{id, split, c.Expected}]++
+				}
+			}
+		}
 		count := func(k rowKey) {
 			sum := rows[k]
 			sum.add(one)
@@ -156,6 +179,8 @@ func BuildConfig(name string, cs []cases.Case, rs []run.Result) Config {
 		})
 	}
 	out.NotSentReasons = reasonCounts(notSent)
+	out.Encoders, out.Placements = encoders.rows(), places.rows()
+	out.ProtocolOnlyRules = ruleCounts(protocolOnly)
 	out.Payloads = len(payloads)
 	for _, seen := range payloads {
 		if seen.any {
@@ -230,9 +255,9 @@ func compareListed(a, b Listed) int {
 	)
 }
 
-// countOf is the count of one case. An outcome this package does not know is
-// unknown.
-func countOf(o run.Outcome) Counts {
+// countOf is the count of one case with these matched rules. An outcome this
+// package does not know is unknown.
+func countOf(o run.Outcome, rules []string) Counts {
 	c := Counts{Sent: 1}
 	switch o {
 	case run.Blocked:
@@ -250,6 +275,9 @@ func countOf(o run.Outcome) Counts {
 	default:
 		c.Unknown = 1
 	}
+	if c.detected() > 0 {
+		c.Matched = matchedOf(rules)
+	}
 	return c
 }
 
@@ -262,6 +290,7 @@ func (c *Counts) add(o Counts) {
 	c.Rejected += o.Rejected
 	c.Unknown += o.Unknown
 	c.NotSent += o.NotSent
+	c.Matched.add(o.Matched)
 }
 
 // detected is the number of cases blocked or flagged.

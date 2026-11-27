@@ -119,8 +119,14 @@ func TestEnvironmentAndSourceNotes(t *testing.T) {
 	s := section(t, md, "## Sources")
 	contains(t, unwrapped(s), "| Source | Repository | Commit | Licence | Included | Note |",
 		"| crs | host/org/crs | c0ffee | Apache-2.0 | yes | pinned |",
-		"paranoia level", "the importer does not filter by level", "category protocol",
-		"split by its case ID", "heuristic", "The CRS rates therefore ask for more")
+		"a test file belongs to one rule", "paranoia level", "the importer does not filter by level",
+		"category protocol", "need not be a working exploit", "only a fragment",
+		"split by its case ID", "heuristic")
+	for _, unsupported := range []string{"ask for more", "paranoia-level-1", "expected to be lower"} {
+		if strings.Contains(unwrapped(s), unsupported) {
+			t.Errorf("the CRS note still implies what the data does not show (%q):\n%s", unsupported, s)
+		}
+	}
 	if strings.Contains(s, "false-positive") {
 		t.Errorf("a source that is not included is described:\n%s", s)
 	}
