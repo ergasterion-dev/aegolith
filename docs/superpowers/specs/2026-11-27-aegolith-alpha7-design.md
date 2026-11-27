@@ -52,13 +52,13 @@ By media type, in this order:
 
 1. JSON (`application/json`, `+json`): walked, as before.
 2. `application/x-www-form-urlencoded`, `multipart/*`: parsed, as before.
-3. Binary: `image/*`, `audio/*`, `video/*`, `font/*`, `model/*` (not `+xml`), `application/grpc*`, the OpenXML and OpenDocument prefixes, the suffixes `+zip`, `+gzip`, `+cbor` and `+der`, and a fixed list of exact types (in the threat model): not inspected. `image/svg+xml` is in this group.
-4. XML (`application/xml`, `text/xml`, `+xml`): scanned as text with the XXE rule, whether the type was allowed by `allow_xml` or by `allowed_content_types`.
+3. Binary: `image/*`, `audio/*`, `video/*`, `font/*`, `model/*` (not `+xml`), `application/grpc*`, the OpenXML and OpenDocument prefixes (under the OpenDocument prefix, a type ending `+xml` or `-flat-xml` is XML), the suffixes `+zip`, `+gzip`, `+cbor` and `+der`, and a fixed list of exact types (in the threat model): not inspected. `image/svg+xml` is in this group.
+4. XML (`application/xml`, `text/xml`, `+xml`, OpenDocument `-flat-xml`): read by value, with the XXE rule on the raw body, whether the type was allowed by `allow_xml` or by `allowed_content_types`.
 5. Everything else, including a missing content type: scanned as text.
 
-In the XML group, a leading XML declaration of the standard shape (version, then optionally encoding and standalone, nothing else) is not read by the text detectors, because it matches the XSS rule on its own. The XXE rule is unaffected.
+In the XML group, the XXE rule reads the raw body in windows. The body is tokenized with `encoding/xml` (strict); a declared ISO-8859-1, Latin-1, Windows-1252 or US-ASCII charset is converted byte by byte, any other is read unchanged. Every text detector reads, on field `body`: character data (adjacent runs, CDATA included and runs separated only by comments or processing instructions, joined into one value), attribute values, and the content of a processing instruction other than the leading declaration (target `php` in any case rebuilt as `<?php ...?>`). An element whose local name is `script` (any ASCII case), or that is in the XHTML or SVG namespace, is also read as its rebuilt start tag, which carries its attribute values. Element and attribute names, namespace declarations, comments, directives and the leading declaration (which must have the XML shape: version, then optionally encoding, then optionally standalone) are not read. On a tokenizer error `AEG-PROTO-020`, on nesting deeper than `MaxDepth` `AEG-PROTO-010`, and at the unexpected end of a body cut at the inspection limit nothing; in all three cases the raw body is then scanned in windows. More values than `MaxFields` report `AEG-PROTO-010` once and are still read.
 
-Known false positive until XML is read by value: markup such as a default namespace declaration matches the XSS rule.
+Known false positives: an element named `script`, an `svg` element in the SVG namespace and XHTML elements libinjection holds dangerous (`style`, `link`, `meta`) match the XSS rule through the rebuilt tag; an XML body that does not parse is scanned raw, where ordinary markup can match it. Accepted misses: attacks in comments, element or attribute names and namespace declarations, and text split across child elements.
 
 In enforce mode a refused content type still blocks before the body is read, so the default configuration behaves as before.
 
@@ -83,7 +83,6 @@ Names of unexported helpers, test layout, and wording of documentation.
 
 ## Open follow-ups (not in the first plan)
 
-- Before alpha.7 is tagged: read XML bodies by value (text and attribute values), so element names and namespace declarations are not judged as markup.
 - Attack-rule improvements: planned after the missed development cases are analysed.
 - A `}` inside a string closing a `#{` read.
 - Route-priority desync, and the latency regression against alpha.5 (needs a quiet machine).

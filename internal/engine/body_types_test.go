@@ -179,24 +179,10 @@ func TestXMLDeclarationIsNotReadAsMarkup(t *testing.T) {
 	}
 }
 
-// A value longer than MaxValueLen is read in windows, so the declaration can
-// span several of them.
-func TestXMLDeclarationAcrossWindows(t *testing.T) {
-	lim := model.DefaultLimits()
-	lim.MaxValueLen = 32
-	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, Limits: lim, AllowXML: true})
-	const decl = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
-	d := postBody(e, "application/xml", decl+`<order><sku>A-1</sku></order>`)
-	if len(d.Matches) != 1 || d.Matches[0].RuleID != "AEG-PROTO-011" {
-		t.Fatalf("want AEG-PROTO-011 alone: %+v", d)
-	}
-	d = postBody(e, "application/xml", decl+`<script>x()</script>`)
-	if !hasMatch(d, "AEG-XSS-001", "body") {
-		t.Fatalf("want AEG-XSS-001 after the declaration: %+v", d)
-	}
-}
-
-func TestOnlyAWellFormedLeadingXMLDeclarationIsHidden(t *testing.T) {
+// Attacks before, inside and after an XML declaration are still seen: a
+// malformed declaration sends the body to the raw scan, a later
+// declaration-like instruction has its content read.
+func TestXMLAttacksAroundTheDeclaration(t *testing.T) {
 	const (
 		script = `<script>alert(1)</script>`
 		sql    = `1' UNION SELECT password FROM users--`
@@ -207,10 +193,8 @@ func TestOnlyAWellFormedLeadingXMLDeclarationIsHidden(t *testing.T) {
 		{"extra attribute with markup", `<?xml version="1.0" note="` + script + `"?><a/>`, "AEG-XSS-001"},
 		{"unterminated, then script", `<?xml version="1.0" ` + script, "AEG-XSS-001"},
 		{"unterminated, then SQL", `<?xml version="1.0"` + sqlInMarkup, "AEG-SQLI-001"},
-		{"second declaration", xmlDecl + xmlDecl + `<a/>`, "AEG-XSS-001"},
 		{"second declaration, then script", xmlDecl + `<a/>` + xmlDecl + script, "AEG-XSS-001"},
 		{"second declaration filled with script", xmlDecl + `<a><?xml x="` + script + `"?></a>`, "AEG-XSS-001"},
-		{"declaration after an element", `<a/>` + xmlDecl, "AEG-XSS-001"},
 		{"script after the declaration", xmlDecl + script, "AEG-XSS-001"},
 		{"SQL in markup after the declaration", xmlDecl + sqlInMarkup, "AEG-SQLI-001"},
 		{"bare SQL after the declaration", xmlDecl + sql, "AEG-SQLI-001"},
@@ -230,7 +214,8 @@ func TestOnlyAWellFormedLeadingXMLDeclarationIsHidden(t *testing.T) {
 	}
 }
 
-// Only the XML branch hides the declaration.
+// Outside an XML body the declaration is read as text, and libinjection
+// takes it for markup (a documented false positive).
 func TestXMLDeclarationIsReadOutsideXMLBodies(t *testing.T) {
 	for _, ct := range []string{"text/plain", "application/x-made-up"} {
 		d := postBody(allowing(t, model.ModeEnforce, ct), ct, xmlDecl+`<a/>`)
@@ -238,83 +223,4 @@ func TestXMLDeclarationIsReadOutsideXMLBodies(t *testing.T) {
 			t.Fatalf("%s: want block with AEG-XSS-001: %+v", ct, d)
 		}
 	}
-}
-
-func TestXMLDeclarationLen(t *testing.T) {
-	for _, decl := range []string{
-		xmlDecl,
-		`<?xml version='1.9'?>`,
-		" \n" + xmlDecl,
-		`<?xml version="1.0" encoding="x.y_z-1" standalone='yes' ?>`,
-		`<?xml version="1.0" standalone="no"?>`,
-	} {
-		if got := xmlDeclarationLen(decl + `<a/>?>`); got != len(decl) {
-			t.Errorf("%q: length %d, want %d", decl, got, len(decl))
-		}
-	}
-	for _, v := range []string{
-		"",
-		`<a/>`,
-		`<?xml?>`,
-		`<?xml ?>`,
-		`<?xmlversion="1.0"?>`,
-		`<?XML version="1.0"?>`,
-		`<?xml VERSION="1.0"?>`,
-		`< ?xml version="1.0"?>`,
-		`<?xml-stylesheet version="1.0"?>`,
-		`<?xml version="2.0"?>`,
-		`<?xml version="1."?>`,
-		`<?xml version="1.00"?>`,
-		`<?xml version=1.0?>`,
-		`<?xml version = "1.0"?>`,
-		`<?xml version="1.0'?>`,
-		`<?xml version="1.0">`,
-		`<?xml version="1.0"? >`,
-		`<?xml version="1.0"`,
-		`<?xml encoding="UTF-8"?>`,
-		`<?xml encoding="UTF-8" version="1.0"?>`,
-		`<?xml version="1.0"encoding="UTF-8"?>`,
-		`<?xml version="1.0" standalone="yes" encoding="UTF-8"?>`,
-		`<?xml version="1.0" encoding="UTF-8" encoding="UTF-8"?>`,
-		`<?xml version="1.0" encoding=""?>`,
-		`<?xml version="1.0" encoding="8859"?>`,
-		`<?xml version="1.0" encoding="UTF 8"?>`,
-		`<?xml version="1.0" encoding="UTF-8'?>`,
-		`<?xml version="1.0" encoding="a` + strings.Repeat("b", 40) + `"?>`,
-		`<?xml version="1.0" standalone="maybe"?>`,
-		`<?xml version="1.0" standalone="YES"?>`,
-		`<?xml version="1.0" other="x"?>`,
-		`<?xml version="1.0" <?>`,
-		"<?xml\fversion=\"1.0\"?>",
-		"\u00a0" + xmlDecl,
-		" \ufeff" + xmlDecl,
-		"\ufeff\ufeff" + xmlDecl,
-		`x` + xmlDecl,
-		`<a/>` + xmlDecl,
-	} {
-		if got := xmlDeclarationLen(v); got != 0 {
-			t.Errorf("%q: length %d, want 0", v, got)
-		}
-	}
-}
-
-// Whatever the input, the hidden prefix is one declaration made of harmless
-// bytes: a single "<" that opens "<?xml" and a single ">" that ends it.
-func FuzzXMLDeclarationLen(f *testing.F) {
-	f.Add(xmlDecl + `<a/>`)
-	f.Add("\ufeff <?xml version='1.1' encoding='UTF-8' standalone='yes' ?><a/>")
-	f.Add(`<?xml version="1.0" note="<b>"?>`)
-	f.Fuzz(func(t *testing.T, v string) {
-		n := xmlDeclarationLen(v)
-		if n == 0 {
-			return
-		}
-		hidden := v[:n]
-		rest := strings.TrimLeft(strings.TrimPrefix(hidden, "\ufeff"), " \t\n\v\f\r")
-		if !strings.HasPrefix(rest, "<?xml") || !strings.HasSuffix(hidden, "?>") ||
-			strings.Count(hidden, "<") != 1 || strings.Count(hidden, ">") != 1 ||
-			strings.ContainsAny(hidden, "();&|$`\\/:{}[]%#!*,+") {
-			t.Fatalf("hidden prefix %q", hidden)
-		}
-	})
 }

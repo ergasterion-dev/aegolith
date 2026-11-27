@@ -4,7 +4,6 @@ import (
 	"errors"
 	"maps"
 	"mime"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -240,7 +239,7 @@ func (s *state) decoded(loc model.Location, field, v string, decode func(string)
 			s.hit(h, loc, field, text)
 		}
 	}
-	s.scanWindowsWith(detect.ScanText, loc, field, text, 0, nil, "")
+	s.scanWindowsWith(detect.ScanText, loc, field, text, nil, "")
 }
 
 // value inspects one query, form or JSON value. On a matched route whose
@@ -345,7 +344,8 @@ func mediaType(ct string) string {
 // binaryMediaType reports whether mt (lower-case, no parameters) names
 // content that is not read as text, so its body is not inspected. checkBody
 // walks JSON (a "+json" suffix included) before it asks. A "model/" type with
-// the "+xml" suffix is XML, not binary.
+// the "+xml" suffix, and an OpenDocument type ending in "+xml" or
+// "-flat-xml", is XML, not binary.
 func binaryMediaType(mt string) bool {
 	switch mt {
 	case "application/octet-stream", "application/pdf", "application/zip",
@@ -366,10 +366,14 @@ func binaryMediaType(mt string) bool {
 		"application/vnd.debian.binary-package", "application/x-iso9660-image":
 		return true
 	}
+	// The OpenDocument prefix names zipped packages, except its flat XML
+	// forms ("-flat-xml") and any "+xml" type under it, which are XML.
+	if strings.HasPrefix(mt, "application/vnd.oasis.opendocument.") {
+		return !xmlMediaType(mt)
+	}
 	for _, prefix := range [...]string{
 		"image/", "audio/", "video/", "font/", "application/grpc",
 		"application/vnd.openxmlformats-officedocument.",
-		"application/vnd.oasis.opendocument.",
 	} {
 		if strings.HasPrefix(mt, prefix) {
 			return true
@@ -383,29 +387,11 @@ func binaryMediaType(mt string) bool {
 	return strings.HasPrefix(mt, "model/") && !xmlMediaType(mt)
 }
 
-// xmlMediaType reports whether mt (lower-case, no parameters) is XML.
+// xmlMediaType reports whether mt (lower-case, no parameters) is XML: the
+// OpenDocument flat XML types end in "-flat-xml" rather than "+xml".
 func xmlMediaType(mt string) bool {
-	return mt == "application/xml" || mt == "text/xml" || strings.HasSuffix(mt, "+xml")
-}
-
-// xmlDeclaration matches an XML declaration at the very start of a body,
-// where only a UTF-8 byte order mark and ASCII whitespace may precede it:
-// version "1.<digit>", then optionally encoding, then optionally
-// standalone, each quoted, and nothing else.
-var xmlDeclaration = regexp.MustCompile(`\A\x{FEFF}?[\t\n\v\f\r ]*<\?xml` +
-	`[\t\n\r ]+version=(?:"1\.[0-9]"|'1\.[0-9]')` +
-	`(?:[\t\n\r ]+encoding=(?:"[A-Za-z][A-Za-z0-9._-]{0,39}"|'[A-Za-z][A-Za-z0-9._-]{0,39}'))?` +
-	`(?:[\t\n\r ]+standalone=(?:"(?:yes|no)"|'(?:yes|no)'))?` +
-	`[\t\n\r ]*\?>`)
-
-// xmlDeclarationLen returns the length of the XML declaration body starts
-// with, what precedes it included, or 0 without one that xmlDeclaration
-// matches.
-func xmlDeclarationLen(body string) int {
-	if loc := xmlDeclaration.FindStringIndex(body); loc != nil {
-		return loc[1]
-	}
-	return 0
+	return mt == "application/xml" || mt == "text/xml" || strings.HasSuffix(mt, "+xml") ||
+		(strings.HasPrefix(mt, "application/vnd.oasis.opendocument.") && strings.HasSuffix(mt, "-flat-xml"))
 }
 
 // checkBody inspects the body according to its media type. Protocol
@@ -414,10 +400,9 @@ func xmlDeclarationLen(body string) int {
 // monitor, up to bodyInspectLimit (2 x MaxBodyBytes) of it is still inspected
 // so an attack placed after padding is seen. JSON, urlencoded form and
 // multipart bodies are parsed; binary types (binaryMediaType, which is asked
-// before XML, so image/svg+xml is binary) are not inspected; XML is scanned
-// as text with the XXE rule, the text detectors not seeing a leading XML
-// declaration (xmlDeclaration), which libinjection reads as markup; every
-// other body, one without a content type included, is scanned as text.
+// before XML, so image/svg+xml is binary) are not inspected; XML is read by
+// value (checkXML); every other body, one without a content type included,
+// is scanned as text.
 // Whether the type was allowed is protocol's decision (AEG-PROTO-002) and
 // does not change how the body is inspected.
 func (s *state) checkBody() {
@@ -439,8 +424,7 @@ func (s *state) checkBody() {
 	case binaryMediaType(mt):
 		return
 	case xmlMediaType(mt):
-		text := string(body)
-		s.scanWindowsAfter(model.LocBody, "body", text, xmlDeclarationLen(text), detect.XXE, "")
+		s.checkXML(body, s.bodyCut(body))
 	default:
 		s.scan(model.LocBody, "body", string(body))
 	}

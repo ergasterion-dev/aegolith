@@ -192,10 +192,13 @@ func (s *state) capped(v string) string {
 //     byte into U+FFFD, 1 -> 3 bytes; escapes only shrink), and the
 //     overlapping windows double that: 6x. The windowed raw rescan after
 //     malformed JSON or a depth overflow adds 2x: 8x. A JSON key is
-//     scanned once (scanKey): at most 3x. Form, multipart, XML and text
-//     values are not expanded: at most 2x, plus 1x for a form pair whose
-//     key ends with the quote its value starts with (the whole pair is
-//     checked again): at most 3x. A base64 or base64url field is charged
+//     scanned once (scanKey): at most 3x. An XML body is charged at most
+//     8x too: 2x for the XXE rule's raw pass, 4x for its values (windows,
+//     and a declared Latin-1 byte becoming two UTF-8 bytes; see checkXML)
+//     and 2x for the raw rescan after a parse error. Form, multipart and
+//     text values are not expanded: at most 2x, plus 1x for a form pair
+//     whose key ends with the quote its value starts with (the whole pair
+//     is checked again): at most 3x. A base64 or base64url field is charged
 //     for its decoded value only, at most 3/4 of the encoded one: at most
 //     1.5x;
 //   - a byte of any other input (path, query, cookies, scanned headers) is
@@ -233,25 +236,18 @@ func (s *state) scan(loc model.Location, field, v string) {
 // request (a documented gap: it stays a monitor match). Hits whose
 // category is skip are dropped.
 func (s *state) scanWindows(loc model.Location, field, v string, extra func(string) (detect.Hit, bool), skip model.Category) {
-	s.scanWindowsAfter(loc, field, v, 0, extra, skip)
-}
-
-// scanWindowsAfter is scanWindows with the first hidden bytes of v kept from
-// the text detectors. Windows, charges and what extra reads are those of the
-// whole value.
-func (s *state) scanWindowsAfter(loc model.Location, field, v string, hidden int, extra func(string) (detect.Hit, bool), skip model.Category) {
 	// A query value was percent-decoded from the request line, which cannot
 	// hold a raw line break: line breaks in it were sent encoded.
 	scanText := detect.ScanText
 	if loc == model.LocQuery {
 		scanText = detect.ScanQueryText
 	}
-	s.scanWindowsWith(scanText, loc, field, v, hidden, extra, skip)
+	s.scanWindowsWith(scanText, loc, field, v, extra, skip)
 }
 
-// scanWindowsWith is scanWindowsAfter with the text detectors named by the
+// scanWindowsWith is scanWindows with the text detectors named by the
 // caller instead of chosen by loc.
-func (s *state) scanWindowsWith(scanText func(string) []detect.Hit, loc model.Location, field, v string, hidden int, extra func(string) (detect.Hit, bool), skip model.Category) {
+func (s *state) scanWindowsWith(scanText func(string) []detect.Hit, loc model.Location, field, v string, extra func(string) (detect.Hit, bool), skip model.Category) {
 	if s.stop || s.exhausted || v == "" {
 		return
 	}
@@ -274,7 +270,7 @@ func (s *state) scanWindowsWith(scanText func(string) []detect.Hit, loc model.Lo
 				s.hit(h, loc, field, win)
 			}
 		}
-		for _, h := range scanText(win[min(max(hidden-start, 0), len(win)):]) {
+		for _, h := range scanText(win) {
 			if h.Category != skip {
 				s.hit(h, loc, field, win)
 			}

@@ -49,8 +49,9 @@ The core module depends on the standard library and `github.com/corazawaf/libinj
     |
     v
  6. body            by media type: JSON walk, form, multipart (file parts skipped), binary types
-    |               not read, XML as text with the XXE rule (the text detectors skip a leading XML
-    |               declaration), every other type (or none) as text
+    |               not read, XML read by value (text, attribute values, instructions; the XXE
+    |               rule on the raw body; raw text on a parse error), every other type (or none)
+    |               as text
     v
  7. cookies, then User-Agent / Referer / configured headers
     |

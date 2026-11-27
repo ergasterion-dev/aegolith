@@ -107,6 +107,40 @@ func BenchmarkInspectCartPOST(b *testing.B) { benchInspect(b, benchCartPOST()) }
 
 func BenchmarkInspectLargeJSON(b *testing.B) { benchInspect(b, benchLargeJSON()) }
 
+// benchXML is a 4 KiB XML order: a declaration, a default namespace and
+// items with attributes and text.
+func benchXML() *aegolith.Request {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><order xmlns="urn:example:orders" id="A-1001">`)
+	for i := 0; b.Len() < 4096-160; i++ {
+		fmt.Fprintf(&b, `<item sku="SKU-%05d" qty="%d"><name>Organic whole milk 1L, pack %d</name><price>%d.99</price></item>`, i, i%5+1, i, 40+i)
+	}
+	b.WriteString(`<note>Please ring the bell, don't knock.</note></order>`)
+	h := benchHeaders()
+	h.Set("Content-Type", "application/xml")
+	return &aegolith.Request{
+		Method: "POST", RawPath: "/api/v1/orders/import",
+		RemoteAddr: "192.0.2.10:40000", Header: h, Body: []byte(b.String()),
+	}
+}
+
+// BenchmarkInspectXML inspects benchXML with allow_xml set.
+func BenchmarkInspectXML(b *testing.B) {
+	fw, err := aegolith.New(aegolith.Config{AllowXML: true})
+	if err != nil {
+		b.Fatal(err)
+	}
+	r := benchXML()
+	if d := fw.Inspect(r); d.Err != nil || d.Action != aegolith.ActionAllow {
+		b.Fatalf("benchmark request is not an allow: %+v", d)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(r.Body)))
+	for b.Loop() {
+		fw.Inspect(r)
+	}
+}
+
 // BenchmarkInspectLegitCorpus inspects every request of legit.jsonl in turn
 // (ns/op is per request).
 func BenchmarkInspectLegitCorpus(b *testing.B) {
