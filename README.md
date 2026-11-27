@@ -658,8 +658,7 @@ go tool pprof -top -nodefraction=0 -focus=libinjection-go cpu.out
 
 The corpus above was written by the people who tuned the rules. The WAF bench in [`bench/`](bench) measures Aegolith over HTTP against attack sets the project did not write, the OWASP Core Rule Set regression tests (v4.31.0, Apache-2.0) and GoTestWAF (v0.5.11, MIT), pinned by commit in [`bench/sources.json`](bench/sources.json), and against legitimate requests that this repository generates. Its numbers are separate from the corpus results above and from [Performance](#performance).
 
-> [!IMPORTANT]
-> **No report is published yet.**
+**First report:** [`docs/bench/2026-11-first-report.md`](docs/bench/2026-11-first-report.md), the tool's unedited output for one detection run on one laptop. It counts misses and false positives by source and category, with and without the example policy, and lists the ones outside the held-out set. It holds no load measurement.
 
 **Held-out.** A case from any source but the project corpus, generated traffic included, is *held out* if the SHA-256 of any of its decoded payloads (of its case ID if it has none), unsalted, falls in a fixed 30% range. The bench's headline numbers are those of the held-out cases; detectors are not to be tuned on them, and they are counted, never listed. This is a reporting discipline, not a secret: anyone can compute which cases are held out.
 
@@ -686,7 +685,7 @@ Aegolith v0.1 is **alpha**. What that means:
 - [x] Corpus gates, fuzz tests, benchmarks and a latency budget
 - [x] Architecture and threat-model documents
 - [x] First tagged release
-- [ ] WAF bench with third-party attack sets and published reports ([tooling in `bench/`](#waf-bench))
+- [x] WAF bench with third-party attack sets and a [first published report](docs/bench/2026-11-first-report.md) ([how to run it](#waf-bench))
 - [ ] v0.2: generate route policies from Go structs or OpenAPI
 - [ ] v0.2: Fiber v3, Gin and Echo adapters (Chi and Gorilla already work through `net/http`)
 - [ ] v0.2: optional Coraza-backed engine for a few risky routes

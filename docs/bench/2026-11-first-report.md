@@ -1,0 +1,5289 @@
+# Aegolith WAF bench report
+
+- Aegolith commit: 47200453baf30d6992741de9a57d249644ee8f21
+- Created: 2026-11-27T10:12:06Z
+
+## Run environment
+
+| Item | Value |
+|---|---|
+| CPU | Apple M4 Pro |
+| Physical cores | 14 |
+| Logical processors | 14 |
+| Memory | 48.0 GiB |
+| Operating system | macOS 26.6.2 (build 25G83) |
+| Kernel | Darwin 25.6.0 |
+| Architecture | arm64 |
+| Go | go1.25.12 |
+| libinjection-go | v0.3.7 |
+| git | git version 2.52.0 |
+| jq | jq-1.8.1 |
+| bash | 3.2.57(1)-release |
+| Load average at start (1, 5, 15 min) | 17.13 37.05 44.34 |
+| Load average at end (1, 5, 15 min) | 23.08 35.86 43.52 |
+| Command | bench/scripts/run-local.sh waf |
+| Sources | baseline crs gotestwaf generated-legit |
+| Configuration no-policy | enforce mode, no policy file |
+| Configuration example-policy | enforce mode, policy testdata/corpus/example-api-policy.json |
+| Detection rate ceiling | 500 requests per second |
+| Target and client | separate processes on this machine, over loopback; a fresh target and fresh logs for each configuration |
+
+One case is one distinct request. Rates are over the cases the firewall judged
+(blocked, flagged, route-only or passed); rejected, unknown and not-sent cases
+are left out of them. Blocked means the firewall blocked the request. Flagged
+means the request was allowed although a rule other than a route rule matched
+without blocking: a rule whose action is monitor (in enforce mode too), or any
+rule in monitor mode. Flagged counts as detected, and so as a false positive on a
+legitimate request. Route-only means that only route rules matched without
+blocking, which is not counted as a detection. Rejected means the server answered
+before the firewall saw the request. A near-miss resembles an attack without
+being counted as one; it never enters the false positive rate.
+
+Headline numbers use the held-out set. A case of any source but the project's own
+corpus (baseline), the generated traffic included, is held out if the SHA-256 of
+any of its decoded payloads (of its case ID if it has none), unsalted, falls in a
+fixed 30% range; the others are the development set. This is a reporting
+discipline, not a secret: anyone can compute which cases are held out. This report
+counts held-out cases and never lists them. Cases that only baseline provides are
+in neither set.
+
+## Sources
+
+| Source | Repository | Commit | Licence | Included | Note |
+|---|---|---|---|---|---|
+| baseline | this repository | not recorded | Apache-2.0 | yes | Part of the project; its case lines record no version. |
+| crs | github.com/coreruleset/coreruleset | af4996c059bb1bdfc269f685b5c816d33027f242 | Apache-2.0 | yes | Release v4.31.0. LICENSE is the Apache License 2.0; fetched for use as test input, not redistributed. |
+| csic-2010 | not recorded | not recorded | not recorded | no | Candidate for legitimate traffic: the HTTP DATASET CSIC 2010 of the Spanish National Research Council (normal and anomalous requests to one shop application). Left out: its terms of use were not verified (no network access when the legitimate set was built), it is not a git repository and no version is pinned. Legitimate traffic is generated instead (aegobench import --source generated-legit). |
+| generated-legit | this repository | not recorded | Apache-2.0 | yes | Part of the project; its case lines record no version. Generated with seed 1, 5000 lines. |
+| gotestwaf | github.com/wallarm/gotestwaf | 5daeba073823a57e79ba922beef0c2d92a8dd776 | MIT | yes | Release v0.5.11. LICENSE is the MIT License; fetched for use as test input, not redistributed. |
+| openappsec-waf-comparison | github.com/openappsec/waf-comparison-project | not recorded | not recorded | no | Candidate for legitimate traffic: the legitimate request set of the open-appsec WAF comparison project, which that project downloads separately from its repository. Left out: neither the licence of the repository nor the terms of the data set were verified (no network access when the legitimate set was built), and no commit is pinned. |
+
+### What the cases of each source are
+
+**baseline.** The project's own corpus (testdata/corpus), written by the people who wrote the
+rules, so it says nothing independent. A case that only it provides is in neither
+the development nor the held-out set, and so not in the headline.
+
+**crs.** OWASP Core Rule Set regression tests. "attack" is a test that requires the rule
+set to log at least one rule ID, whatever paranoia level (1 to 4) that rule belongs
+to: the importer does not filter by level, and protocol checks are included
+(category protocol; a missing Accept header is one example). "near-miss" is a test
+that only forbids rule IDs. The CRS rates therefore ask for more than a
+paranoia-level-1 view would, which this bench does not compute. Which part of a
+request is its payload is decided by a heuristic; a case where it names none is
+split by its case ID.
+
+**generated-legit.** Legitimate and near-miss requests generated by this repository's generator from a
+seed. None of it is recorded traffic.
+
+**gotestwaf.** GoTestWAF test cases, one case for each payload, encoder and placeholder. "legit"
+is a case of a test set whose name holds "false", the tool's false-positive checks;
+every other case is "attack".
+
+## Input
+
+A case line is one request, as import or remote wrote it. 11295 case lines were read.
+10874 distinct requests are counted, identical requests being merged. 88 lines (43 requests) are left out because the lines that send the
+same request disagree on what to expect. A skipped case is a file, test, stage or
+combination of a source that the importer did not turn into a case line.
+
+| Source | Case lines | Attack | Legit | Near-miss | Without a payload | Left out as conflicting | Skipped by the importer |
+|---|---|---|---|---|---|---|---|
+| baseline | 425 | 230 | 195 | 0 | 425 | 0 | 0 |
+| crs | 5054 | 4032 | 0 | 1022 | 1762 | 88 | 275 |
+| generated-legit | 5000 | 0 | 4978 | 22 | 0 | 0 | 0 |
+| gotestwaf | 816 | 675 | 141 | 0 | 0 | 0 | 6 |
+| all | 11295 | 4937 | 5314 | 1044 | 2187 | 88 | 281 |
+
+### Conflicting requests, left out
+
+| Sources of the lines | Requests | Lines |
+|---|---|---|
+| crs | 43 | 88 |
+
+### Skipped source cases
+
+| Source | Reason | Skipped |
+|---|---|---|
+| crs | response-phase rule: the attack is not in the request | 111 |
+| crs | rule-set mechanics, not an attack | 88 |
+| crs | HTTP version is not HTTP/1.1 | 22 |
+| crs | output requires no rule IDs and excludes none | 21 |
+| crs | request is given as raw or encoded bytes | 11 |
+| crs | request target is not a path | 6 |
+| crs | a header value starts or ends with a blank, which the sender removes | 5 |
+| crs | no header completion and no Content-Length header: the sender would add one | 3 |
+| crs | data is a template | 2 |
+| crs | test has several stages | 2 |
+| crs | the upstream runner adds a Content-Length header for this method, the sender does not | 2 |
+| crs | Transfer-Encoding header: the sender would frame the body differently | 1 |
+| crs | file holds no tests | 1 |
+| gotestwaf | GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check | 4 |
+| gotestwaf | gRPC placeholder: the tool makes a gRPC call, not a plain HTTP request | 2 |
+
+## Generated legitimate traffic
+
+Seed 1, 5000 lines (source generated-legit). The generator's material is
+321 templates and 4166 entries in 311 word lists. A template is one sentence pattern of
+a category. An entry is one string of a word list, which fills a slot of a template
+or of another entry. The table counts the templates and entries that went into at
+least one line, each once however many lines use it; numbers drawn into a slot are
+not counted. An entry that several categories use counts in each of them and once
+in the row "all".
+
+| Category | Lines | Share of lines | Near-miss lines | Templates used | Entries used |
+|---|---|---|---|---|---|
+| addresses | 500 | 10.0% | 0 | 27 | 388 |
+| names | 500 | 10.0% | 0 | 20 | 303 |
+| other-languages | 500 | 10.0% | 0 | 80 | 427 |
+| pasted-code | 750 | 15.0% | 22 | 37 | 605 |
+| prices-and-quantities | 500 | 10.0% | 0 | 35 | 283 |
+| punctuation-prose | 500 | 10.0% | 0 | 22 | 629 |
+| reviews | 750 | 15.0% | 0 | 40 | 373 |
+| support-messages | 500 | 10.0% | 0 | 32 | 527 |
+| urls-in-text | 500 | 10.0% | 0 | 28 | 320 |
+| all | 5000 | 100.0% | 22 | 321 | 3575 |
+
+- The lines are combinations of 321 templates and 3575 entries, so 5000 lines are not
+  independent trials: one template or entry that a firewall blocks can account for
+  many blocked lines.
+- The mix of categories is the generator's fixed schedule, not a measurement of real
+  traffic. Awkward text is over-represented on purpose: punctuation-prose and
+  pasted-code are 25.0% of the lines. A total false positive rate moves with this mix;
+  read the rate of each category.
+- A line is legitimate unless its text has the canonical shape of an attack: a script
+  element, an on...= event handler attribute, a javascript: URL, a command reading
+  /etc/passwd or /etc/shadow, or SQL calling a time-delay function. Such a line is
+  near-miss and counted apart. The rule was written after one replay of an earlier
+  version of the set had been seen, looks at the text alone and applies to every
+  entry of these kinds.
+- Text in languages other than English had no native review. Names, addresses, phone
+  numbers and e-mail addresses are invented; web hosts are reserved names or localhost
+  and IP addresses come from the documentation ranges, so loopback and private IP
+  addresses are absent. No public data set of real legitimate traffic is included.
+
+### Core snippets of pasted code
+
+A core snippet is an entry of a word list that holds the pasted text itself (an error
+message, a command, a query, a snippet of code, markup or a template, a path, a log
+line and so on), as opposed to the sentences around it. The pasted-code lines hold
+347 of the 425 entries of 16 word lists. The table counts, for each list, its entries,
+those in at least one pasted-code line, and the pasted-code lines that hold one; one
+line may hold several, from one list or more, so the lines do not add up.
+
+| Word list | Entries | Used | Pasted-code lines |
+|---|---|---|---|
+| code-chat | 19 | 14 | 14 |
+| code-config | 16 | 15 | 31 |
+| code-error | 54 | 52 | 140 |
+| code-formula | 21 | 19 | 62 |
+| code-html | 27 | 25 | 62 |
+| code-log | 18 | 18 | 32 |
+| code-markdown | 22 | 9 | 9 |
+| code-path | 28 | 13 | 17 |
+| code-path-b | 12 | 5 | 7 |
+| code-regex | 16 | 11 | 25 |
+| code-shell | 53 | 51 | 149 |
+| code-snippet | 45 | 33 | 57 |
+| code-sql | 38 | 36 | 117 |
+| code-sql-error | 10 | 10 | 24 |
+| code-subject | 20 | 16 | 16 |
+| code-template | 26 | 20 | 41 |
+| all | 425 | 347 |  |
+
+## Configuration: no-policy
+
+### Headline (held-out)
+
+- Blocked rate: 32.1% (420 of 1310 attacks)
+- Detection rate (blocked or flagged): 32.1% (420 of 1310 attacks)
+- False positive rate (blocked or flagged): 2.3% (36 of 1538 legitimate requests)
+- Attacks outside the rates: 0 rejected, 0 unknown, 1 not sent
+- Legitimate requests outside the rates: 0 rejected, 0 unknown, 0 not sent
+
+The false positive total depends on which legitimate requests the sources hold and in what proportion: read the rates by source and category below.
+
+### Totals (each case counted once)
+
+| Split | Expected | Sent | Blocked | Flagged | Route only | Passed | Rejected | Unknown | Not sent | Blocked rate | Blocked or flagged rate |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | attack | 230 | 225 | 0 | 0 | 4 | 1 | 0 | 0 | 98.3% | 98.3% |
+| baseline | legit | 195 | 0 | 0 | 0 | 195 | 0 | 0 | 0 | 0.0% | 0.0% |
+| dev | attack | 3135 | 930 | 1 | 0 | 2204 | 0 | 0 | 3 | 29.7% | 29.7% |
+| dev | legit | 3581 | 91 | 0 | 0 | 3490 | 0 | 0 | 0 | 2.5% | 2.5% |
+| dev | near-miss | 598 | 58 | 1 | 0 | 539 | 0 | 0 | 3 | 9.7% | 9.9% |
+| held-out | attack | 1310 | 420 | 0 | 0 | 890 | 0 | 0 | 1 | 32.1% | 32.1% |
+| held-out | legit | 1538 | 36 | 0 | 0 | 1502 | 0 | 0 | 0 | 2.3% | 2.3% |
+| held-out | near-miss | 280 | 37 | 2 | 0 | 241 | 0 | 0 | 0 | 13.2% | 13.9% |
+
+### Why cases were not sent
+
+Over all splits and expectations. A case that was not sent says nothing about the firewall and is in no rate.
+
+| Reason | Cases |
+|---|---|
+| net/http would replace or leave out the Content-Length header | 7 |
+
+A case with several sources is counted under each of them below.
+
+### False positives by source and category
+
+Legitimate requests blocked or flagged, of those judged. "All splits" includes baseline.
+
+| Source | Category | Held-out | Development | All splits |
+|---|---|---|---|---|
+| baseline | fp | n/a | n/a | 0.0% (0 of 195) |
+| baseline | (all categories) | n/a | n/a | 0.0% (0 of 195) |
+| generated-legit | addresses | 0.0% (0 of 181) | 0.0% (0 of 319) | 0.0% (0 of 500) |
+| generated-legit | names | 0.0% (0 of 158) | 0.0% (0 of 342) | 0.0% (0 of 500) |
+| generated-legit | other-languages | 0.0% (0 of 144) | 0.0% (0 of 356) | 0.0% (0 of 500) |
+| generated-legit | pasted-code | 12.7% (28 of 221) | 14.8% (75 of 507) | 14.1% (103 of 728) |
+| generated-legit | prices-and-quantities | 2.1% (3 of 143) | 1.1% (4 of 357) | 1.4% (7 of 500) |
+| generated-legit | punctuation-prose | 0.0% (0 of 141) | 0.3% (1 of 359) | 0.2% (1 of 500) |
+| generated-legit | reviews | 0.0% (0 of 210) | 0.0% (0 of 540) | 0.0% (0 of 750) |
+| generated-legit | support-messages | 0.0% (0 of 157) | 0.0% (0 of 343) | 0.0% (0 of 500) |
+| generated-legit | urls-in-text | 2.2% (3 of 135) | 3.0% (11 of 365) | 2.8% (14 of 500) |
+| generated-legit | (all categories) | 2.3% (34 of 1490) | 2.6% (91 of 3488) | 2.5% (125 of 4978) |
+| gotestwaf | fp | 4.2% (2 of 48) | 0.0% (0 of 93) | 1.4% (2 of 141) |
+| gotestwaf | (all categories) | 4.2% (2 of 48) | 0.0% (0 of 93) | 1.4% (2 of 141) |
+| (all sources) | (all categories) | 2.3% (36 of 1538) | 2.5% (91 of 3581) | 2.4% (127 of 5314) |
+
+### Near-miss requests blocked or flagged, by source and category
+
+Near-misses are in no false positive rate and no detection rate.
+
+| Source | Category | Held-out | Development | All splits |
+|---|---|---|---|---|
+| crs | cmdi | 1.2% (1 of 84) | 1.2% (2 of 163) | 1.2% (3 of 247) |
+| crs | codei | 13.3% (4 of 30) | 6.5% (4 of 62) | 8.7% (8 of 92) |
+| crs | java | 90.9% (10 of 11) | 95.5% (21 of 22) | 93.9% (31 of 33) |
+| crs | lfi | 25.0% (1 of 4) | 18.2% (2 of 11) | 20.0% (3 of 15) |
+| crs | other | 30.8% (4 of 13) | 3.8% (1 of 26) | 12.8% (5 of 39) |
+| crs | protocol | 7.1% (4 of 56) | 4.6% (7 of 153) | 5.3% (11 of 209) |
+| crs | rfi | 0.0% (0 of 1) | 0.0% (0 of 3) | 0.0% (0 of 4) |
+| crs | scanner | 0.0% (0 of 1) | 0.0% (0 of 2) | 0.0% (0 of 3) |
+| crs | session | n/a | 40.0% (2 of 5) | 40.0% (2 of 5) |
+| crs | sqli | 2.1% (1 of 48) | 8.4% (9 of 107) | 6.5% (10 of 155) |
+| crs | xss | 10.0% (2 of 20) | 2.9% (1 of 34) | 5.6% (3 of 54) |
+| crs | (all categories) | 10.1% (27 of 268) | 8.3% (49 of 588) | 8.9% (76 of 856) |
+| generated-legit | pasted-code | 100.0% (12 of 12) | 100.0% (10 of 10) | 100.0% (22 of 22) |
+| generated-legit | (all categories) | 100.0% (12 of 12) | 100.0% (10 of 10) | 100.0% (22 of 22) |
+| (all sources) | (all categories) | 13.9% (39 of 280) | 9.9% (59 of 598) | 11.2% (98 of 878) |
+
+### By source
+
+| Source | Split | Expected | Sent | Blocked | Flagged | Route only | Passed | Rejected | Unknown | Not sent | Blocked rate | Blocked or flagged rate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | baseline | attack | 230 | 225 | 0 | 0 | 4 | 1 | 0 | 0 | 98.3% | 98.3% |
+| baseline | baseline | legit | 195 | 0 | 0 | 0 | 195 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | dev | attack | 2667 | 740 | 1 | 0 | 1926 | 0 | 0 | 3 | 27.7% | 27.8% |
+| crs | dev | near-miss | 588 | 48 | 1 | 0 | 539 | 0 | 0 | 3 | 8.2% | 8.3% |
+| crs | held-out | attack | 1107 | 333 | 0 | 0 | 774 | 0 | 0 | 1 | 30.1% | 30.1% |
+| crs | held-out | near-miss | 268 | 25 | 2 | 0 | 241 | 0 | 0 | 0 | 9.3% | 10.1% |
+| generated-legit | dev | legit | 3488 | 91 | 0 | 0 | 3397 | 0 | 0 | 0 | 2.6% | 2.6% |
+| generated-legit | held-out | legit | 1490 | 34 | 0 | 0 | 1456 | 0 | 0 | 0 | 2.3% | 2.3% |
+| generated-legit | dev | near-miss | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| generated-legit | held-out | near-miss | 12 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | dev | attack | 468 | 190 | 0 | 0 | 278 | 0 | 0 | 0 | 40.6% | 40.6% |
+| gotestwaf | held-out | attack | 203 | 87 | 0 | 0 | 116 | 0 | 0 | 0 | 42.9% | 42.9% |
+| gotestwaf | dev | legit | 93 | 0 | 0 | 0 | 93 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | held-out | legit | 48 | 2 | 0 | 0 | 46 | 0 | 0 | 0 | 4.2% | 4.2% |
+
+### By source and category
+
+| Source | Category | Split | Expected | Sent | Blocked | Flagged | Route only | Passed | Rejected | Unknown | Not sent | Blocked rate | Blocked or flagged rate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | cmdi | baseline | attack | 29 | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | codei | baseline | attack | 8 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | fp | baseline | legit | 195 | 0 | 0 | 0 | 195 | 0 | 0 | 0 | 0.0% | 0.0% |
+| baseline | lfi | baseline | attack | 11 | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | log4shell | baseline | attack | 4 | 3 | 0 | 0 | 1 | 0 | 0 | 0 | 75.0% | 75.0% |
+| baseline | misc | baseline | attack | 2 | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 50.0% | 50.0% |
+| baseline | nosqli | baseline | attack | 3 | 2 | 0 | 0 | 1 | 0 | 0 | 0 | 66.7% | 66.7% |
+| baseline | protocol | baseline | attack | 7 | 5 | 0 | 0 | 1 | 1 | 0 | 0 | 83.3% | 83.3% |
+| baseline | rfi | baseline | attack | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | scanner | baseline | attack | 46 | 46 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | session | baseline | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | sqli | baseline | attack | 47 | 47 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | ssrf | baseline | attack | 5 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | ssti | baseline | attack | 38 | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | xss | baseline | attack | 23 | 23 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | xxe | baseline | attack | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| crs | cmdi | dev | attack | 492 | 79 | 0 | 0 | 413 | 0 | 0 | 0 | 16.1% | 16.1% |
+| crs | cmdi | dev | near-miss | 163 | 2 | 0 | 0 | 161 | 0 | 0 | 0 | 1.2% | 1.2% |
+| crs | cmdi | held-out | attack | 210 | 37 | 0 | 0 | 173 | 0 | 0 | 0 | 17.6% | 17.6% |
+| crs | cmdi | held-out | near-miss | 84 | 0 | 1 | 0 | 83 | 0 | 0 | 0 | 0.0% | 1.2% |
+| crs | codei | dev | attack | 206 | 43 | 0 | 0 | 163 | 0 | 0 | 0 | 20.9% | 20.9% |
+| crs | codei | dev | near-miss | 62 | 4 | 0 | 0 | 58 | 0 | 0 | 0 | 6.5% | 6.5% |
+| crs | codei | held-out | attack | 95 | 27 | 0 | 0 | 68 | 0 | 0 | 0 | 28.4% | 28.4% |
+| crs | codei | held-out | near-miss | 30 | 4 | 0 | 0 | 26 | 0 | 0 | 0 | 13.3% | 13.3% |
+| crs | java | dev | attack | 768 | 281 | 0 | 0 | 487 | 0 | 0 | 0 | 36.6% | 36.6% |
+| crs | java | dev | near-miss | 22 | 21 | 0 | 0 | 1 | 0 | 0 | 0 | 95.5% | 95.5% |
+| crs | java | held-out | attack | 296 | 125 | 0 | 0 | 171 | 0 | 0 | 0 | 42.2% | 42.2% |
+| crs | java | held-out | near-miss | 11 | 10 | 0 | 0 | 1 | 0 | 0 | 0 | 90.9% | 90.9% |
+| crs | lfi | dev | attack | 44 | 10 | 0 | 0 | 34 | 0 | 0 | 0 | 22.7% | 22.7% |
+| crs | lfi | dev | near-miss | 11 | 2 | 0 | 0 | 9 | 0 | 0 | 0 | 18.2% | 18.2% |
+| crs | lfi | held-out | attack | 21 | 4 | 0 | 0 | 17 | 0 | 0 | 0 | 19.0% | 19.0% |
+| crs | lfi | held-out | near-miss | 4 | 1 | 0 | 0 | 3 | 0 | 0 | 0 | 25.0% | 25.0% |
+| crs | other | dev | attack | 153 | 44 | 0 | 0 | 109 | 0 | 0 | 0 | 28.8% | 28.8% |
+| crs | other | dev | near-miss | 26 | 1 | 0 | 0 | 25 | 0 | 0 | 0 | 3.8% | 3.8% |
+| crs | other | held-out | attack | 75 | 24 | 0 | 0 | 51 | 0 | 0 | 0 | 32.0% | 32.0% |
+| crs | other | held-out | near-miss | 13 | 4 | 0 | 0 | 9 | 0 | 0 | 0 | 30.8% | 30.8% |
+| crs | protocol | dev | attack | 202 | 43 | 1 | 0 | 158 | 0 | 0 | 3 | 21.3% | 21.8% |
+| crs | protocol | dev | near-miss | 153 | 6 | 1 | 0 | 146 | 0 | 0 | 3 | 3.9% | 4.6% |
+| crs | protocol | held-out | attack | 87 | 13 | 0 | 0 | 74 | 0 | 0 | 1 | 14.9% | 14.9% |
+| crs | protocol | held-out | near-miss | 56 | 3 | 1 | 0 | 52 | 0 | 0 | 0 | 5.4% | 7.1% |
+| crs | rfi | dev | attack | 22 | 10 | 0 | 0 | 12 | 0 | 0 | 0 | 45.5% | 45.5% |
+| crs | rfi | dev | near-miss | 3 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | rfi | held-out | attack | 11 | 3 | 0 | 0 | 8 | 0 | 0 | 0 | 27.3% | 27.3% |
+| crs | rfi | held-out | near-miss | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | scanner | dev | attack | 8 | 6 | 0 | 0 | 2 | 0 | 0 | 0 | 75.0% | 75.0% |
+| crs | scanner | dev | near-miss | 2 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | scanner | held-out | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| crs | scanner | held-out | near-miss | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | session | dev | attack | 33 | 6 | 0 | 0 | 27 | 0 | 0 | 0 | 18.2% | 18.2% |
+| crs | session | dev | near-miss | 5 | 2 | 0 | 0 | 3 | 0 | 0 | 0 | 40.0% | 40.0% |
+| crs | session | held-out | attack | 9 | 5 | 0 | 0 | 4 | 0 | 0 | 0 | 55.6% | 55.6% |
+| crs | sqli | dev | attack | 597 | 154 | 0 | 0 | 443 | 0 | 0 | 0 | 25.8% | 25.8% |
+| crs | sqli | dev | near-miss | 107 | 9 | 0 | 0 | 98 | 0 | 0 | 0 | 8.4% | 8.4% |
+| crs | sqli | held-out | attack | 247 | 65 | 0 | 0 | 182 | 0 | 0 | 0 | 26.3% | 26.3% |
+| crs | sqli | held-out | near-miss | 48 | 1 | 0 | 0 | 47 | 0 | 0 | 0 | 2.1% | 2.1% |
+| crs | xss | dev | attack | 142 | 64 | 0 | 0 | 78 | 0 | 0 | 0 | 45.1% | 45.1% |
+| crs | xss | dev | near-miss | 34 | 1 | 0 | 0 | 33 | 0 | 0 | 0 | 2.9% | 2.9% |
+| crs | xss | held-out | attack | 55 | 29 | 0 | 0 | 26 | 0 | 0 | 0 | 52.7% | 52.7% |
+| crs | xss | held-out | near-miss | 20 | 2 | 0 | 0 | 18 | 0 | 0 | 0 | 10.0% | 10.0% |
+| generated-legit | addresses | dev | legit | 319 | 0 | 0 | 0 | 319 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | addresses | held-out | legit | 181 | 0 | 0 | 0 | 181 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | names | dev | legit | 342 | 0 | 0 | 0 | 342 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | names | held-out | legit | 158 | 0 | 0 | 0 | 158 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | other-languages | dev | legit | 356 | 0 | 0 | 0 | 356 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | other-languages | held-out | legit | 144 | 0 | 0 | 0 | 144 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | pasted-code | dev | legit | 507 | 75 | 0 | 0 | 432 | 0 | 0 | 0 | 14.8% | 14.8% |
+| generated-legit | pasted-code | dev | near-miss | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| generated-legit | pasted-code | held-out | legit | 221 | 28 | 0 | 0 | 193 | 0 | 0 | 0 | 12.7% | 12.7% |
+| generated-legit | pasted-code | held-out | near-miss | 12 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| generated-legit | prices-and-quantities | dev | legit | 357 | 4 | 0 | 0 | 353 | 0 | 0 | 0 | 1.1% | 1.1% |
+| generated-legit | prices-and-quantities | held-out | legit | 143 | 3 | 0 | 0 | 140 | 0 | 0 | 0 | 2.1% | 2.1% |
+| generated-legit | punctuation-prose | dev | legit | 359 | 1 | 0 | 0 | 358 | 0 | 0 | 0 | 0.3% | 0.3% |
+| generated-legit | punctuation-prose | held-out | legit | 141 | 0 | 0 | 0 | 141 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | reviews | dev | legit | 540 | 0 | 0 | 0 | 540 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | reviews | held-out | legit | 210 | 0 | 0 | 0 | 210 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | support-messages | dev | legit | 343 | 0 | 0 | 0 | 343 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | support-messages | held-out | legit | 157 | 0 | 0 | 0 | 157 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | urls-in-text | dev | legit | 365 | 11 | 0 | 0 | 354 | 0 | 0 | 0 | 3.0% | 3.0% |
+| generated-legit | urls-in-text | held-out | legit | 135 | 3 | 0 | 0 | 132 | 0 | 0 | 0 | 2.2% | 2.2% |
+| gotestwaf | cmdi | dev | attack | 8 | 4 | 0 | 0 | 4 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | cmdi | held-out | attack | 24 | 4 | 0 | 0 | 20 | 0 | 0 | 0 | 16.7% | 16.7% |
+| gotestwaf | community-user-agent | dev | attack | 8 | 5 | 0 | 0 | 3 | 0 | 0 | 0 | 62.5% | 62.5% |
+| gotestwaf | community-user-agent | held-out | attack | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | crlf | dev | attack | 5 | 4 | 0 | 0 | 1 | 0 | 0 | 0 | 80.0% | 80.0% |
+| gotestwaf | crlf | held-out | attack | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | fp | dev | legit | 93 | 0 | 0 | 0 | 93 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | fp | held-out | legit | 48 | 2 | 0 | 0 | 46 | 0 | 0 | 0 | 4.2% | 4.2% |
+| gotestwaf | ldap-injection | dev | attack | 16 | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | ldap-injection | held-out | attack | 8 | 4 | 0 | 0 | 4 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | lfi | dev | attack | 30 | 9 | 0 | 0 | 21 | 0 | 0 | 0 | 30.0% | 30.0% |
+| gotestwaf | mail-injection | dev | attack | 16 | 2 | 0 | 0 | 14 | 0 | 0 | 0 | 12.5% | 12.5% |
+| gotestwaf | mail-injection | held-out | attack | 8 | 1 | 0 | 0 | 7 | 0 | 0 | 0 | 12.5% | 12.5% |
+| gotestwaf | non-crud | dev | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | non-crud | held-out | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | nosqli | dev | attack | 30 | 0 | 0 | 0 | 30 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | nosqli | held-out | attack | 20 | 0 | 0 | 0 | 20 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | rce | dev | attack | 22 | 14 | 0 | 0 | 8 | 0 | 0 | 0 | 63.6% | 63.6% |
+| gotestwaf | rce | held-out | attack | 8 | 7 | 0 | 0 | 1 | 0 | 0 | 0 | 87.5% | 87.5% |
+| gotestwaf | rest | dev | attack | 4 | 2 | 0 | 0 | 2 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | rest | held-out | attack | 3 | 1 | 0 | 0 | 2 | 0 | 0 | 0 | 33.3% | 33.3% |
+| gotestwaf | soap | dev | attack | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | soap | held-out | attack | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | sqli | dev | attack | 47 | 21 | 0 | 0 | 26 | 0 | 0 | 0 | 44.7% | 44.7% |
+| gotestwaf | sqli | held-out | attack | 18 | 4 | 0 | 0 | 14 | 0 | 0 | 0 | 22.2% | 22.2% |
+| gotestwaf | ss-include | dev | attack | 16 | 8 | 0 | 0 | 8 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | ss-include | held-out | attack | 8 | 4 | 0 | 0 | 4 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | ssti | dev | attack | 24 | 12 | 0 | 0 | 12 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | xss | dev | attack | 230 | 97 | 0 | 0 | 133 | 0 | 0 | 0 | 42.2% | 42.2% |
+| gotestwaf | xss | held-out | attack | 99 | 56 | 0 | 0 | 43 | 0 | 0 | 0 | 56.6% | 56.6% |
+| gotestwaf | xxe | dev | attack | 8 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | xxe | held-out | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+
+### Distinct attack payloads (all splits)
+
+- Judged in at least one case: 2278
+- Blocked or flagged in at least one placement: 22.9% (522 of 2278)
+- Blocked or flagged in every judged placement: 20.9% (476 of 2278)
+
+### Missed attacks (development and baseline)
+
+| Case | Source | Source case | Category | Rules |
+|---|---|---|---|---|
+| 0dbbdd503e14 | baseline | attack/content-type abuse | protocol |  |
+| d5498497522f | baseline | attack/obfuscated jndi | log4shell |  |
+| 90200325bc36 | baseline | attack/operator in query | nosqli |  |
+| dd341a923b2b | baseline | attack/xpath injection | misc |  |
+| 232c0bc9ba2d | crs | 913100-10 | scanner |  |
+| 4c286f811ff2 | crs | 913100-11 | scanner |  |
+| f2c977eeaa4a | crs | 920120-10 | protocol |  |
+| d218fe826b09 | crs | 920120-12 | protocol |  |
+| c93c3aa91cee | crs | 920120-13 | protocol |  |
+| 8fe9897157f9 | crs | 920120-14 | protocol |  |
+| c7bfcf8fdd59 | crs | 920120-16 | protocol |  |
+| 3250b5aeefa8 | crs | 920120-17 | protocol |  |
+| c1140ba37f32 | crs | 920120-2 | protocol |  |
+| f02c57b0cce1 | crs | 920120-3 | protocol |  |
+| 8b5838115414 | crs | 920120-36 | protocol |  |
+| db3609a17a67 | crs | 920120-37 | protocol |  |
+| 61a682add1e6 | crs | 920120-40 | protocol |  |
+| 65aa322eecc0 | crs | 920120-41 | protocol |  |
+| 5ee5b198df54 | crs | 920120-5 | protocol |  |
+| 7c9f06e1b250 | crs | 920120-7 | protocol |  |
+| e5a795eb1553 | crs | 920120-8 | protocol |  |
+| 68c5252e2e67 | crs | 920121-1 | protocol |  |
+| d22dfc63bf7e | crs | 920121-2 | protocol |  |
+| 8c230e7a5f40 | crs | 920121-4 | protocol |  |
+| 3d49248c2151 | crs | 920170-2 | protocol |  |
+| 8245bca218a0 | crs | 920170-3 | protocol |  |
+| a7146d96f1d8 | crs | 920190-2 | protocol |  |
+| 8e6a31bcf85b | crs | 920200-1 | protocol |  |
+| 449a8b08d5eb | crs | 920200-3 | protocol |  |
+| 83f3dbb69143 | crs | 920200-4 | protocol |  |
+| 8767d5e24a35 | crs | 920201-1 | protocol |  |
+| 74c38d50564b | crs | 920202-2 | protocol |  |
+| 3c8a8d6ad75d | crs | 920210-3 | protocol |  |
+| d3c7e74041ad | crs | 920210-6 | protocol |  |
+| 189b87f63989 | crs | 920210-7 | protocol |  |
+| 943f8e0ca07e | crs | 920230-1 | protocol |  |
+| f9f340437fc5 | crs | 920240-5 | protocol |  |
+| 051179c600b4 | crs | 920240-6 | protocol |  |
+| d80651209cce | crs | 920250-2 | protocol |  |
+| 5eab439b0481 | crs | 920250-3 | protocol |  |
+| a390d7595481 | crs | 920250-4 | protocol |  |
+| 6e3b94cd826a | crs | 920260-1 | protocol |  |
+| 73ee391ef1fb | crs | 920260-3 | protocol |  |
+| 17cedb1bd6d4 | crs | 920271-1 | protocol |  |
+| 856c78f7823c | crs | 920271-2 | protocol |  |
+| fb2c2fcfdf95 | crs | 920271-4 | protocol |  |
+| 129fe6513682 | crs | 920272-1 | protocol |  |
+| 31c81136d5d5 | crs | 920272-2 | protocol |  |
+| 2b694461bf40 | crs | 920272-3 | protocol |  |
+| 9a37ef0e02d3 | crs | 920273-3 | protocol |  |
+| 26ce517bf4ab | crs | 920273-5 | protocol |  |
+| 2a34f0eb1d97 | crs | 920274-4 | protocol |  |
+| cf5136fad2bf | crs | 920275-1 | protocol |  |
+| 465ab29855e7 | crs | 920275-4 | protocol |  |
+| 6eb2f83581f2 | crs | 920300-1 | protocol |  |
+| 9072d4fa31f8 | crs | 920311-1 | protocol |  |
+| cf0a2b4d1898 | crs | 920320-1 | protocol |  |
+| 91347f23f1f6 | crs | 920330-1 | protocol |  |
+| 4fccb428e984 | crs | 920350-1 | protocol |  |
+| 6b3ff78b57fb | crs | 920350-4 | protocol |  |
+| e2258d3fa6c5 | crs | 920350-5 | protocol |  |
+| 91e025e13c3b | crs | 920350-6 | protocol |  |
+| eb0634b030df | crs | 920360-1 | protocol |  |
+| 553f8bb1b468 | crs | 920370-1 | protocol |  |
+| a3d762cba5c6 | crs | 920380-1 | protocol |  |
+| 21118514a126 | crs | 920410-1 | protocol |  |
+| 3a7d143270ed | crs | 920440-4 | protocol |  |
+| a3542079d53a | crs | 920440-5 | protocol |  |
+| e9e2dd64d233 | crs | 920440-6 | protocol |  |
+| d5624f8e5551 | crs | 920440-7 | protocol |  |
+| 747f8e40a761 | crs | 920450-1 | protocol |  |
+| 12cc438396fe | crs | 920450-2 | protocol |  |
+| 7d8ad0219dcf | crs | 920451-1 | protocol |  |
+| 58b1ba125e19 | crs | 920460-2 | protocol |  |
+| f5803c7039c3 | crs | 920460-3 | protocol |  |
+| f806e2337192 | crs | 920470-12 | protocol |  |
+| 2147f7d03965 | crs | 920480-11 | protocol |  |
+| 4c1084e0084e | crs | 920480-14 | protocol |  |
+| fba4cc14f4b5 | crs | 920480-16 | protocol |  |
+| b4d944c68646 | crs | 920480-17 | protocol |  |
+| c982e62ecc14 | crs | 920480-19 | protocol |  |
+| d8ad2805807f | crs | 920480-22 | protocol |  |
+| 2dba59300f94 | crs | 920490-1 | protocol |  |
+| 30d391e8ec72 | crs | 920500-2 | protocol |  |
+| 97e54438f181 | crs | 920510-1 | protocol |  |
+| 23542ecf53e3 | crs | 920510-2 | protocol |  |
+| a6116479d4c2 | crs | 920510-3 | protocol |  |
+| 1c029768b31a | crs | 920510-4 | protocol |  |
+| 120c575e373b | crs | 920520-10 | protocol |  |
+| 59d082ac20ca | crs | 920530-2 | protocol |  |
+| 52c27fb1c5a7 | crs | 920530-4 | protocol |  |
+| 144da38f6cf7 | crs | 920540-1 | protocol |  |
+| 5af2f6465fb1 | crs | 920540-2 | protocol |  |
+| ed14ddf299e9 | crs | 920600-1 | protocol |  |
+| f84c86f268fc | crs | 920600-7 | protocol |  |
+| 6df274073f16 | crs | 920650-1 | protocol |  |
+| 6ffd1c7f8a4a | crs | 920650-10 | protocol |  |
+| c7376ca11d0b | crs | 920650-13 | protocol |  |
+| d31f6634f8b1 | crs | 920650-14 | protocol |  |
+| dd618e384049 | crs | 920650-16 | protocol |  |
+| 878399a8789c | crs | 920650-17 | protocol |  |
+| 086dcca497e0 | crs | 920650-2 | protocol |  |
+| c35935639ab9 | crs | 920650-3 | protocol |  |
+| 6db5f52886b7 | crs | 920650-34 | protocol |  |
+| 43543e636784 | crs | 920650-35 | protocol |  |
+| 737591550da2 | crs | 920650-5 | protocol |  |
+| 3bf5bbac16de | crs | 920650-6 | protocol |  |
+| 06a5d5a26632 | crs | 920650-8 | protocol |  |
+| 7991d2a96a59 | crs | 920650-9 | protocol |  |
+| 2d074408a660 | crs | 920660-11 | protocol |  |
+| ebee8492710c | crs | 920660-13 | protocol |  |
+| 658f0d08a326 | crs | 920660-14 | protocol |  |
+| f9d9997e1aae | crs | 920660-15 | protocol |  |
+| 02893d4db8bd | crs | 920660-16 | protocol |  |
+| 6897514aa7a9 | crs | 920660-2 | protocol |  |
+| eb89cc91eaeb | crs | 920660-3 | protocol |  |
+| ab5453c6c89f | crs | 920660-4 | protocol |  |
+| 8ed1af9a971b | crs | 920660-6 | protocol |  |
+| 4ffd6c89269a | crs | 920660-8 | protocol |  |
+| aa5baf262312 | crs | 921110-2 | protocol |  |
+| 44dfb0bfe3ab | crs | 921110-7 | protocol |  |
+| b80cf4605cd8 | crs | 921130-2 | protocol |  |
+| 08f7b0c969a0 | crs | 921140-2 | protocol |  |
+| b8c7ce18ff90 | crs | 921150-1 | protocol |  |
+| 980d84110bf3 | crs | 921150-2 | protocol |  |
+| a70ca1aaa6e1 | crs | 921151-2 | protocol |  |
+| cabd1360fa08 | crs | 921151-3 | protocol |  |
+| 943404516ee3 | crs | 921160-2 | protocol |  |
+| 8cefb8e7da32 | crs | 921160-3 | protocol |  |
+| f34675514ab4 | crs | 921160-5 | protocol |  |
+| 6b0bab28f88c | crs | 921160-6 | protocol |  |
+| 6087eee88c69 | crs | 921160-7 | protocol |  |
+| 8f578280542e | crs | 921180-6 | protocol |  |
+| 052c68ed2b52 | crs | 921200-13 | protocol |  |
+| 50e57940b43e | crs | 921200-14 | protocol |  |
+| 8446d2674414 | crs | 921200-16 | protocol |  |
+| 6742c9102b35 | crs | 921200-17 | protocol |  |
+| b4af6c0595cc | crs | 921200-19 | protocol |  |
+| f3296bd79345 | crs | 921200-21 | protocol |  |
+| 87a37df66ebe | crs | 921200-22 | protocol |  |
+| e4d9bcc50a23 | crs | 921200-24 | protocol |  |
+| cf83edb8bdad | crs | 921200-31 | protocol |  |
+| 7ad97c50770c | crs | 921210-1 | protocol |  |
+| 1bf8b44533ed | crs | 921220-1 | protocol |  |
+| 650daa56e622 | crs | 921230-1 | protocol |  |
+| cd264a28a6dc | crs | 921240-2 | protocol |  |
+| e9dde67f2672 | crs | 921421-3 | protocol |  |
+| 25d7212a946c | crs | 921421-4 | protocol |  |
+| 43c678d894ac | crs | 921422-6 | protocol |  |
+| 9705cbaabe0e | crs | 921422-7 | protocol |  |
+| d4db87f7340c | crs | 922100-1 | protocol |  |
+| f7c53f54ec93 | crs | 922100-3 | protocol |  |
+| 61774d145610 | crs | 922100-5 | protocol |  |
+| a7aea7f2ae0f | crs | 922100-7 | protocol |  |
+| 8bd1c1fe05ed | crs | 922110-11 | protocol |  |
+| 72e93be9009e | crs | 922110-15 | protocol |  |
+| 265cb6100717 | crs | 922110-2 | protocol |  |
+| b4175c5ba130 | crs | 922110-20 | protocol |  |
+| 6303c3847b9a | crs | 922110-23 | protocol |  |
+| 4620b540f8a2 | crs | 922110-24 | protocol |  |
+| 3754d284cb01 | crs | 922110-4 | protocol |  |
+| 1fb3a109efb6 | crs | 922110-7 | protocol |  |
+| 4704786ec663 | crs | 922110-9 | protocol |  |
+| f0d60bceebc8 | crs | 922120-1 | protocol |  |
+| e0e86eff119d | crs | 930100-1 | lfi |  |
+| 0d1768b1a633 | crs | 930100-4 | lfi |  |
+| 6d1971f325b2 | crs | 930110-10 | lfi |  |
+| 376273039e3f | crs | 930110-11 | lfi |  |
+| 707ae6acb531 | crs | 930110-12 | lfi |  |
+| 52caa5baffed | crs | 930120-13 | lfi |  |
+| 9d785347f656 | crs | 930120-14 | lfi |  |
+| cb0f6578f016 | crs | 930120-4 | lfi |  |
+| 6c2433e9f930 | crs | 930120-5 | lfi |  |
+| 994795e4358d | crs | 930120-6 | lfi |  |
+| 61c4aaaad5c2 | crs | 930120-8 | lfi |  |
+| 07c49ad1c84a | crs | 930121-1 | lfi |  |
+| 292ddfff82bd | crs | 930121-10 | lfi |  |
+| e3384ebc489a | crs | 930121-2 | lfi |  |
+| 24b26e142d77 | crs | 930121-3 | lfi |  |
+| 9d70f1570e00 | crs | 930121-5 | lfi |  |
+| 9a57d05b6b05 | crs | 930121-7 | lfi |  |
+| b0658e7556f2 | crs | 930121-8 | lfi |  |
+| c14f7335a5af | crs | 930130-1 | lfi |  |
+| beac987fc33a | crs | 930130-13 | lfi |  |
+| ad909fc35d0a | crs | 930130-6 | lfi |  |
+| 4030f31d3d03 | crs | 930130-9 | lfi |  |
+| 4bd760f51aca | crs | 930140-1 | lfi |  |
+| d7f3191b7f76 | crs | 930140-10 | lfi |  |
+| 6bf6377d07d0 | crs | 930140-12 | lfi |  |
+| 179627e3a280 | crs | 930140-13 | lfi |  |
+| c1668ad8b612 | crs | 930140-14 | lfi |  |
+| a7c0c38eeb1f | crs | 930140-2 | lfi |  |
+| a584edeb248e | crs | 930140-21 | lfi |  |
+| 8f03cb90ba33 | crs | 930140-3 | lfi |  |
+| 365c19eacad6 | crs | 930140-5 | lfi |  |
+| 437cd0632b67 | crs | 930140-6 | lfi |  |
+| 3f5797ee50e2 | crs | 930140-8 | lfi |  |
+| ee333b83bae4 | crs | 930140-9 | lfi |  |
+| 9816ef18dab1 | crs | 931100-2 | rfi |  |
+| ae8afc1b02f9 | crs | 931100-4 | rfi |  |
+| 2ab36371f7d7 | crs | 931120-1 | rfi |  |
+| 301cdd9d466b | crs | 931120-2 | rfi |  |
+| 6ea9546e9468 | crs | 931120-5 | rfi |  |
+| a44b6014bb48 | crs | 931130-12 | rfi |  |
+| 5b4f3bc5e7a8 | crs | 931130-13 | rfi |  |
+| 1768362448f2 | crs | 931130-14 | rfi |  |
+| ed969edfdf21 | crs | 931130-20 | rfi |  |
+| 214f416a725a | crs | 931130-21 | rfi |  |
+| 9cd8bb36ce60 | crs | 931130-3 | rfi |  |
+| 020d2b8f8574 | crs | 931130-6 | rfi |  |
+| e820ea18361f | crs | 932120-1 | cmdi |  |
+| 9881967bebbf | crs | 932120-11 | cmdi |  |
+| a3523b798139 | crs | 932120-12 | cmdi |  |
+| 351b818097db | crs | 932120-2 | cmdi |  |
+| 830a2aa60c22 | crs | 932120-3 | cmdi |  |
+| a698142895a1 | crs | 932125-1 | cmdi |  |
+| d4f01f9f67b8 | crs | 932125-2 | cmdi |  |
+| 3c27dd8f0165 | crs | 932125-8 | cmdi |  |
+| 8a100f5dd8a6 | crs | 932130-11 | cmdi |  |
+| e293cfd1f4cb | crs | 932130-12 | cmdi |  |
+| c5dd253564f4 | crs | 932130-13 | cmdi |  |
+| 846f660310a8 | crs | 932130-16 | cmdi |  |
+| 915261619385 | crs | 932130-17 | cmdi |  |
+| 869e13ed2bad | crs | 932130-19 | cmdi |  |
+| 0da9da0ec626 | crs | 932130-2 | cmdi |  |
+| c3bf0c490058 | crs | 932130-20 | cmdi |  |
+| cbe8306ee198 | crs | 932130-21 | cmdi |  |
+| 6059214e8529 | crs | 932130-22 | cmdi |  |
+| b393e69b0d1f | crs | 932130-26 | cmdi |  |
+| 0708751b847c | crs | 932130-28 | cmdi |  |
+| c6adef8d0299 | crs | 932130-3 | cmdi |  |
+| 725b7e764329 | crs | 932130-30 | cmdi |  |
+| c5fdeac29c3a | crs | 932130-32 | cmdi |  |
+| 1def7807088e | crs | 932130-36 | cmdi |  |
+| 5a70b20191c3 | crs | 932130-37 | cmdi |  |
+| bdce8438c6cc | crs | 932130-38 | cmdi |  |
+| a631c62f1b89 | crs | 932130-4 | cmdi |  |
+| 7db2e61ceb85 | crs | 932130-7 | cmdi |  |
+| 971771ce7a47 | crs | 932130-9 | cmdi |  |
+| ce1f600b61ec | crs | 932140-1 | cmdi |  |
+| 2e941c227afa | crs | 932140-10 | cmdi |  |
+| ea76a169ee94 | crs | 932140-100 | cmdi |  |
+| 41dc66819ccb | crs | 932140-102 | cmdi |  |
+| 469d5c800b58 | crs | 932140-104 | cmdi |  |
+| 1077cb77639f | crs | 932140-106 | cmdi |  |
+| 754e92b3aa08 | crs | 932140-107 | cmdi |  |
+| 8e5ca49ec8ee | crs | 932140-109 | cmdi |  |
+| c170f1cd67c4 | crs | 932140-11 | cmdi |  |
+| 463a6230fd95 | crs | 932140-113 | cmdi |  |
+| aebc52aee2ff | crs | 932140-114 | cmdi |  |
+| 92313226dff6 | crs | 932140-115 | cmdi |  |
+| fe7f365801dc | crs | 932140-116 | cmdi |  |
+| 40200703fbff | crs | 932140-118 | cmdi |  |
+| 74fa79a86bbb | crs | 932140-119 | cmdi |  |
+| 5691a03ad41a | crs | 932140-12 | cmdi |  |
+| 5753e364aad5 | crs | 932140-121 | cmdi |  |
+| 635d8cb07603 | crs | 932140-123 | cmdi |  |
+| ccc01b56148f | crs | 932140-124 | cmdi |  |
+| 9a00390f82d0 | crs | 932140-127 | cmdi |  |
+| 53a260d85a83 | crs | 932140-128 | cmdi |  |
+| 06b8fb8aaff3 | crs | 932140-129 | cmdi |  |
+| 58a9799d4102 | crs | 932140-130 | cmdi |  |
+| 12f7e3a4cd31 | crs | 932140-131 | cmdi |  |
+| ca50653c23bb | crs | 932140-133 | cmdi |  |
+| 6cdc5c944112 | crs | 932140-14 | cmdi |  |
+| c5c852e8f558 | crs | 932140-143 | cmdi |  |
+| 0d3f7c1c832c | crs | 932140-144 | cmdi |  |
+| 4501c8b5d457 | crs | 932140-145 | cmdi |  |
+| fec50eb8caac | crs | 932140-147 | cmdi |  |
+| e7d1e9f94c2d | crs | 932140-149 | cmdi |  |
+| cd82e673df21 | crs | 932140-150 | cmdi |  |
+| 5aac230c8e4b | crs | 932140-151 | cmdi |  |
+| 60e3ee238a6e | crs | 932140-16 | cmdi |  |
+| 2a5d32b2495d | crs | 932140-160 | cmdi |  |
+| 85ef6acf037b | crs | 932140-17 | cmdi |  |
+| 5267d6037c1e | crs | 932140-18 | cmdi |  |
+| 75208da1ab8e | crs | 932140-19 | cmdi |  |
+| be757472ce5b | crs | 932140-2 | cmdi |  |
+| 99a93d246f1c | crs | 932140-20 | cmdi |  |
+| c2ada6773022 | crs | 932140-21 | cmdi |  |
+| 4cdc83cc6c32 | crs | 932140-22 | cmdi |  |
+| 3d73fbaf24e2 | crs | 932140-25 | cmdi |  |
+| d4d51bb85eff | crs | 932140-26 | cmdi |  |
+| 2f59955c50ff | crs | 932140-27 | cmdi |  |
+| fec4cf370691 | crs | 932140-28 | cmdi |  |
+| e96dfbffdbb7 | crs | 932140-29 | cmdi |  |
+| e25ba0bf6f4c | crs | 932140-30 | cmdi |  |
+| aa33c047aeac | crs | 932140-33 | cmdi |  |
+| 80d983ffc8bf | crs | 932140-34 | cmdi |  |
+| 976b40ab607e | crs | 932140-35 | cmdi |  |
+| 8dfb45d9e0d5 | crs | 932140-36 | cmdi |  |
+| cf5a1e98475d | crs | 932140-38 | cmdi |  |
+| b7a0b372f9e3 | crs | 932140-39 | cmdi |  |
+| 1fd2d2149b15 | crs | 932140-4 | cmdi |  |
+| e1282d2c54f0 | crs | 932140-40 | cmdi |  |
+| 658910f71d25 | crs | 932140-42 | cmdi |  |
+| 67a10254843f | crs | 932140-43 | cmdi |  |
+| f118a345d302 | crs | 932140-45 | cmdi |  |
+| 3b8242172f99 | crs | 932140-47 | cmdi |  |
+| d80d7375eb40 | crs | 932140-5 | cmdi |  |
+| ef485b3dde96 | crs | 932140-50 | cmdi |  |
+| b3b80dd42e20 | crs | 932140-52 | cmdi |  |
+| caeebee3980a | crs | 932140-53 | cmdi |  |
+| a5a805ca464b | crs | 932140-54 | cmdi |  |
+| d4985bead8f5 | crs | 932140-56 | cmdi |  |
+| 9f827ced6bc3 | crs | 932140-57 | cmdi |  |
+| 0a6cd6c3c899 | crs | 932140-58 | cmdi |  |
+| 880decd17ad9 | crs | 932140-60 | cmdi |  |
+| d26a217478c3 | crs | 932140-64 | cmdi |  |
+| 1629544d84ff | crs | 932140-66 | cmdi |  |
+| 44194bdd9bf6 | crs | 932140-67 | cmdi |  |
+| ba74d8266fa7 | crs | 932140-68 | cmdi |  |
+| 9104522b9bd0 | crs | 932140-69 | cmdi |  |
+| 55fa5c4fe87b | crs | 932140-70 | cmdi |  |
+| 559ddb5c5824 | crs | 932140-71 | cmdi |  |
+| b8c1bf73faee | crs | 932140-72 | cmdi |  |
+| 2807de4e8ea2 | crs | 932140-74 | cmdi |  |
+| 26af31bd0f42 | crs | 932140-75 | cmdi |  |
+| b65bec61d166 | crs | 932140-76 | cmdi |  |
+| 02e1ca7c157f | crs | 932140-77 | cmdi |  |
+| 940fdce6ed08 | crs | 932140-78 | cmdi |  |
+| d621c251855c | crs | 932140-80 | cmdi |  |
+| 034fe5f27985 | crs | 932140-81 | cmdi |  |
+| 10201844a6f4 | crs | 932140-83 | cmdi |  |
+| 0e6b9f8c5cc6 | crs | 932140-84 | cmdi |  |
+| 695f32ed28aa | crs | 932140-86 | cmdi |  |
+| 6a94a1bc60c5 | crs | 932140-87 | cmdi |  |
+| 3e2c87b02448 | crs | 932140-89 | cmdi |  |
+| a72067a06900 | crs | 932140-9 | cmdi |  |
+| 1a248e51b12a | crs | 932140-90 | cmdi |  |
+| 6cb3d3532b92 | crs | 932140-91 | cmdi |  |
+| d34e42e067f0 | crs | 932140-93 | cmdi |  |
+| 58a56bd0a278 | crs | 932140-95 | cmdi |  |
+| 10c053280e08 | crs | 932140-97 | cmdi |  |
+| 5860e4b2087b | crs | 932140-99 | cmdi |  |
+| c1be339ad133 | crs | 932160-10 | cmdi |  |
+| c204183ccbca | crs | 932160-11 | cmdi |  |
+| 0a73e1b35668 | crs | 932160-12 | cmdi |  |
+| 1f64849e4153 | crs | 932160-2 | cmdi |  |
+| 9ce68ea61894 | crs | 932160-3 | cmdi |  |
+| d82e3ca096c1 | crs | 932160-5 | cmdi |  |
+| 2c49d24aa02c | crs | 932160-6 | cmdi |  |
+| b07916184c41 | crs | 932160-8 | cmdi |  |
+| 8ee1499f8e40 | crs | 932160-9 | cmdi |  |
+| 1e08f636bfb6 | crs | 932170-1 | cmdi |  |
+| 8486e544c7db | crs | 932171-1 | cmdi |  |
+| 6694ba853548 | crs | 932171-2 | cmdi |  |
+| 7e14d5d2c546 | crs | 932175-1 | cmdi |  |
+| 479d71617c65 | crs | 932175-10 | cmdi |  |
+| f75c643086ef | crs | 932175-11 | cmdi |  |
+| 2990e7020f3f | crs | 932175-12 | cmdi |  |
+| 3ffe311f5ab7 | crs | 932175-13 | cmdi |  |
+| bcbd75aa6130 | crs | 932175-14 | cmdi |  |
+| f0b8744c2b10 | crs | 932175-15 | cmdi |  |
+| 1209e1139778 | crs | 932175-17 | cmdi |  |
+| ce8134da9188 | crs | 932175-2 | cmdi |  |
+| 1a469190d09d | crs | 932175-3 | cmdi |  |
+| 391e06be2f71 | crs | 932175-4 | cmdi |  |
+| 9558ccf8d4d3 | crs | 932175-5 | cmdi |  |
+| 76a0718f1b40 | crs | 932175-9 | cmdi |  |
+| 20019e5922b4 | crs | 932180-1 | cmdi |  |
+| 9da0a5a31a9e | crs | 932180-12 | cmdi |  |
+| 256db889391a | crs | 932180-13 | cmdi |  |
+| 009079bb789c | crs | 932180-17 | cmdi |  |
+| f5cc5d015bac | crs | 932180-18 | cmdi |  |
+| 43884570d405 | crs | 932180-20 | cmdi |  |
+| 00746dd63f65 | crs | 932180-22 | cmdi |  |
+| 1271579b23d0 | crs | 932180-25 | cmdi |  |
+| 10f3dfdf798c | crs | 932180-28 | cmdi |  |
+| 554e7b32c2c7 | crs | 932180-29 | cmdi |  |
+| bc65c4c0a41f | crs | 932180-32 | cmdi |  |
+| 5dbb16ba3a7e | crs | 932180-33 | cmdi |  |
+| 1fc19fd8dde4 | crs | 932180-8 | cmdi |  |
+| 288c3671832b | crs | 932190-1 | cmdi |  |
+| 11a726493363 | crs | 932190-2 | cmdi |  |
+| e028baf425d7 | crs | 932190-3 | cmdi |  |
+| 8005db16b767 | crs | 932190-5 | cmdi |  |
+| e96723b22238 | crs | 932190-6 | cmdi |  |
+| 76fa35057302 | crs | 932190-8 | cmdi |  |
+| 7847825b1210 | crs | 932200-10 | cmdi |  |
+| b7990e4a6d55 | crs | 932200-14 | cmdi |  |
+| fe7ef7afea94 | crs | 932200-20 | cmdi |  |
+| d2915a7da1fc | crs | 932200-4 | cmdi |  |
+| 998c6ab52de2 | crs | 932200-6 | cmdi |  |
+| 97d926183de0 | crs | 932200-7 | cmdi |  |
+| 95b96e97f356 | crs | 932200-9 | cmdi |  |
+| 885a9b4cb767 | crs | 932210-2 | cmdi |  |
+| b5a51aeb9d6e | crs | 932210-4 | cmdi |  |
+| af52d191291f | crs | 932210-6 | cmdi |  |
+| 5a320270c071 | crs | 932220-1 | cmdi |  |
+| 47cc5404f59d | crs | 932220-10 | cmdi |  |
+| fbd4c4a182fe | crs | 932220-11 | cmdi |  |
+| 269f5315daed | crs | 932220-2 | cmdi |  |
+| a6d20effa24a | crs | 932220-4 | cmdi |  |
+| 369edeed71bf | crs | 932220-6 | cmdi |  |
+| 241a7da373e3 | crs | 932220-7 | cmdi |  |
+| fc750d0dea4e | crs | 932220-9 | cmdi |  |
+| 40c2a630d1c5 | crs | 932230-28 | cmdi |  |
+| bd09f93eb40b | crs | 932230-29 | cmdi |  |
+| 4c67f9bf9e2e | crs | 932230-31 | cmdi |  |
+| 8118c4095ff7 | crs | 932230-33 | cmdi |  |
+| e7996c15bf6c | crs | 932230-34 | cmdi |  |
+| d55eebbf44c2 | crs | 932230-36 | cmdi |  |
+| a7cfa8e438c8 | crs | 932230-37 | cmdi |  |
+| 79a9ed3574d6 | crs | 932230-45 | cmdi |  |
+| 7d9c943d2c15 | crs | 932230-51 | cmdi |  |
+| 7d58cebab3f5 | crs | 932230-52 | cmdi |  |
+| 50d558687489 | crs | 932230-53 | cmdi |  |
+| d1ef430bcc87 | crs | 932230-55 | cmdi |  |
+| aec4fc7fd0ac | crs | 932230-62 | cmdi |  |
+| 40b9b05e0b50 | crs | 932230-63 | cmdi |  |
+| 69e2faa053d7 | crs | 932231-1 | cmdi |  |
+| e0ed7f8e853a | crs | 932232-13 | cmdi |  |
+| 531efd139c54 | crs | 932232-3 | cmdi |  |
+| 5d69592e8bb0 | crs | 932232-7 | cmdi |  |
+| baff15d1af58 | crs | 932232-8 | cmdi |  |
+| c96ec0654b11 | crs | 932235-1 | cmdi |  |
+| cbf9d10deb21 | crs | 932235-13 | cmdi |  |
+| f7c138601a25 | crs | 932235-14 | cmdi |  |
+| a25b148a8be2 | crs | 932235-15 | cmdi |  |
+| ee98415fd246 | crs | 932235-16 | cmdi |  |
+| 000ea0ba48ad | crs | 932235-19 | cmdi |  |
+| 4893e2a45d06 | crs | 932235-22 | cmdi |  |
+| dac4d6212ca9 | crs | 932235-23 | cmdi |  |
+| 61a8a63ef346 | crs | 932235-24 | cmdi |  |
+| 535ede1099ac | crs | 932235-26 | cmdi |  |
+| e34817520a26 | crs | 932235-28 | cmdi |  |
+| cebdd639f2fc | crs | 932235-29 | cmdi |  |
+| bb826093f738 | crs | 932235-31 | cmdi |  |
+| 438a02ea7cf9 | crs | 932235-32 | cmdi |  |
+| 7f3e67095e72 | crs | 932235-33 | cmdi |  |
+| 6241ad6b1176 | crs | 932235-37 | cmdi |  |
+| daced35b0b58 | crs | 932235-4 | cmdi |  |
+| 77574f245817 | crs | 932235-5 | cmdi |  |
+| 9a65b2ec82a8 | crs | 932235-50 | cmdi |  |
+| 6a4156c62d53 | crs | 932235-51 | cmdi |  |
+| 9de997b3cbeb | crs | 932235-54 | cmdi |  |
+| c0263ddfa541 | crs | 932235-59 | cmdi |  |
+| baa1c20346a6 | crs | 932235-6 | cmdi |  |
+| dd1038adef56 | crs | 932235-7 | cmdi |  |
+| a42e74038e70 | crs | 932235-8 | cmdi |  |
+| f2fdfa26003b | crs | 932235-9 | cmdi |  |
+| 98337186c3c3 | crs | 932236-1 | cmdi |  |
+| 07d05a84e67e | crs | 932236-101 | cmdi |  |
+| 2b563e7a8706 | crs | 932236-102 | cmdi |  |
+| 2cab69c0cbe3 | crs | 932236-108 | cmdi |  |
+| 75133ab827aa | crs | 932236-114 | cmdi |  |
+| 1cc82e438819 | crs | 932236-116 | cmdi |  |
+| 5254305645ac | crs | 932236-117 | cmdi |  |
+| 53bfd4baa21e | crs | 932236-14 | cmdi |  |
+| 2ab1fad848db | crs | 932236-16 | cmdi |  |
+| ca31da14e49a | crs | 932236-49 | cmdi |  |
+| dc66edf1fc60 | crs | 932236-50 | cmdi |  |
+| c7d5109a4d60 | crs | 932236-58 | cmdi |  |
+| 527698810c88 | crs | 932236-60 | cmdi |  |
+| 55ff6153be5e | crs | 932236-64 | cmdi |  |
+| 321c4f9fb715 | crs | 932236-65 | cmdi |  |
+| a3f52f49c586 | crs | 932236-66 | cmdi |  |
+| e0c6c62dd3ce | crs | 932236-67 | cmdi |  |
+| 9bc11662e0f4 | crs | 932236-68 | cmdi |  |
+| d757e7df2153 | crs | 932236-69 | cmdi |  |
+| 3175bc85d2cd | crs | 932236-71 | cmdi |  |
+| e41199cc2fee | crs | 932236-74 | cmdi |  |
+| 478e4182fa3e | crs | 932236-75 | cmdi |  |
+| d0c58a00d880 | crs | 932236-76 | cmdi |  |
+| 32ef2bd8a2a7 | crs | 932236-77 | cmdi |  |
+| 94f831bd67f9 | crs | 932236-78 | cmdi |  |
+| 74a2b8154462 | crs | 932236-79 | cmdi |  |
+| 434d5b696503 | crs | 932236-88 | cmdi |  |
+| 94ab33116c66 | crs | 932236-90 | cmdi |  |
+| 33d17ca68374 | crs | 932236-91 | cmdi |  |
+| ee15378bdc63 | crs | 932236-93 | cmdi |  |
+| 244ab465ad7a | crs | 932236-94 | cmdi |  |
+| 56a8e92530df | crs | 932236-95 | cmdi |  |
+| a7c178c7eafd | crs | 932236-96 | cmdi |  |
+| 8783a0a338b3 | crs | 932236-97 | cmdi |  |
+| 840cd65705a0 | crs | 932236-99 | cmdi |  |
+| 2261fa10f67f | crs | 932237-1 | cmdi |  |
+| ffec269537d3 | crs | 932237-10 | cmdi |  |
+| e0f78b3106d2 | crs | 932237-12 | cmdi |  |
+| 27a316768719 | crs | 932237-13 | cmdi |  |
+| 7a24649c3438 | crs | 932237-14 | cmdi |  |
+| 87c3ca44c6b3 | crs | 932237-15 | cmdi |  |
+| fe42757cc534 | crs | 932237-16 | cmdi |  |
+| b7c4460615bc | crs | 932237-18 | cmdi |  |
+| aeb0c9a42d3f | crs | 932237-20 | cmdi |  |
+| d92b62f8b485 | crs | 932237-21 | cmdi |  |
+| ea6bd91b4774 | crs | 932237-22 | cmdi |  |
+| a30ee97eadc2 | crs | 932237-23 | cmdi |  |
+| b6ff46b642c1 | crs | 932237-24 | cmdi |  |
+| bb3717aa3502 | crs | 932237-25 | cmdi |  |
+| 4ff99998e994 | crs | 932237-26 | cmdi |  |
+| 8aa9f22e2dae | crs | 932237-32 | cmdi |  |
+| 9cf392f542b0 | crs | 932237-33 | cmdi |  |
+| be7c0c97452f | crs | 932237-4 | cmdi |  |
+| c3de02d9064a | crs | 932237-9 | cmdi |  |
+| 4ec0e43f7d36 | crs | 932238-10 | cmdi |  |
+| 2fa68b882b7c | crs | 932238-12 | cmdi |  |
+| a8ed00d0ec99 | crs | 932238-3 | cmdi |  |
+| 7501d26347e7 | crs | 932238-4 | cmdi |  |
+| 223f6a8cf8fe | crs | 932238-5 | cmdi |  |
+| 74b8c790cb59 | crs | 932238-6 | cmdi |  |
+| 74c1d0bdc4cf | crs | 932238-8 | cmdi |  |
+| 419e83e32e0d | crs | 932239-18 | cmdi |  |
+| 56c2bc5189d2 | crs | 932239-19 | cmdi |  |
+| 1701f91fe624 | crs | 932239-2 | cmdi |  |
+| 6b4a5c32a188 | crs | 932239-28 | cmdi |  |
+| 955128105e22 | crs | 932239-30 | cmdi |  |
+| ae468a4f936f | crs | 932239-32 | cmdi |  |
+| a97c02480b2d | crs | 932239-33 | cmdi |  |
+| 74f554a8db78 | crs | 932239-35 | cmdi |  |
+| 7e5964912491 | crs | 932239-37 | cmdi |  |
+| 17b20ccd1781 | crs | 932239-9 | cmdi |  |
+| b5a707c6f010 | crs | 932240-1 | cmdi |  |
+| 624458f6cd7c | crs | 932240-11 | cmdi |  |
+| ebabfaeef93a | crs | 932240-13 | cmdi |  |
+| 1f5d7f957473 | crs | 932240-15 | cmdi |  |
+| dda2ea6cbee3 | crs | 932240-3 | cmdi |  |
+| 99c7ba7d7dfd | crs | 932240-4 | cmdi |  |
+| 7cf82e4e862d | crs | 932240-5 | cmdi |  |
+| 33459dfe50d8 | crs | 932250-17 | cmdi |  |
+| 3fca61aecb74 | crs | 932250-23 | cmdi |  |
+| 4da55df10995 | crs | 932250-28 | cmdi |  |
+| fe601f382892 | crs | 932250-29 | cmdi |  |
+| 389c7477afa0 | crs | 932250-30 | cmdi |  |
+| 55197a812689 | crs | 932250-4 | cmdi |  |
+| af4d5ee658fe | crs | 932250-5 | cmdi |  |
+| e8f07bcc89a7 | crs | 932250-9 | cmdi |  |
+| adc1b2b7ac13 | crs | 932260-10 | cmdi |  |
+| 622e0765dd7e | crs | 932260-12 | cmdi |  |
+| e4363d845aa0 | crs | 932260-16 | cmdi |  |
+| d7e111e833c6 | crs | 932260-50 | cmdi |  |
+| 51113e33ee0b | crs | 932260-7 | cmdi |  |
+| d3a1af720ae8 | crs | 932260-9 | cmdi |  |
+| eae353d3256f | crs | 932270-10 | cmdi |  |
+| 9111abb81db8 | crs | 932270-18 | cmdi |  |
+| ef38de399d59 | crs | 932270-21 | cmdi |  |
+| f21fdecda3dc | crs | 932270-23 | cmdi |  |
+| d4799072efd6 | crs | 932270-24 | cmdi |  |
+| a9641c5a8df2 | crs | 932270-25 | cmdi |  |
+| 0b6bfec294a0 | crs | 932270-29 | cmdi |  |
+| 6a1304ca8814 | crs | 932270-3 | cmdi |  |
+| fcb35e3d73c5 | crs | 932270-30 | cmdi |  |
+| ccd0c505691f | crs | 932270-34 | cmdi |  |
+| e53b3de167aa | crs | 932270-4 | cmdi |  |
+| 1fc217265913 | crs | 932270-8 | cmdi |  |
+| 4892f6aecbff | crs | 932270-9 | cmdi |  |
+| 73c2131a7d04 | crs | 932271-1 | cmdi |  |
+| c542b1dbe04c | crs | 932271-2 | cmdi |  |
+| eea7583843f1 | crs | 932280-2 | cmdi |  |
+| 94a11bf56ef4 | crs | 932280-3 | cmdi |  |
+| 4431ee91b266 | crs | 932280-4 | cmdi |  |
+| 2696a4c7fa55 | crs | 932280-6 | cmdi |  |
+| 5ec21097eff1 | crs | 932280-8 | cmdi |  |
+| 559d31a5487a | crs | 932281-1 | cmdi |  |
+| e4ee1f6d4ca8 | crs | 932281-10 | cmdi |  |
+| db906746fcda | crs | 932281-2 | cmdi |  |
+| 63e4779b8039 | crs | 932281-3 | cmdi |  |
+| 40a69850736a | crs | 932281-4 | cmdi |  |
+| 95d617c01761 | crs | 932281-5 | cmdi |  |
+| 478914b50a70 | crs | 932281-7 | cmdi |  |
+| a6d84433c80a | crs | 932290-1 | cmdi |  |
+| fd65d3a90ad1 | crs | 932290-2 | cmdi |  |
+| 9e2371c06992 | crs | 932290-3 | cmdi |  |
+| f6b83d5aca88 | crs | 932290-6 | cmdi |  |
+| 66967d5ae902 | crs | 932290-7 | cmdi |  |
+| 1ac45b96ba50 | crs | 932290-8 | cmdi |  |
+| d5e9d9b038af | crs | 932290-9 | cmdi |  |
+| b780b2d56b6f | crs | 932300-1 | cmdi |  |
+| fbbbdec2b7b4 | crs | 932300-10 | cmdi |  |
+| a1a97cd6e56d | crs | 932300-4 | cmdi |  |
+| 71db29fcb7df | crs | 932301-4 | cmdi |  |
+| da0ea4fc02e4 | crs | 932301-6 | cmdi |  |
+| 6e5a2f025c03 | crs | 932310-1 | cmdi |  |
+| e98386017550 | crs | 932310-3 | cmdi |  |
+| e31703e6501b | crs | 932311-10 | cmdi |  |
+| abcb48cf76f3 | crs | 932311-11 | cmdi |  |
+| 318a3632b57b | crs | 932311-12 | cmdi |  |
+| 85d553ce5196 | crs | 932311-3 | cmdi |  |
+| 8ccb904d06f4 | crs | 932311-7 | cmdi |  |
+| f8367ec91119 | crs | 932311-9 | cmdi |  |
+| 7744974823b6 | crs | 932320-1 | cmdi |  |
+| 9c803f5deba1 | crs | 932320-6 | cmdi |  |
+| 3108f43de4bf | crs | 932320-8 | cmdi |  |
+| be6fca0f8001 | crs | 932330-3 | cmdi |  |
+| 47718a21f5ef | crs | 932331-1 | cmdi |  |
+| 857556859900 | crs | 932331-4 | cmdi |  |
+| beac8e1e38be | crs | 932340-16 | cmdi |  |
+| cb2c3e260cb5 | crs | 932340-2 | cmdi |  |
+| 0411ae714cd4 | crs | 932340-21 | cmdi |  |
+| 77e67d89aab9 | crs | 932340-23 | cmdi |  |
+| 7fc3b598e8c5 | crs | 932340-25 | cmdi |  |
+| 71f725da8154 | crs | 932340-3 | cmdi |  |
+| 18c2fbfe8129 | crs | 932340-30 | cmdi |  |
+| 5385fd8c0d6c | crs | 932340-31 | cmdi |  |
+| fa55a804df51 | crs | 932340-6 | cmdi |  |
+| 440fb5971689 | crs | 932350-2 | cmdi |  |
+| fb3061f71fd6 | crs | 932350-3 | cmdi |  |
+| ad6055d43134 | crs | 932350-5 | cmdi |  |
+| 50ae05e31c14 | crs | 932350-8 | cmdi |  |
+| 38f3248a3cf9 | crs | 932370-1 | cmdi |  |
+| b0e724f1a113 | crs | 932370-3 | cmdi |  |
+| dbd036c09832 | crs | 932370-7 | cmdi |  |
+| 571db55e46b7 | crs | 932371-1 | cmdi |  |
+| c283db43ff65 | crs | 932380-1 | cmdi |  |
+| 8a96ff28602a | crs | 932380-16 | cmdi |  |
+| 95d6c8151795 | crs | 932380-18 | cmdi |  |
+| b98b9633f4fe | crs | 932380-2 | cmdi |  |
+| 817c24c49fd9 | crs | 932380-20 | cmdi |  |
+| d8d8bd96cbbb | crs | 932380-21 | cmdi |  |
+| 3cb66191575f | crs | 932380-23 | cmdi |  |
+| d6161fa47116 | crs | 932380-25 | cmdi |  |
+| 5b6298193a62 | crs | 932380-3 | cmdi |  |
+| ec78dbe2d0d7 | crs | 932380-4 | cmdi |  |
+| aa7ac3aa12c8 | crs | 932390-1 | cmdi |  |
+| b967a8ae6e2a | crs | 932390-10 | cmdi |  |
+| 1620b44d1f14 | crs | 932390-2 | cmdi |  |
+| 3f5d97551332 | crs | 932390-3 | cmdi |  |
+| e2c5e820fae3 | crs | 932390-4 | cmdi |  |
+| ae44a726c145 | crs | 932390-5 | cmdi |  |
+| d1e42f5e7172 | crs | 932390-6 | cmdi |  |
+| 1e01f188d535 | crs | 932390-9 | cmdi |  |
+| e18fe12dcfb1 | crs | 932400-1 | cmdi |  |
+| b7ce59c658c1 | crs | 933100-1 | codei |  |
+| 980cf980bd3a | crs | 933100-16 | codei |  |
+| de021fd7aaf7 | crs | 933100-18 | codei |  |
+| 86e217dcd569 | crs | 933100-19 | codei |  |
+| 6a866019d7d7 | crs | 933100-20 | codei |  |
+| 72c1272611f4 | crs | 933100-22 | codei |  |
+| f228acc48c64 | crs | 933100-26 | codei |  |
+| d68f92d05f40 | crs | 933100-27 | codei |  |
+| 3b5990d564c1 | crs | 933100-29 | codei |  |
+| 33e1ff17cc2f | crs | 933100-3 | codei |  |
+| c53baee48feb | crs | 933100-30 | codei |  |
+| 3801ba664c0d | crs | 933100-40 | codei |  |
+| 15bf0c515942 | crs | 933100-55 | codei |  |
+| 7ec468ef06d2 | crs | 933100-66 | codei |  |
+| 8aa50d929940 | crs | 933100-87 | codei |  |
+| f68e1a33e29c | crs | 933100-89 | codei |  |
+| b1268ec90587 | crs | 933100-9 | codei |  |
+| f47f26709439 | crs | 933100-91 | codei |  |
+| e1131724b82e | crs | 933100-93 | codei |  |
+| dbadacff693e | crs | 933110-10 | codei |  |
+| 8ee48c2b2cca | crs | 933110-12 | codei |  |
+| e5be7d26fd07 | crs | 933110-13 | codei |  |
+| 22fe1955ac70 | crs | 933110-17 | codei |  |
+| b1de22fd3d3a | crs | 933110-18 | codei |  |
+| 5a648874f3b0 | crs | 933110-2 | codei |  |
+| 1148239484c2 | crs | 933110-20 | codei |  |
+| 8b09746519da | crs | 933110-21 | codei |  |
+| d87baeab7dbc | crs | 933110-24 | codei |  |
+| 8a420893e0d2 | crs | 933110-25 | codei |  |
+| cd9f734b945a | crs | 933110-28 | codei |  |
+| e254640f1cc8 | crs | 933110-3 | codei |  |
+| e3e053d41fd1 | crs | 933110-33 | codei |  |
+| 235d7b45ba6f | crs | 933110-34 | codei |  |
+| 44fd93b8d7f7 | crs | 933110-36 | codei |  |
+| 0bd2f2aea211 | crs | 933110-38 | codei |  |
+| c28eb7cb6746 | crs | 933110-4 | codei |  |
+| 56b2c000bdca | crs | 933110-5 | codei |  |
+| 6178b539db9c | crs | 933110-7 | codei |  |
+| eb3f20ee2699 | crs | 933110-8 | codei |  |
+| 47279ee5b95b | crs | 933111-1 | codei |  |
+| a6919502ffed | crs | 933111-2 | codei |  |
+| c65888287ee6 | crs | 933111-3 | codei |  |
+| 78a980f5d0a0 | crs | 933111-4 | codei |  |
+| a148771c100b | crs | 933111-5 | codei |  |
+| e9a90ac53cca | crs | 933111-6 | codei |  |
+| abbd127b30ac | crs | 933120-1 | codei |  |
+| a2ea7501fe0a | crs | 933120-11 | codei |  |
+| fc6f89860ddc | crs | 933120-12 | codei |  |
+| 3a66b72137a0 | crs | 933120-5 | codei |  |
+| 575cdd9a39b9 | crs | 933120-6 | codei |  |
+| de516a058cd9 | crs | 933120-7 | codei |  |
+| 81e47b40096d | crs | 933120-8 | codei |  |
+| 3d0a9d0c7ddb | crs | 933131-3 | codei |  |
+| 979ac8eeb2f9 | crs | 933135-1 | codei |  |
+| e7020640cf45 | crs | 933135-2 | codei |  |
+| 7f5204d6489a | crs | 933135-3 | codei |  |
+| 7a8e429a4aae | crs | 933135-4 | codei |  |
+| 8833b127cfe3 | crs | 933150-1 | codei |  |
+| 03ba9baf0e2f | crs | 933150-10 | codei |  |
+| b0d69189fa55 | crs | 933150-11 | codei |  |
+| 6dfdf18dda80 | crs | 933150-12 | codei |  |
+| 425ed99a1d2a | crs | 933150-14 | codei |  |
+| 3e97c8d9d610 | crs | 933150-17 | codei |  |
+| 432cbe92fd86 | crs | 933150-2 | codei |  |
+| 196dd83590f8 | crs | 933150-3 | codei |  |
+| c34be7549379 | crs | 933150-30 | codei |  |
+| e06c430497d3 | crs | 933150-38 | codei |  |
+| 6d7c66ecb18e | crs | 933150-39 | codei |  |
+| d15890273798 | crs | 933150-4 | codei |  |
+| 94727849e75c | crs | 933150-41 | codei |  |
+| 96294dfe0c04 | crs | 933150-6 | codei |  |
+| 79db923c0d72 | crs | 933150-8 | codei |  |
+| fa103becfb7b | crs | 933150-9 | codei |  |
+| 7e027dfc3f2c | crs | 933151-2 | codei |  |
+| 82c00399f6c1 | crs | 933152-4 | codei |  |
+| 19fd9c84c4cb | crs | 933153-1 | codei |  |
+| 33588fbfd431 | crs | 933153-2 | codei |  |
+| 317a509d65a1 | crs | 933153-4 | codei |  |
+| 3b1f9c69f4bf | crs | 933160-10 | codei |  |
+| 3f3da5b656e0 | crs | 933160-11 | codei |  |
+| ced177c2b8cd | crs | 933160-12 | codei |  |
+| 728d2adb7f21 | crs | 933160-13 | codei |  |
+| f57e82e8a2d3 | crs | 933160-14 | codei |  |
+| 6f04d8916abf | crs | 933160-16 | codei |  |
+| 54f267350a93 | crs | 933160-19 | codei |  |
+| 279c3cc41aa9 | crs | 933160-2 | codei |  |
+| 63ae3c531f8d | crs | 933160-22 | codei |  |
+| b8ee68181cfc | crs | 933160-23 | codei |  |
+| ad447737afae | crs | 933160-24 | codei |  |
+| aa19edfd87f8 | crs | 933160-26 | codei |  |
+| 3f7aa6338777 | crs | 933160-27 | codei |  |
+| bf976ca24d02 | crs | 933160-28 | codei |  |
+| afab23540025 | crs | 933160-29 | codei |  |
+| 81af2acbe020 | crs | 933160-34 | codei |  |
+| b897525761f6 | crs | 933160-36 | codei |  |
+| 13999e9d8c09 | crs | 933160-37 | codei |  |
+| 5209c3ecb409 | crs | 933160-38 | codei |  |
+| f26838791cce | crs | 933160-39 | codei |  |
+| 62c705150183 | crs | 933160-48 | codei |  |
+| cd451e6a0ce1 | crs | 933160-49 | codei |  |
+| 698344c50574 | crs | 933160-50 | codei |  |
+| 128cd82463ca | crs | 933160-7 | codei |  |
+| fea973bb5e0e | crs | 933160-8 | codei |  |
+| 974a0a0167fc | crs | 933161-3 | codei |  |
+| 6af1ad0352b4 | crs | 933161-6 | codei |  |
+| 4408b0a12f27 | crs | 933161-7 | codei |  |
+| 19868b38abf0 | crs | 933161-8 | codei |  |
+| e1095885385c | crs | 933170-10 | codei |  |
+| 16555b7710a8 | crs | 933170-2 | codei |  |
+| 1907fa7447c6 | crs | 933170-3 | codei |  |
+| 57ac5a8008b8 | crs | 933170-4 | codei |  |
+| afd39edb4163 | crs | 933170-7 | codei |  |
+| 4a80d8ab2225 | crs | 933170-8 | codei |  |
+| 2dd98ef789d7 | crs | 933170-9 | codei |  |
+| c89c3896ee39 | crs | 933180-10 | codei |  |
+| 1aed62a839ba | crs | 933180-11 | codei |  |
+| 2cd480af2a86 | crs | 933180-13 | codei |  |
+| 00f51b9285d7 | crs | 933180-14 | codei |  |
+| 6f0d270f2b1e | crs | 933180-15 | codei |  |
+| 8bbf37e5acdb | crs | 933180-16 | codei |  |
+| 22693e40dc4c | crs | 933180-17 | codei |  |
+| cec96a5ffa6f | crs | 933180-19 | codei |  |
+| 7f04da8e2f67 | crs | 933180-2 | codei |  |
+| 0e294fc2048d | crs | 933180-20 | codei |  |
+| b203ef0bad1f | crs | 933180-22 | codei |  |
+| 87f5e88127d3 | crs | 933180-23 | codei |  |
+| 239428f84952 | crs | 933180-25 | codei |  |
+| 46802a0d96a7 | crs | 933180-26 | codei |  |
+| 8f286094b2c5 | crs | 933180-27 | codei |  |
+| 50ceac3787fd | crs | 933180-28 | codei |  |
+| c3d4302be1ea | crs | 933180-3 | codei |  |
+| 422094a3c905 | crs | 933180-30 | codei |  |
+| 63be8339fae6 | crs | 933180-31 | codei |  |
+| 6601a2709bc0 | crs | 933180-33 | codei |  |
+| 194fc495bf45 | crs | 933180-34 | codei |  |
+| 553c79a0163e | crs | 933180-36 | codei |  |
+| fda3cc4ac8e2 | crs | 933180-37 | codei |  |
+| 7704743c2bec | crs | 933180-38 | codei |  |
+| cda6c4f3279a | crs | 933180-4 | codei |  |
+| 5ea55648eab4 | crs | 933180-5 | codei |  |
+| b7ef6f71ef5f | crs | 933180-6 | codei |  |
+| 772e492c4388 | crs | 933180-8 | codei |  |
+| e5ffac327c7b | crs | 933180-9 | codei |  |
+| fb7362f79710 | crs | 933210-11 | codei |  |
+| 3cbba5abf5a6 | crs | 933210-12 | codei |  |
+| 2321fa31b348 | crs | 933210-13 | codei |  |
+| 96dd9549b222 | crs | 933210-14 | codei |  |
+| fe4cccd4c042 | crs | 933210-16 | codei |  |
+| e1e57946edcc | crs | 933210-20 | codei |  |
+| 4b7a25ec4e55 | crs | 933210-21 | codei |  |
+| bcd1de8851c3 | crs | 933210-3 | codei |  |
+| 00e92bf401bd | crs | 933210-4 | codei |  |
+| 2e4a032b8c83 | crs | 933210-7 | codei |  |
+| 7809a6158e60 | crs | 933210-8 | codei |  |
+| 8a418f8eab4b | crs | 933210-9 | codei |  |
+| 7688ba403ef6 | crs | 933220-1 | codei |  |
+| 92c5a7ca1459 | crs | 933220-15 | codei |  |
+| 3c7a7a2e9174 | crs | 933220-16 | codei |  |
+| 9278f82f9ef8 | crs | 933220-2 | codei |  |
+| 065a2a1f3530 | crs | 933220-4 | codei |  |
+| 81c11dbfe11a | crs | 933220-5 | codei |  |
+| 3d22af32c806 | crs | 933220-6 | codei |  |
+| 5a91921ea545 | crs | 933220-7 | codei |  |
+| e50508cdaa8b | crs | 934100-1 | other |  |
+| 1a3bf494a811 | crs | 934100-10 | other |  |
+| a52b3a6a5cf5 | crs | 934100-11 | other |  |
+| 478ed91a7a31 | crs | 934100-12 | other |  |
+| 6338d1e450be | crs | 934100-13 | other |  |
+| 1e4d9357e616 | crs | 934100-14 | other |  |
+| c5ef406163e6 | crs | 934100-15 | other |  |
+| 21b398c42eb8 | crs | 934100-20 | other |  |
+| e7def5c70c32 | crs | 934100-21 | other |  |
+| d5b0c29229fa | crs | 934100-24 | other |  |
+| 71c4341d37ff | crs | 934100-25 | other |  |
+| 73f35cf71728 | crs | 934100-26 | other |  |
+| 037c5b33c343 | crs | 934100-29 | other |  |
+| 3aa1cefd1018 | crs | 934100-3 | other |  |
+| 33e14959bb1c | crs | 934100-31 | other |  |
+| 1b7c41cb3cec | crs | 934100-32 | other |  |
+| b3674d2f09cc | crs | 934100-33 | other |  |
+| ec394b941a08 | crs | 934100-5 | other |  |
+| dcd9b26f81a0 | crs | 934100-6 | other |  |
+| 41f5f219eeac | crs | 934100-7 | other |  |
+| 7ce58b169bea | crs | 934100-8 | other |  |
+| 456c3e75e6a6 | crs | 934101-10 | other |  |
+| 92cb670ddd41 | crs | 934101-8 | other |  |
+| 5d34d7818c10 | crs | 934101-9 | other |  |
+| 9cea99ff6288 | crs | 934110-3 | other |  |
+| 51be1e082fbf | crs | 934110-5 | other |  |
+| 03e85ca4bff5 | crs | 934110-9 | other |  |
+| 2a5848bdd7f4 | crs | 934120-2 | other |  |
+| dc285a1106fb | crs | 934120-20 | other |  |
+| 95c3642f5972 | crs | 934120-25 | other |  |
+| aac99a94afbc | crs | 934120-26 | other |  |
+| 6a35fa1ce177 | crs | 934120-38 | other |  |
+| fd39cbdaf7cc | crs | 934120-39 | other |  |
+| 6696b08317e8 | crs | 934120-41 | other |  |
+| eadb43d7f6d0 | crs | 934120-42 | other |  |
+| 237cda874177 | crs | 934120-45 | other |  |
+| bdf607687afd | crs | 934120-46 | other |  |
+| 064a8d3561a2 | crs | 934120-47 | other |  |
+| a3eb0b902a67 | crs | 934120-48 | other |  |
+| a0a2d5ca48fc | crs | 934120-49 | other |  |
+| 54fa4b7e549b | crs | 934130-12 | other |  |
+| 65788d1a84e6 | crs | 934140-1 | other |  |
+| fe1be6f7941f | crs | 934140-10 | other |  |
+| 0ee6f9e2b173 | crs | 934140-11 | other |  |
+| 6e8c2264bb4f | crs | 934140-12 | other |  |
+| 61c2288b4d2f | crs | 934140-13 | other |  |
+| aed67a581873 | crs | 934140-14 | other |  |
+| 228fd560810f | crs | 934140-16 | other |  |
+| e24f6c30b3e3 | crs | 934140-17 | other |  |
+| 697e126e2836 | crs | 934140-19 | other |  |
+| ba9bf16180bb | crs | 934140-2 | other |  |
+| a6fb95d132ff | crs | 934140-20 | other |  |
+| 215d3f9dd2b1 | crs | 934140-24 | other |  |
+| fb0138a3b01e | crs | 934140-26 | other |  |
+| 43ab9aae2493 | crs | 934140-27 | other |  |
+| b25839fd453e | crs | 934140-28 | other |  |
+| fe0f59c0dd29 | crs | 934140-29 | other |  |
+| b11554c54341 | crs | 934140-3 | other |  |
+| 4675e87225f3 | crs | 934140-30 | other |  |
+| c9ee89f88710 | crs | 934140-31 | other |  |
+| e0e2c9b8ef5c | crs | 934140-32 | other |  |
+| 30fdb6f7ef4f | crs | 934140-33 | other |  |
+| 5350c9c6f0ae | crs | 934140-34 | other |  |
+| f39fa0927fa7 | crs | 934140-36 | other |  |
+| 7c3eca101f8b | crs | 934140-39 | other |  |
+| 5ad838569a62 | crs | 934140-43 | other |  |
+| 32b454324f00 | crs | 934140-6 | other |  |
+| 82ad7fa989f3 | crs | 934140-7 | other |  |
+| 72fd8c480125 | crs | 934140-8 | other |  |
+| 0922dbe5c13e | crs | 934140-9 | other |  |
+| b22f2f293774 | crs | 934160-12 | other |  |
+| 5c130ca3f8f4 | crs | 934160-13 | other |  |
+| a2948ff05f79 | crs | 934160-15 | other |  |
+| afb880f8bef1 | crs | 934160-17 | other |  |
+| 2cea77512394 | crs | 934160-2 | other |  |
+| 77d2d5456a7c | crs | 934160-21 | other |  |
+| 7224f6950261 | crs | 934160-22 | other |  |
+| 8b346b2c749a | crs | 934160-25 | other |  |
+| dd803f3afa7c | crs | 934160-3 | other |  |
+| df4c07cc9060 | crs | 934160-4 | other |  |
+| 2359a9c3221b | crs | 934160-5 | other |  |
+| 162873d55d45 | crs | 934160-7 | other |  |
+| 5196ef9562a2 | crs | 934160-8 | other |  |
+| de27b403b70b | crs | 934160-9 | other |  |
+| ac5302b5b391 | crs | 934170-1 | other |  |
+| 847a122b79e3 | crs | 934170-3 | other |  |
+| 2dac73f1c249 | crs | 934170-4 | other |  |
+| eb4257b07115 | crs | 934180-2 | other |  |
+| 080059212343 | crs | 934190-1 | other |  |
+| f7961361709f | crs | 934190-10 | other |  |
+| 5cd1958d0be5 | crs | 934190-12 | other |  |
+| 23fc77a33b65 | crs | 934190-13 | other |  |
+| 0b93905343f4 | crs | 934190-14 | other |  |
+| 18423eda645f | crs | 934190-15 | other |  |
+| 4c3a198c8a0b | crs | 934190-16 | other |  |
+| 1afc614de45d | crs | 934190-4 | other |  |
+| e5a8065e3a6f | crs | 934190-5 | other |  |
+| 4da12650f9f9 | crs | 934190-7 | other |  |
+| fad91a12a333 | crs | 934190-9 | other |  |
+| cc10696bf985 | crs | 934200-11 | other |  |
+| 33ea85952b31 | crs | 934200-12 | other |  |
+| b63c53f1aa5d | crs | 934200-13 | other |  |
+| b5b2901798dc | crs | 934200-16 | other |  |
+| de477f9dac17 | crs | 934210-10 | other |  |
+| 5f207e57d472 | crs | 934210-3 | other |  |
+| 875d53654306 | crs | 934210-4 | other |  |
+| a4ae5447665e | crs | 934220-1 | other |  |
+| b5e10f8e9f1d | crs | 934220-6 | other |  |
+| 007ca9129c61 | crs | 934220-7 | other |  |
+| 63972d33d977 | crs | 941110-11 | xss |  |
+| b33a919c9b56 | crs | 941110-12 | xss |  |
+| df1ba1f2c4a1 | crs | 941110-3 | xss |  |
+| b7e84014f642 | crs | 941110-6 | xss |  |
+| ad4cac8ca2ea | crs | 941110-7 | xss |  |
+| 20567c674c8d | crs | 941110-8 | xss |  |
+| 537d6577bac2 | crs | 941110-9 | xss |  |
+| f8f9bfaeb4b4 | crs | 941120-1 | xss |  |
+| cad6438208e2 | crs | 941120-10 | xss |  |
+| a2e3fd3c6e07 | crs | 941120-12 | xss |  |
+| 9820e00dbcb3 | crs | 941120-13 | xss |  |
+| fea2f2a7314a | crs | 941120-2 | xss |  |
+| 87a77f6505b2 | crs | 941120-24 | xss |  |
+| cc16057ed017 | crs | 941120-25 | xss |  |
+| 23c9fb85ad92 | crs | 941120-4 | xss |  |
+| cdb2b59bdd33 | crs | 941120-51 | xss |  |
+| e743c6c1018f | crs | 941130-15 | xss |  |
+| f1a2b3d4fdc8 | crs | 941130-19 | xss |  |
+| 38444e6b28b4 | crs | 941130-20 | xss |  |
+| 29ae2ba51fa1 | crs | 941130-5 | xss |  |
+| d4eeeba4cac1 | crs | 941140-10 | xss |  |
+| 6d5f74ad0361 | crs | 941140-4 | xss |  |
+| 83f6b1cd9dbb | crs | 941140-7 | xss |  |
+| d5a505d53092 | crs | 941150-1 | xss |  |
+| 76358e5f74f3 | crs | 941160-10 | xss |  |
+| 62c1ab8a6344 | crs | 941160-11 | xss |  |
+| 1a477ba95cdc | crs | 941160-12 | xss |  |
+| 27ec59463ee9 | crs | 941160-13 | xss |  |
+| b10eb8a92030 | crs | 941160-16 | xss |  |
+| d758f7bf6df1 | crs | 941160-17 | xss |  |
+| 87eb78856ccf | crs | 941160-3 | xss |  |
+| 29f1595d39b5 | crs | 941160-4 | xss |  |
+| 327a23845850 | crs | 941160-7 | xss |  |
+| c4004b167e9a | crs | 941160-8 | xss |  |
+| 9bbf8cadd6d9 | crs | 941160-9 | xss |  |
+| a8cab5255ca8 | crs | 941170-4 | xss |  |
+| 682f343bbe36 | crs | 941170-6 | xss |  |
+| 77a5b3d8b5d6 | crs | 941180-1 | xss |  |
+| c00b06fb6c7a | crs | 941180-3 | xss |  |
+| 568e2b434b9e | crs | 941180-6 | xss |  |
+| cbbb0b28eb18 | crs | 941180-8 | xss |  |
+| 065bf7c4c7f7 | crs | 941180-9 | xss |  |
+| 7bdc41a3d27d | crs | 941181-1 | xss |  |
+| bd49b03c28f3 | crs | 941181-3 | xss |  |
+| cc464809ca31 | crs | 941181-4 | xss |  |
+| 5c1e6a72e7b3 | crs | 941190-3 | xss |  |
+| 676d3fa0984c | crs | 941200-1 | xss |  |
+| 333e36258051 | crs | 941200-2 | xss |  |
+| 32b3aee4c9c4 | crs | 941200-3 | xss |  |
+| 43f2ce716dcc | crs | 941200-4 | xss |  |
+| a5e559410d8b | crs | 941210-2 | xss |  |
+| f389a237e877 | crs | 941240-2 | xss |  |
+| 3df105bbc4d8 | crs | 941300-1 | xss |  |
+| 21eb77d05a76 | crs | 941310-1 | xss |  |
+| a2942c63fb5d | crs | 941310-12 | xss |  |
+| 6aacb5af9829 | crs | 941310-2 | xss |  |
+| 18b386696684 | crs | 941320-1 | xss |  |
+| 4d6604d96316 | crs | 941330-1 | xss |  |
+| fe48eb6a2b20 | crs | 941340-1 | xss |  |
+| cf021d688862 | crs | 941360-2 | xss |  |
+| 6eb5f05d6893 | crs | 941370-10 | xss |  |
+| 25c8d2adbd60 | crs | 941370-2 | xss |  |
+| b2419f5bc35e | crs | 941370-3 | xss |  |
+| 1a3638f3d77b | crs | 941370-7 | xss |  |
+| 9dc302e8fa8e | crs | 941370-8 | xss |  |
+| 7a764a8baec6 | crs | 941370-9 | xss |  |
+| 4b020a8599b5 | crs | 941390-1 | xss |  |
+| 6c339ca48efa | crs | 941390-3 | xss |  |
+| 2f9cb3eb7176 | crs | 941390-4 | xss |  |
+| 6dee8bddd1ff | crs | 941390-5 | xss |  |
+| 3badcf1c4a81 | crs | 941390-7 | xss |  |
+| a8fa63efb773 | crs | 941390-8 | xss |  |
+| dd3e8fd29009 | crs | 941390-9 | xss |  |
+| ee2cc254c411 | crs | 941400-1 | xss |  |
+| 7faf699c7585 | crs | 941400-3 | xss |  |
+| 9594a63655a5 | crs | 941400-4 | xss |  |
+| 67816b4b265d | crs | 941400-5 | xss |  |
+| 71ff1eeb504d | crs | 941400-7 | xss |  |
+| 618b94bec7e9 | crs | 942100-16 | sqli |  |
+| 2dfd4cc1cc0e | crs | 942100-17 | sqli |  |
+| b2b4fc9af461 | crs | 942101-1 | sqli |  |
+| 0a43c8224e73 | crs | 942101-5 | sqli |  |
+| e56f8673c042 | crs | 942101-7 | sqli |  |
+| 31fb6e795e41 | crs | 942120-1 | sqli |  |
+| 3db5e56457fc | crs | 942120-10 | sqli |  |
+| e050554cf098 | crs | 942120-11 | sqli |  |
+| 2a54490526f7 | crs | 942120-13 | sqli |  |
+| 1130eeb0c119 | crs | 942120-14 | sqli |  |
+| bc89f7ebe394 | crs | 942120-15 | sqli |  |
+| e14491975a79 | crs | 942120-19 | sqli |  |
+| db6eebaa6f4d | crs | 942120-2 | sqli |  |
+| 9d42907f6710 | crs | 942120-20 | sqli |  |
+| 53ec5d781bb8 | crs | 942120-21 | sqli |  |
+| 81871ac63691 | crs | 942120-26 | sqli |  |
+| 0e3d72a1d650 | crs | 942120-31 | sqli |  |
+| b1282fec2e90 | crs | 942120-32 | sqli |  |
+| 730f80ae4597 | crs | 942120-35 | sqli |  |
+| ec9d2e416bdd | crs | 942120-37 | sqli |  |
+| cc589ef5ba84 | crs | 942120-4 | sqli |  |
+| def0f080f313 | crs | 942120-42 | sqli |  |
+| b0de9ec68d37 | crs | 942120-43 | sqli |  |
+| 0e438a3194c1 | crs | 942120-44 | sqli |  |
+| 5992d4ac5e0f | crs | 942120-6 | sqli |  |
+| 651f2cfd0409 | crs | 942120-7 | sqli |  |
+| 2b215a29c028 | crs | 942120-9 | sqli |  |
+| c786e26b3792 | crs | 942130-10 | sqli |  |
+| d0679f2feb44 | crs | 942130-2 | sqli |  |
+| 02b5484ebbf2 | crs | 942130-6 | sqli |  |
+| 78bbde8ea836 | crs | 942130-9 | sqli |  |
+| 6f9637ed1169 | crs | 942131-2 | sqli |  |
+| 858503cd60a9 | crs | 942131-6 | sqli |  |
+| 703fde46b32c | crs | 942140-1 | sqli |  |
+| 5c597f590317 | crs | 942140-10 | sqli |  |
+| b1b5518e7c36 | crs | 942140-11 | sqli |  |
+| 6bdfc4067799 | crs | 942140-12 | sqli |  |
+| 5fe92d43c4ea | crs | 942140-13 | sqli |  |
+| 69ac4159080c | crs | 942140-15 | sqli |  |
+| 08357782f1b3 | crs | 942140-17 | sqli |  |
+| ac3721b9b2e6 | crs | 942140-2 | sqli |  |
+| 2cdea8a349e8 | crs | 942140-3 | sqli |  |
+| 21176df65db6 | crs | 942140-4 | sqli |  |
+| 4382cf709154 | crs | 942140-5 | sqli |  |
+| a488f4c610a1 | crs | 942140-6 | sqli |  |
+| 944871a2980a | crs | 942150-12 | sqli |  |
+| 9784bab1b679 | crs | 942150-13 | sqli |  |
+| 7223ca713244 | crs | 942150-17 | sqli |  |
+| bfc6d0458e33 | crs | 942150-18 | sqli |  |
+| a219f87beb95 | crs | 942150-3 | sqli |  |
+| 305f484fc08f | crs | 942150-8 | sqli |  |
+| a0109f66981e | crs | 942151-23 | sqli |  |
+| 84e47b492e7f | crs | 942151-24 | sqli |  |
+| 874aa4f264a6 | crs | 942151-25 | sqli |  |
+| efb5c2c59309 | crs | 942151-26 | sqli |  |
+| 7a15db7d62b2 | crs | 942151-27 | sqli |  |
+| c6ed2158e2b9 | crs | 942151-28 | sqli |  |
+| ed67a288d136 | crs | 942151-29 | sqli |  |
+| 323ead182ac9 | crs | 942151-30 | sqli |  |
+| 0f0f185aee10 | crs | 942151-31 | sqli |  |
+| 0d9901103470 | crs | 942151-32 | sqli |  |
+| 73e76ee66511 | crs | 942151-33 | sqli |  |
+| 58fe8febf9e9 | crs | 942151-34 | sqli |  |
+| bb82e30d55c3 | crs | 942151-35 | sqli |  |
+| e233391b969a | crs | 942151-37 | sqli |  |
+| d687656e8db7 | crs | 942151-39 | sqli |  |
+| 28ec79681130 | crs | 942151-4 | sqli |  |
+| 79969c76c9e4 | crs | 942151-40 | sqli |  |
+| 7e22129ab587 | crs | 942151-41 | sqli |  |
+| ceb58d849339 | crs | 942151-42 | sqli |  |
+| a6b30e854b49 | crs | 942151-43 | sqli |  |
+| ba96949a7ea4 | crs | 942151-44 | sqli |  |
+| 718508422c8c | crs | 942151-45 | sqli |  |
+| b88f610a8f5c | crs | 942151-47 | sqli |  |
+| 76af3b2da924 | crs | 942151-48 | sqli |  |
+| 1be3a700f8dc | crs | 942151-50 | sqli |  |
+| fe750fd5d45a | crs | 942151-51 | sqli |  |
+| 3ebe92679cfb | crs | 942151-52 | sqli |  |
+| 619a2e7f2d02 | crs | 942151-53 | sqli |  |
+| c240fc9b95fa | crs | 942151-54 | sqli |  |
+| bcd9ff408e19 | crs | 942151-56 | sqli |  |
+| 3958a261f631 | crs | 942151-57 | sqli |  |
+| 3b1fe610fc01 | crs | 942151-58 | sqli |  |
+| 6d1639b00065 | crs | 942151-59 | sqli |  |
+| 0952a05fe0a9 | crs | 942151-60 | sqli |  |
+| 5689cb064bbf | crs | 942151-61 | sqli |  |
+| d37ddda8ea59 | crs | 942151-62 | sqli |  |
+| 0b97e99f00c4 | crs | 942151-63 | sqli |  |
+| f4d445db940f | crs | 942151-64 | sqli |  |
+| 4606289ab0e6 | crs | 942151-65 | sqli |  |
+| 68255ea0a1e5 | crs | 942151-68 | sqli |  |
+| 509ec6f063bf | crs | 942151-69 | sqli |  |
+| 287434cf0bf7 | crs | 942151-7 | sqli |  |
+| 1491ac3bbc7b | crs | 942151-70 | sqli |  |
+| 3d073a33ee4a | crs | 942151-71 | sqli |  |
+| b9e1499724bb | crs | 942152-1 | sqli |  |
+| 9562c3036ede | crs | 942152-3 | sqli |  |
+| 594e82dccc4f | crs | 942160-10 | sqli |  |
+| 9cf141ebdd55 | crs | 942160-11 | sqli |  |
+| 1a7519015e60 | crs | 942160-13 | sqli |  |
+| e4cbc15c286c | crs | 942160-15 | sqli |  |
+| 62f33c8039ab | crs | 942160-4 | sqli |  |
+| 6dee08bc0c67 | crs | 942170-4 | sqli |  |
+| 2d4b5ca89c90 | crs | 942180-1 | sqli |  |
+| 14e37a89e860 | crs | 942180-2 | sqli |  |
+| 1fb709f87f65 | crs | 942180-3 | sqli |  |
+| 66c101c217a9 | crs | 942180-5 | sqli |  |
+| f809eb239cb7 | crs | 942180-6 | sqli |  |
+| 889d4abb7601 | crs | 942180-7 | sqli |  |
+| 845bf1125041 | crs | 942180-8 | sqli |  |
+| 612347fed086 | crs | 942190-10 | sqli |  |
+| 2178069493f6 | crs | 942190-11 | sqli |  |
+| 3f172ff1c424 | crs | 942190-13 | sqli |  |
+| 08ec07bb7b5d | crs | 942190-17 | sqli |  |
+| 9c522489d50a | crs | 942190-19 | sqli |  |
+| 599fdc2fceb1 | crs | 942190-22 | sqli |  |
+| 5a012f944ea9 | crs | 942190-23 | sqli |  |
+| b06f0d1cac4a | crs | 942190-24 | sqli |  |
+| 48bdba591af6 | crs | 942190-27 | sqli |  |
+| 200ffee2dba1 | crs | 942190-32 | sqli |  |
+| 0d50898023bb | crs | 942190-36 | sqli |  |
+| 1b8c8c614bab | crs | 942190-37 | sqli |  |
+| 3afb1bccbfc0 | crs | 942190-49 | sqli |  |
+| edd04f05e227 | crs | 942190-6 | sqli |  |
+| 8b05ab96b654 | crs | 942190-7 | sqli |  |
+| fc3ba50f9e78 | crs | 942190-8 | sqli |  |
+| 35186c04b0fc | crs | 942190-9 | sqli |  |
+| e67616759534 | crs | 942200-1 | sqli |  |
+| 2e53e79a087a | crs | 942200-2 | sqli |  |
+| dd7d3656b910 | crs | 942200-3 | sqli |  |
+| 29cf3ecad7f7 | crs | 942200-4 | sqli |  |
+| 6bfa6abf211e | crs | 942200-5 | sqli |  |
+| 57f68934bbfd | crs | 942210-1 | sqli |  |
+| e0f60819142a | crs | 942210-10 | sqli |  |
+| 77b6f38b7278 | crs | 942210-11 | sqli |  |
+| ab567d6cdbeb | crs | 942210-13 | sqli |  |
+| 54f507f2c63a | crs | 942210-14 | sqli |  |
+| 829d90ab10ee | crs | 942210-15 | sqli |  |
+| ed0372d87585 | crs | 942210-16 | sqli |  |
+| 163ffe489b8d | crs | 942210-17 | sqli |  |
+| 2e6192c9b306 | crs | 942210-19 | sqli |  |
+| 8f374e822720 | crs | 942210-2 | sqli |  |
+| cd4643be4d00 | crs | 942210-21 | sqli |  |
+| 66f6f93017dc | crs | 942210-22 | sqli |  |
+| ad88d1f94f04 | crs | 942210-23 | sqli |  |
+| 6457faeae560 | crs | 942210-25 | sqli |  |
+| a61a37c5fe2a | crs | 942210-27 | sqli |  |
+| 00bd1cb5e8ab | crs | 942210-29 | sqli |  |
+| ff22feac3dd6 | crs | 942210-3 | sqli |  |
+| 9cdb22a5d46a | crs | 942210-33 | sqli |  |
+| 2c404467425e | crs | 942210-34 | sqli |  |
+| bbe36d1b162e | crs | 942210-37 | sqli |  |
+| d7ea22961b2c | crs | 942210-38 | sqli |  |
+| 922d06b5f803 | crs | 942210-39 | sqli |  |
+| d7efae8ba7c6 | crs | 942210-4 | sqli |  |
+| 0f43fa72e5c0 | crs | 942210-40 | sqli |  |
+| 015a7f991c50 | crs | 942210-41 | sqli |  |
+| 6032a631879d | crs | 942210-46 | sqli |  |
+| 9d155aafced7 | crs | 942210-5 | sqli |  |
+| 2b1608a262cd | crs | 942210-52 | sqli |  |
+| 711dd820fcd8 | crs | 942210-53 | sqli |  |
+| 8fa43a13cbc6 | crs | 942210-54 | sqli |  |
+| 21cba44add58 | crs | 942210-59 | sqli |  |
+| d3a0c3158ef2 | crs | 942210-6 | sqli |  |
+| d949672a8e3c | crs | 942210-60 | sqli |  |
+| 767c0f14af2a | crs | 942210-61 | sqli |  |
+| 83cea9851fca | crs | 942210-62 | sqli |  |
+| b01ea8427693 | crs | 942210-64 | sqli |  |
+| 47b183803a4c | crs | 942210-66 | sqli |  |
+| 174b4fd6f0a8 | crs | 942210-67 | sqli |  |
+| 56401c807e86 | crs | 942210-68 | sqli |  |
+| 053be2af14b6 | crs | 942210-70 | sqli |  |
+| eaa77b756eec | crs | 942210-75 | sqli |  |
+| d6ba057481a6 | crs | 942210-76 | sqli |  |
+| 8bdd6067e21e | crs | 942210-78 | sqli |  |
+| 216593604489 | crs | 942210-79 | sqli |  |
+| b4616e1753eb | crs | 942210-80 | sqli |  |
+| d893345a642c | crs | 942220-1 | sqli |  |
+| 19daba74104b | crs | 942220-2 | sqli |  |
+| 35dcdab01392 | crs | 942230-1 | sqli |  |
+| 3467b7b51b91 | crs | 942230-10 | sqli |  |
+| cc72f0742a9e | crs | 942230-12 | sqli |  |
+| ce78a11c6d9b | crs | 942230-2 | sqli |  |
+| 4c555ec60d26 | crs | 942230-6 | sqli |  |
+| 76cba4e0d451 | crs | 942230-7 | sqli |  |
+| dca06f11d0b2 | crs | 942240-10 | sqli |  |
+| 9aa42769354b | crs | 942240-11 | sqli |  |
+| ccc1917f9706 | crs | 942251-1 | sqli |  |
+| f8aee24afb89 | crs | 942260-1 | sqli |  |
+| 60275722c0ec | crs | 942270-1 | sqli |  |
+| c99ac5e8a50e | crs | 942290-2 | sqli |  |
+| d0e3ae213758 | crs | 942300-1 | sqli |  |
+| 8794153c51e5 | crs | 942310-3 | sqli |  |
+| 39ed0fb73c9b | crs | 942320-2 | sqli |  |
+| d4931d920a2c | crs | 942320-3 | sqli |  |
+| 1de227c77967 | crs | 942321-1 | sqli |  |
+| 60f983547844 | crs | 942321-2 | sqli |  |
+| 3988729b92d8 | crs | 942330-1 | sqli |  |
+| 8952d817e67e | crs | 942330-2 | sqli |  |
+| ab61713a6d63 | crs | 942330-3 | sqli |  |
+| a7ad0b16fcb2 | crs | 942340-1 | sqli |  |
+| 5104958428f9 | crs | 942340-3 | sqli |  |
+| a5ebda52e4b6 | crs | 942340-6 | sqli |  |
+| 68f35c407a38 | crs | 942340-7 | sqli |  |
+| c0db0c271bdd | crs | 942350-1 | sqli |  |
+| 992c62bdee0a | crs | 942350-4 | sqli |  |
+| 37013ed4d097 | crs | 942350-5 | sqli |  |
+| ff0ca46aead9 | crs | 942350-6 | sqli |  |
+| db093a5e33e0 | crs | 942350-8 | sqli |  |
+| 50734ef5d107 | crs | 942360-1 | sqli |  |
+| e7ccb7d59688 | crs | 942360-10 | sqli |  |
+| 78e11c790c41 | crs | 942360-11 | sqli |  |
+| e3de0f735bd3 | crs | 942360-13 | sqli |  |
+| cf46efac1748 | crs | 942360-2 | sqli |  |
+| 60bf88c1cee0 | crs | 942360-3 | sqli |  |
+| 2b6277791436 | crs | 942360-4 | sqli |  |
+| ee167dc285c9 | crs | 942360-6 | sqli |  |
+| e45cbaea6879 | crs | 942360-8 | sqli |  |
+| 7599188c49ee | crs | 942360-9 | sqli |  |
+| 388f725cb853 | crs | 942361-1 | sqli |  |
+| dc6482cb8964 | crs | 942361-2 | sqli |  |
+| a1d9170e129b | crs | 942361-3 | sqli |  |
+| cc8edabb03df | crs | 942361-4 | sqli |  |
+| b95db452fdf9 | crs | 942361-5 | sqli |  |
+| 074d3f9bf9f1 | crs | 942361-7 | sqli |  |
+| 13a42a9d1059 | crs | 942362-12 | sqli |  |
+| e5bf174ec746 | crs | 942362-14 | sqli |  |
+| 64048afb7fbc | crs | 942362-16 | sqli |  |
+| 4b5be8b8ab7a | crs | 942362-17 | sqli |  |
+| 764a693535ac | crs | 942362-18 | sqli |  |
+| eb1a814bcb8b | crs | 942362-19 | sqli |  |
+| ae2636272b17 | crs | 942362-20 | sqli |  |
+| 212a43caafbc | crs | 942362-22 | sqli |  |
+| b2041854e82d | crs | 942362-25 | sqli |  |
+| f053a62b68cc | crs | 942362-29 | sqli |  |
+| c3a4dedea5a6 | crs | 942362-6 | sqli |  |
+| 4b2777e13325 | crs | 942362-8 | sqli |  |
+| 9e6aa723ec77 | crs | 942370-2 | sqli |  |
+| 7145463a2999 | crs | 942370-6 | sqli |  |
+| 31e14338be13 | crs | 942370-8 | sqli |  |
+| 8d89ad659a94 | crs | 942370-9 | sqli |  |
+| 54bbf51da796 | crs | 942380-15 | sqli |  |
+| 6c108c4064ea | crs | 942380-17 | sqli |  |
+| d914d8db1a1d | crs | 942380-19 | sqli |  |
+| 63f88be85d16 | crs | 942380-2 | sqli |  |
+| d2b72dbb5420 | crs | 942380-21 | sqli |  |
+| 04e2279bbad7 | crs | 942380-22 | sqli |  |
+| 8af893f23b87 | crs | 942380-23 | sqli |  |
+| e070936b91b3 | crs | 942380-24 | sqli |  |
+| a85eb84d3d75 | crs | 942380-25 | sqli |  |
+| d175ed14aa53 | crs | 942380-28 | sqli |  |
+| 0937621b1af1 | crs | 942380-29 | sqli |  |
+| fe873d81eadf | crs | 942380-3 | sqli |  |
+| 6a49862b36af | crs | 942380-30 | sqli |  |
+| ac8c1eb35e64 | crs | 942380-33 | sqli |  |
+| e0cb8350ea15 | crs | 942380-34 | sqli |  |
+| 69513115e489 | crs | 942380-35 | sqli |  |
+| 28ad7fb06182 | crs | 942380-37 | sqli |  |
+| 533c3dd99491 | crs | 942380-38 | sqli |  |
+| 12886f038647 | crs | 942380-39 | sqli |  |
+| 0bc51de74299 | crs | 942380-4 | sqli |  |
+| c68e5d073ab5 | crs | 942380-40 | sqli |  |
+| 10bb4ad8e9d1 | crs | 942380-41 | sqli |  |
+| 65b68a3f0399 | crs | 942380-42 | sqli |  |
+| 7eeca8a12a6c | crs | 942380-43 | sqli |  |
+| 7a9ee4d973f2 | crs | 942380-5 | sqli |  |
+| 9bdcb75e2ea4 | crs | 942380-6 | sqli |  |
+| 6eabade57d28 | crs | 942390-12 | sqli |  |
+| eae6722f1e23 | crs | 942390-13 | sqli |  |
+| 1ca12cb77f8b | crs | 942390-15 | sqli |  |
+| eab3377970ce | crs | 942390-16 | sqli |  |
+| 5c71be09b1e9 | crs | 942390-18 | sqli |  |
+| be8a36bd9a27 | crs | 942390-19 | sqli |  |
+| 925b47d61eb0 | crs | 942390-2 | sqli |  |
+| 504a00e5b7c6 | crs | 942390-20 | sqli |  |
+| 8d061f6dfe7a | crs | 942390-26 | sqli |  |
+| 4610a5926ed9 | crs | 942390-28 | sqli |  |
+| 1afd54ca6911 | crs | 942390-30 | sqli |  |
+| aeab1de90034 | crs | 942390-31 | sqli |  |
+| 91ad3b5eedc3 | crs | 942390-4 | sqli |  |
+| c067457e124c | crs | 942390-7 | sqli |  |
+| 3c4ca1488b35 | crs | 942390-8 | sqli |  |
+| 082f57896041 | crs | 942390-9 | sqli |  |
+| 592dcf8e014a | crs | 942400-1 | sqli |  |
+| 03f19d177b07 | crs | 942410-1 | sqli |  |
+| 60e16c80b2b1 | crs | 942410-10 | sqli |  |
+| 7cc2b993b9d5 | crs | 942410-11 | sqli |  |
+| 3b07078ce1f7 | crs | 942410-12 | sqli |  |
+| 58b4f3a7d089 | crs | 942410-13 | sqli |  |
+| e73b4da8c91a | crs | 942410-14 | sqli |  |
+| 2a5193a0cc13 | crs | 942410-15 | sqli |  |
+| ea5afca9726f | crs | 942410-18 | sqli |  |
+| ac834308c534 | crs | 942410-19 | sqli |  |
+| e3540a42e9df | crs | 942410-20 | sqli |  |
+| 32b54f8e9d0b | crs | 942410-21 | sqli |  |
+| 9f70a17100f1 | crs | 942410-22 | sqli |  |
+| 890cd41fd1ab | crs | 942410-23 | sqli |  |
+| 6e2e4aec01b5 | crs | 942410-24 | sqli |  |
+| a966e6760053 | crs | 942410-25 | sqli |  |
+| 3d3a307735be | crs | 942410-26 | sqli |  |
+| 006836f247f1 | crs | 942410-27 | sqli |  |
+| cb6648651fe8 | crs | 942410-28 | sqli |  |
+| d1318bcbd14e | crs | 942410-29 | sqli |  |
+| 154fb104d283 | crs | 942410-3 | sqli |  |
+| 420bafa893b3 | crs | 942410-30 | sqli |  |
+| 64efdaa392aa | crs | 942410-31 | sqli |  |
+| 55de459e0ca1 | crs | 942410-32 | sqli |  |
+| bf3a3da5de43 | crs | 942410-33 | sqli |  |
+| 0c6046b5fb11 | crs | 942410-34 | sqli |  |
+| 61067eddd384 | crs | 942410-35 | sqli |  |
+| eec8486e1e90 | crs | 942410-36 | sqli |  |
+| a295c352d8d1 | crs | 942410-4 | sqli |  |
+| 8e4e5b3549b8 | crs | 942410-40 | sqli |  |
+| bf5b850f7908 | crs | 942410-41 | sqli |  |
+| 3d5cd540cc17 | crs | 942410-43 | sqli |  |
+| effeab51ff8b | crs | 942410-44 | sqli |  |
+| 90e83176dae8 | crs | 942410-45 | sqli |  |
+| b99f60cddbc1 | crs | 942410-47 | sqli |  |
+| 48ca98fdc1e7 | crs | 942410-5 | sqli |  |
+| 5df4664ea783 | crs | 942410-50 | sqli |  |
+| 0e5fc9148286 | crs | 942410-51 | sqli |  |
+| 0306d6779c02 | crs | 942410-53 | sqli |  |
+| 5feac9c7e27f | crs | 942410-55 | sqli |  |
+| 83884a74ad8f | crs | 942410-56 | sqli |  |
+| 9b9453173922 | crs | 942410-57 | sqli |  |
+| d392c899f317 | crs | 942410-58 | sqli |  |
+| e447b4bf515a | crs | 942410-6 | sqli |  |
+| ae3e3d89a100 | crs | 942410-60 | sqli |  |
+| cc59d2a2c60e | crs | 942410-65 | sqli |  |
+| cfe40a4ca0ed | crs | 942410-67 | sqli |  |
+| c1ab09fe54cc | crs | 942410-68 | sqli |  |
+| bde182737612 | crs | 942410-7 | sqli |  |
+| ae16f86aa0f8 | crs | 942410-8 | sqli |  |
+| 48738cd787ea | crs | 942410-9 | sqli |  |
+| d6f224e248c6 | crs | 942420-11 | sqli |  |
+| d9e2bde9b9e9 | crs | 942420-4 | sqli |  |
+| ddfa6aa937e8 | crs | 942420-5 | sqli |  |
+| df8b24973fe8 | crs | 942421-1 | sqli |  |
+| 246aa52ee15b | crs | 942421-2 | sqli |  |
+| 72e21766caee | crs | 942430-1 | sqli |  |
+| fc027463cae7 | crs | 942430-16 | sqli |  |
+| 11b24089c27c | crs | 942430-3 | sqli |  |
+| 89c79a28960d | crs | 942430-4 | sqli |  |
+| a4f2f4a6bbcf | crs | 942430-5 | sqli |  |
+| e9ad3feb7bd6 | crs | 942430-6 | sqli |  |
+| 1ab5f808610d | crs | 942431-1 | sqli |  |
+| 7162404c231b | crs | 942431-4 | sqli |  |
+| 1739e1e23200 | crs | 942431-5 | sqli |  |
+| cea35ccb5775 | crs | 942432-3 | sqli |  |
+| 410dcbca743a | crs | 942432-4 | sqli |  |
+| e13334e2aa28 | crs | 942440-12 | sqli |  |
+| d22e2e30a20e | crs | 942440-3 | sqli |  |
+| 985595d90985 | crs | 942440-5 | sqli |  |
+| 93c0e00d8144 | crs | 942440-6 | sqli |  |
+| bdaffdba25aa | crs | 942440-7 | sqli |  |
+| 17ca09aa8047 | crs | 942450-1 | sqli |  |
+| f569142b4047 | crs | 942450-3 | sqli |  |
+| bcd75111e754 | crs | 942450-6 | sqli |  |
+| 53d74c076603 | crs | 942450-7 | sqli |  |
+| c41b52452882 | crs | 942470-1 | sqli |  |
+| 1d4e4330dc9f | crs | 942470-10 | sqli |  |
+| 6ad683e80f41 | crs | 942470-3 | sqli |  |
+| 517adf6c0fa3 | crs | 942470-4 | sqli |  |
+| b37956562e79 | crs | 942470-6 | sqli |  |
+| e6f98ba5ecba | crs | 942470-8 | sqli |  |
+| 3a8b2fad35eb | crs | 942470-9 | sqli |  |
+| 01f9a918b80a | crs | 942480-1 | sqli |  |
+| 88c89a93208b | crs | 942480-10 | sqli |  |
+| e59f3ee46945 | crs | 942480-11 | sqli |  |
+| cb6596c9e77f | crs | 942480-2 | sqli |  |
+| 6860c1170c12 | crs | 942490-1 | sqli |  |
+| 7e1cb4bfffb3 | crs | 942490-10 | sqli |  |
+| 74ff87d09c39 | crs | 942490-11 | sqli |  |
+| 9bae8bc5e428 | crs | 942490-12 | sqli |  |
+| 4bbffa21431f | crs | 942490-13 | sqli |  |
+| b226db36e06d | crs | 942490-14 | sqli |  |
+| f0255cb7485d | crs | 942490-15 | sqli |  |
+| 49d6486ef2b4 | crs | 942490-16 | sqli |  |
+| 98c06f59a2c1 | crs | 942490-17 | sqli |  |
+| 93ba7e80dcdb | crs | 942490-19 | sqli |  |
+| 41891efe1f32 | crs | 942490-20 | sqli |  |
+| 148ded10954e | crs | 942490-6 | sqli |  |
+| bb4dc3490c9e | crs | 942490-8 | sqli |  |
+| 81b9580dd7d2 | crs | 942490-9 | sqli |  |
+| bc89f2398cff | crs | 942500-2 | sqli |  |
+| 02ebd6345a56 | crs | 942500-5 | sqli |  |
+| 6c4906af07fb | crs | 942520-1 | sqli |  |
+| 1ea5401a4170 | crs | 942520-11 | sqli |  |
+| 8994506fc781 | crs | 942520-12 | sqli |  |
+| 47b2b3b6fc97 | crs | 942520-13 | sqli |  |
+| 49a29c13d39a | crs | 942520-16 | sqli |  |
+| 41f804491474 | crs | 942520-18 | sqli |  |
+| 6cc92f37cf65 | crs | 942520-19 | sqli |  |
+| 109110ff639c | crs | 942520-21 | sqli |  |
+| 3ada6b7eb422 | crs | 942520-3 | sqli |  |
+| 46e8a0102cd8 | crs | 942520-4 | sqli |  |
+| a77c3e9f595a | crs | 942520-6 | sqli |  |
+| bcfda25c851c | crs | 942520-7 | sqli |  |
+| 431621214ef5 | crs | 942520-9 | sqli |  |
+| 57d91490904b | crs | 942521-17 | sqli |  |
+| b7601d940621 | crs | 942521-18 | sqli |  |
+| b69154d7bf98 | crs | 942521-20 | sqli |  |
+| 3197c19edc1d | crs | 942521-21 | sqli |  |
+| 9b6d2782ff47 | crs | 942521-23 | sqli |  |
+| d6c7b05d25a3 | crs | 942521-24 | sqli |  |
+| 4d595594dfb0 | crs | 942521-3 | sqli |  |
+| a134538dd1ad | crs | 942521-4 | sqli |  |
+| e06883c20987 | crs | 942522-1 | sqli |  |
+| 78a70736a223 | crs | 942522-3 | sqli |  |
+| 91d0a1c5c4fc | crs | 942522-7 | sqli |  |
+| d98b908efdd1 | crs | 942530-1 | sqli |  |
+| 9b906ec0bbe3 | crs | 942540-1 | sqli |  |
+| 1428f436cb78 | crs | 942540-2 | sqli |  |
+| 56b0284ca5d5 | crs | 942540-3 | sqli |  |
+| ade713d30de1 | crs | 942540-7 | sqli |  |
+| e9e80cefacc4 | crs | 942550-1 | sqli |  |
+| 474af5fbca74 | crs | 942550-10 | sqli |  |
+| 583ed10393af | crs | 942550-11 | sqli |  |
+| 91c48570191f | crs | 942550-12 | sqli |  |
+| da2eb29dcc04 | crs | 942550-15 | sqli |  |
+| 6c21aebb76a1 | crs | 942550-19 | sqli |  |
+| fbad8d2cc71a | crs | 942550-2 | sqli |  |
+| d29c42c53357 | crs | 942550-23 | sqli |  |
+| 97137df79bb9 | crs | 942550-26 | sqli |  |
+| d372c87fbead | crs | 942550-27 | sqli |  |
+| 2992dbe4e596 | crs | 942550-29 | sqli |  |
+| 09b59381b141 | crs | 942550-3 | sqli |  |
+| a9600d75cb1c | crs | 942550-30 | sqli |  |
+| 4798007b39f8 | crs | 942550-32 | sqli |  |
+| 6a18f8bba4fe | crs | 942550-33 | sqli |  |
+| 6db0872e1cf5 | crs | 942550-36 | sqli |  |
+| 4ad791e3b5cf | crs | 942550-39 | sqli |  |
+| c6aa16122dea | crs | 942550-4 | sqli |  |
+| 9154d2926a08 | crs | 942550-40 | sqli |  |
+| d6d9be621a66 | crs | 942550-46 | sqli |  |
+| 39c8a9028db6 | crs | 942550-47 | sqli |  |
+| de8878dbc115 | crs | 942550-48 | sqli |  |
+| 013c80c5edc5 | crs | 942550-5 | sqli |  |
+| d03bbbf1e48e | crs | 942550-50 | sqli |  |
+| ab5550aa037a | crs | 942550-51 | sqli |  |
+| 5afe37f36f41 | crs | 942550-7 | sqli |  |
+| b7cacb401c61 | crs | 942550-9 | sqli |  |
+| de4918682252 | crs | 942560-3 | sqli |  |
+| b6e95af78331 | crs | 943110-10 | session |  |
+| 24309572d810 | crs | 943110-11 | session |  |
+| 409a1ef15b4c | crs | 943110-12 | session |  |
+| 5839bc2337da | crs | 943110-13 | session |  |
+| eb199029b4a4 | crs | 943110-14 | session |  |
+| cdf83f4d6777 | crs | 943110-15 | session |  |
+| 586029201374 | crs | 943110-17 | session |  |
+| 80a63cfded11 | crs | 943110-18 | session |  |
+| da1598286fda | crs | 943110-19 | session |  |
+| 926230bf1107 | crs | 943110-20 | session |  |
+| 422d0cb8e81c | crs | 943110-21 | session |  |
+| 1f66f9051a6a | crs | 943110-22 | session |  |
+| cc8326fc0352 | crs | 943110-23 | session |  |
+| 2842852d0ab8 | crs | 943110-26 | session |  |
+| cc417c34a384 | crs | 943110-28 | session |  |
+| 93ad415315ee | crs | 943110-29 | session |  |
+| 9738bd58a7c0 | crs | 943110-31 | session |  |
+| b5c5b8a4b841 | crs | 943110-33 | session |  |
+| 49df347f78c8 | crs | 943110-34 | session |  |
+| 6efb3bc18a74 | crs | 943110-35 | session |  |
+| cd9a120bc011 | crs | 943110-36 | session |  |
+| bcbe9168c6fe | crs | 943110-37 | session |  |
+| 6f9a22b78e6b | crs | 943110-40 | session |  |
+| e78db0e3a4d6 | crs | 943110-42 | session |  |
+| 8431e61c29a6 | crs | 943110-5 | session |  |
+| 70cac016806c | crs | 943110-7 | session |  |
+| 2f1ed73be5f3 | crs | 943110-8 | session |  |
+| 8611aff94a81 | crs | 944100-1 | java |  |
+| 3df6d9d69673 | crs | 944120-1 | java |  |
+| 01cc7aa4a96f | crs | 944120-100 | java |  |
+| 9b073d62db2a | crs | 944120-103 | java |  |
+| 2d9820439ce1 | crs | 944120-104 | java |  |
+| 9a7d439513b5 | crs | 944120-105 | java |  |
+| a0625fe3494d | crs | 944120-106 | java |  |
+| c50b34ef08f1 | crs | 944120-107 | java |  |
+| f5f4c506c0c8 | crs | 944120-114 | java |  |
+| 190e4201be65 | crs | 944120-120 | java |  |
+| bac1d34ae1e6 | crs | 944120-121 | java |  |
+| 34b53e4944e0 | crs | 944120-122 | java |  |
+| dcea6ceaba6c | crs | 944120-123 | java |  |
+| bb63b4de1cbd | crs | 944120-124 | java |  |
+| d9f98d053ad1 | crs | 944120-13 | java |  |
+| 0078034640a4 | crs | 944120-131 | java |  |
+| 2b15e56743e1 | crs | 944120-133 | java |  |
+| c25cd96ecf81 | crs | 944120-18 | java |  |
+| da6a0c4cbe72 | crs | 944120-19 | java |  |
+| 189e69feb635 | crs | 944120-2 | java |  |
+| d1777d5c46ec | crs | 944120-20 | java |  |
+| da831e200228 | crs | 944120-21 | java |  |
+| 87f37fdb35e9 | crs | 944120-22 | java |  |
+| ea1638d11cc9 | crs | 944120-29 | java |  |
+| 5ebf1c882362 | crs | 944120-3 | java |  |
+| 6e0966ad633f | crs | 944120-30 | java |  |
+| 451576c65961 | crs | 944120-31 | java |  |
+| e87f5502ee60 | crs | 944120-35 | java |  |
+| 9f91916245a4 | crs | 944120-36 | java |  |
+| e0e381f868ab | crs | 944120-37 | java |  |
+| 102a2ec65b90 | crs | 944120-38 | java |  |
+| 2d6babba6b00 | crs | 944120-39 | java |  |
+| 23f59ccaa268 | crs | 944120-4 | java |  |
+| 2ac9f34c8738 | crs | 944120-46 | java |  |
+| f979a2688ce8 | crs | 944120-47 | java |  |
+| 4c5128e919dc | crs | 944120-5 | java |  |
+| d9cc371d85b0 | crs | 944120-52 | java |  |
+| c6bc7748a8ed | crs | 944120-53 | java |  |
+| 73a828533183 | crs | 944120-54 | java |  |
+| d2a206a6439e | crs | 944120-55 | java |  |
+| fb49d9ab99f6 | crs | 944120-56 | java |  |
+| 30386e12223b | crs | 944120-63 | java |  |
+| d066c34befce | crs | 944120-64 | java |  |
+| 26cfd0e4236a | crs | 944120-65 | java |  |
+| 213d3ff78d1a | crs | 944120-69 | java |  |
+| eabfa6a317a0 | crs | 944120-70 | java |  |
+| 7d533c6466c3 | crs | 944120-71 | java |  |
+| ddab0fc8e3f8 | crs | 944120-72 | java |  |
+| b04836d64f95 | crs | 944120-73 | java |  |
+| 6b926d0eb68a | crs | 944120-80 | java |  |
+| 525e4a134e23 | crs | 944120-86 | java |  |
+| b2e881b118e4 | crs | 944120-87 | java |  |
+| d0aa17cca969 | crs | 944120-88 | java |  |
+| f26b7e9bf20f | crs | 944120-89 | java |  |
+| bbc96d6a721e | crs | 944120-90 | java |  |
+| 11fb430ae9d1 | crs | 944130-10 | java |  |
+| 4a00c29296fb | crs | 944130-100 | java |  |
+| 26d04b9d6fab | crs | 944130-101 | java |  |
+| 59f4944a6c42 | crs | 944130-102 | java |  |
+| 174136e76abc | crs | 944130-103 | java |  |
+| 990355e13f60 | crs | 944130-104 | java |  |
+| 571e78d92268 | crs | 944130-109 | java |  |
+| 6ba0176c39a0 | crs | 944130-11 | java |  |
+| e3c183259def | crs | 944130-110 | java |  |
+| e3a12935fbfa | crs | 944130-111 | java |  |
+| 40b0ef499e3c | crs | 944130-112 | java |  |
+| 4ce50162d4fe | crs | 944130-113 | java |  |
+| 6b5228902f5c | crs | 944130-114 | java |  |
+| a0a4e267832e | crs | 944130-115 | java |  |
+| 1c34bbc8c794 | crs | 944130-12 | java |  |
+| 3f8a37d876b8 | crs | 944130-121 | java |  |
+| 22803905c414 | crs | 944130-13 | java |  |
+| 3ff6e67f7286 | crs | 944130-131 | java |  |
+| b9fe8e8770f4 | crs | 944130-132 | java |  |
+| 29fa5d275399 | crs | 944130-133 | java |  |
+| 9fab0dedb3eb | crs | 944130-134 | java |  |
+| fc3d16384b0a | crs | 944130-135 | java |  |
+| a136cffcc491 | crs | 944130-136 | java |  |
+| f096c66bae70 | crs | 944130-137 | java |  |
+| cb1b9b0918d3 | crs | 944130-14 | java |  |
+| 25156220bab8 | crs | 944130-144 | java |  |
+| bd089c53ad54 | crs | 944130-145 | java |  |
+| 34db592d6aef | crs | 944130-146 | java |  |
+| 0878b9a8c90c | crs | 944130-147 | java |  |
+| c9a8a2df9572 | crs | 944130-148 | java |  |
+| b43613f6c993 | crs | 944130-15 | java |  |
+| e31dbcb02e34 | crs | 944130-154 | java |  |
+| c3e7c34cf731 | crs | 944130-16 | java |  |
+| b1ca280c7663 | crs | 944130-166 | java |  |
+| 6ea57ac158f8 | crs | 944130-167 | java |  |
+| 0384069805b6 | crs | 944130-168 | java |  |
+| 6894b98f7d2f | crs | 944130-169 | java |  |
+| 3ac7a31190c2 | crs | 944130-170 | java |  |
+| 6fc2c017af1c | crs | 944130-176 | java |  |
+| 71c7b7b16e3e | crs | 944130-177 | java |  |
+| fb4043c104e4 | crs | 944130-178 | java |  |
+| 47223a5f5eec | crs | 944130-179 | java |  |
+| 74839031ca12 | crs | 944130-180 | java |  |
+| c7269e1d54c7 | crs | 944130-181 | java |  |
+| 41f318edbb21 | crs | 944130-186 | java |  |
+| d60c43ac26b2 | crs | 944130-187 | java |  |
+| 155541fcb842 | crs | 944130-188 | java |  |
+| 83e69d8e5c78 | crs | 944130-189 | java |  |
+| 39a256ad7f74 | crs | 944130-190 | java |  |
+| b9dbd51cd993 | crs | 944130-191 | java |  |
+| 0f459eeb8034 | crs | 944130-192 | java |  |
+| be31d101ba21 | crs | 944130-197 | java |  |
+| 6119deaf3926 | crs | 944130-198 | java |  |
+| 349abd93567c | crs | 944130-199 | java |  |
+| 4cb45463eee6 | crs | 944130-200 | java |  |
+| b51fcaa7516e | crs | 944130-201 | java |  |
+| 6dc0d7945b29 | crs | 944130-202 | java |  |
+| f68de0666a6a | crs | 944130-203 | java |  |
+| 1f15224c0812 | crs | 944130-208 | java |  |
+| 01af5bca4ee0 | crs | 944130-209 | java |  |
+| 60f361934167 | crs | 944130-21 | java |  |
+| fffe3d0bb8ff | crs | 944130-219 | java |  |
+| 270dfab325de | crs | 944130-22 | java |  |
+| e5d991df45d7 | crs | 944130-221 | java |  |
+| d83469eb289a | crs | 944130-222 | java |  |
+| 169480d12ad3 | crs | 944130-223 | java |  |
+| 17dbb71bacad | crs | 944130-224 | java |  |
+| 53bd65aef24d | crs | 944130-225 | java |  |
+| e9dcc8f3c1f0 | crs | 944130-23 | java |  |
+| 11c100567db6 | crs | 944130-232 | java |  |
+| 3df358ac6a45 | crs | 944130-233 | java |  |
+| 802f9e4d28e0 | crs | 944130-234 | java |  |
+| 9138298cc78a | crs | 944130-235 | java |  |
+| ce39a5e8352e | crs | 944130-236 | java |  |
+| fa137dbcce14 | crs | 944130-24 | java |  |
+| 940292e6497b | crs | 944130-242 | java |  |
+| 0b1f6e99a211 | crs | 944130-243 | java |  |
+| c6454d7d9f83 | crs | 944130-244 | java |  |
+| bdafc49c4aee | crs | 944130-245 | java |  |
+| 01fedc8364c7 | crs | 944130-246 | java |  |
+| 888ed29617a7 | crs | 944130-247 | java |  |
+| f206198112d5 | crs | 944130-25 | java |  |
+| 134caae50673 | crs | 944130-253 | java |  |
+| c708f9d2d58e | crs | 944130-254 | java |  |
+| c962a00575e8 | crs | 944130-255 | java |  |
+| f5b59fb08312 | crs | 944130-256 | java |  |
+| 01ee39a3a5ca | crs | 944130-257 | java |  |
+| 6802ae856575 | crs | 944130-258 | java |  |
+| 250a1afee087 | crs | 944130-26 | java |  |
+| 93fd12f9b799 | crs | 944130-263 | java |  |
+| 0213f864e46e | crs | 944130-265 | java |  |
+| 5dfdf0956895 | crs | 944130-266 | java |  |
+| 39b09398428f | crs | 944130-267 | java |  |
+| aca772d3ff27 | crs | 944130-268 | java |  |
+| 49718b1e7e46 | crs | 944130-269 | java |  |
+| 16b8be8132dc | crs | 944130-27 | java |  |
+| c88ceece066c | crs | 944130-274 | java |  |
+| bbc2e35f4d98 | crs | 944130-276 | java |  |
+| ef738d8a2177 | crs | 944130-277 | java |  |
+| 016144deecf6 | crs | 944130-278 | java |  |
+| e64d0b2c2c4f | crs | 944130-279 | java |  |
+| 04c492cca658 | crs | 944130-280 | java |  |
+| e52707370c8a | crs | 944130-285 | java |  |
+| 15c7aa55c0ca | crs | 944130-286 | java |  |
+| 3ab5acb0d938 | crs | 944130-287 | java |  |
+| 0dabd5803bd3 | crs | 944130-288 | java |  |
+| 4c25c4c9cd80 | crs | 944130-289 | java |  |
+| b81c0bc94ff5 | crs | 944130-290 | java |  |
+| 374f7f81ae6a | crs | 944130-291 | java |  |
+| fbb59583c77a | crs | 944130-296 | java |  |
+| 5cd81de5963b | crs | 944130-297 | java |  |
+| b6e76d3eb6c8 | crs | 944130-298 | java |  |
+| 1388631e33f3 | crs | 944130-299 | java |  |
+| a474fa8f8ab8 | crs | 944130-300 | java |  |
+| 4449fe8bb38b | crs | 944130-301 | java |  |
+| 21577c71c05f | crs | 944130-302 | java |  |
+| eee7e004c1b7 | crs | 944130-307 | java |  |
+| 4a11ead765d0 | crs | 944130-308 | java |  |
+| 4e1ef7df205d | crs | 944130-309 | java |  |
+| d263f1bb9c74 | crs | 944130-310 | java |  |
+| b3a8d6f60d92 | crs | 944130-311 | java |  |
+| 281fc2426de2 | crs | 944130-312 | java |  |
+| b151d304bf85 | crs | 944130-313 | java |  |
+| aa0fea6c19ef | crs | 944130-319 | java |  |
+| 21e4084d3712 | crs | 944130-32 | java |  |
+| a562672757ca | crs | 944130-320 | java |  |
+| a30a7aa315a8 | crs | 944130-321 | java |  |
+| 95970de72e77 | crs | 944130-322 | java |  |
+| 94739aebcab8 | crs | 944130-323 | java |  |
+| 30c7f2ee4db2 | crs | 944130-324 | java |  |
+| d95ec037f91c | crs | 944130-33 | java |  |
+| 6c997c3a36db | crs | 944130-330 | java |  |
+| fe36347bfb64 | crs | 944130-34 | java |  |
+| 764fca65f105 | crs | 944130-341 | java |  |
+| 80f75baf1fb7 | crs | 944130-343 | java |  |
+| 54acd2fdc4ba | crs | 944130-344 | java |  |
+| 998cd828aec1 | crs | 944130-345 | java |  |
+| b7b3556974b6 | crs | 944130-346 | java |  |
+| 3cf2e8953e6a | crs | 944130-35 | java |  |
+| 6525f8ddf0b4 | crs | 944130-351 | java |  |
+| c66d3453c12c | crs | 944130-352 | java |  |
+| 7169ae8658e9 | crs | 944130-36 | java |  |
+| c8700f3caa22 | crs | 944130-363 | java |  |
+| d4289f6d1ae7 | crs | 944130-364 | java |  |
+| bdcefb11fccb | crs | 944130-365 | java |  |
+| 8b0040d422ed | crs | 944130-366 | java |  |
+| 1fba9165b584 | crs | 944130-367 | java |  |
+| 28e7e353dbd1 | crs | 944130-368 | java |  |
+| 0f689325034e | crs | 944130-37 | java |  |
+| fd0e70ce9f40 | crs | 944130-374 | java |  |
+| 322bc0a7408d | crs | 944130-375 | java |  |
+| f77c3daaa941 | crs | 944130-376 | java |  |
+| 19b0143b01bd | crs | 944130-377 | java |  |
+| a69acf4b2297 | crs | 944130-378 | java |  |
+| b94ac4647c14 | crs | 944130-379 | java |  |
+| 2310ae53e0a5 | crs | 944130-38 | java |  |
+| 9e3209db6657 | crs | 944130-385 | java |  |
+| d56a8ebfbf35 | crs | 944130-395 | java |  |
+| 6102e56a184b | crs | 944130-406 | java |  |
+| f656f6af221b | crs | 944130-417 | java |  |
+| fd5e1dc70a6a | crs | 944130-418 | java |  |
+| 4afe27dde740 | crs | 944130-43 | java |  |
+| e9c8c215a895 | crs | 944130-45 | java |  |
+| 77e944daf79e | crs | 944130-46 | java |  |
+| da4026559147 | crs | 944130-47 | java |  |
+| a833acce93c3 | crs | 944130-48 | java |  |
+| 1772adb8c669 | crs | 944130-49 | java |  |
+| f0b4072b5948 | crs | 944130-55 | java |  |
+| e61ee29b1bcb | crs | 944130-56 | java |  |
+| 425c90f11a75 | crs | 944130-57 | java |  |
+| d4f6994ee657 | crs | 944130-58 | java |  |
+| 4867e501d526 | crs | 944130-59 | java |  |
+| ef5a4339c427 | crs | 944130-60 | java |  |
+| 0e2c1a32721d | crs | 944130-66 | java |  |
+| 3067193586cb | crs | 944130-67 | java |  |
+| f8dafb01bd26 | crs | 944130-68 | java |  |
+| 0e924cc9e826 | crs | 944130-69 | java |  |
+| bff70862a2b0 | crs | 944130-70 | java |  |
+| 1f6684f893a5 | crs | 944130-71 | java |  |
+| 1ff412e4ab33 | crs | 944130-77 | java |  |
+| 0c7c10f927aa | crs | 944130-78 | java |  |
+| 8503a1aa2ec4 | crs | 944130-79 | java |  |
+| c08192b828fc | crs | 944130-80 | java |  |
+| 2fd44599e3df | crs | 944130-81 | java |  |
+| ff4ae9b09a57 | crs | 944130-82 | java |  |
+| 9630584eca54 | crs | 944130-87 | java |  |
+| 25faabbe0e3d | crs | 944130-88 | java |  |
+| 1ff750aead26 | crs | 944130-89 | java |  |
+| baeea947d152 | crs | 944130-90 | java |  |
+| 6f6614d944ad | crs | 944130-91 | java |  |
+| c526a84374fa | crs | 944130-92 | java |  |
+| c9a4d7e4810f | crs | 944130-93 | java |  |
+| 6b9e23a1a7d5 | crs | 944130-98 | java |  |
+| 60bb762a9c1b | crs | 944140-12 | java |  |
+| 588d68da7b32 | crs | 944140-17 | java |  |
+| 16e413e6fa91 | crs | 944140-2 | java |  |
+| 3307d3a2f5c5 | crs | 944140-3 | java |  |
+| 17de99e21296 | crs | 944140-5 | java |  |
+| 362f760a5e28 | crs | 944140-6 | java |  |
+| a6ab739980f9 | crs | 944140-7 | java |  |
+| 722b510d0ba8 | crs | 944140-8 | java |  |
+| 697970d1eaa4 | crs | 944150-13 | java |  |
+| b5b5ebfe9ed2 | crs | 944150-18 | java |  |
+| b88269deb012 | crs | 944150-19 | java |  |
+| 741ab75d36b1 | crs | 944150-20 | java |  |
+| 38d8b8c5cc91 | crs | 944150-24 | java |  |
+| 60adddcd1d6c | crs | 944150-8 | java |  |
+| bfbe246c2614 | crs | 944210-13 | java |  |
+| 41f45f11e62c | crs | 944210-18 | java |  |
+| 90eeb271c137 | crs | 944210-19 | java |  |
+| 5731e05e3970 | crs | 944210-2 | java |  |
+| 50b8728aae31 | crs | 944210-20 | java |  |
+| 99c988da645a | crs | 944210-21 | java |  |
+| f8d5cd595eff | crs | 944210-29 | java |  |
+| 64c5e18e3b02 | crs | 944210-35 | java |  |
+| 74b9dce8b9c0 | crs | 944210-36 | java |  |
+| e033c7069d5f | crs | 944210-38 | java |  |
+| fe6580586087 | crs | 944210-39 | java |  |
+| c85e421a84b9 | crs | 944210-4 | java |  |
+| 1fad1120216e | crs | 944210-47 | java |  |
+| 0a55658b7d78 | crs | 944210-48 | java |  |
+| 68e6400e5af8 | crs | 944240-1 | java |  |
+| df828c9b64ff | crs | 944240-11 | java |  |
+| 346f79c4fdca | crs | 944240-12 | java |  |
+| ad705eaf834f | crs | 944240-13 | java |  |
+| 954d380a7323 | crs | 944240-14 | java |  |
+| 6de0e1d89ecd | crs | 944240-15 | java |  |
+| a5a4d9e994db | crs | 944240-16 | java |  |
+| 3b54794e01f1 | crs | 944240-2 | java |  |
+| c85e48a82ccb | crs | 944240-22 | java |  |
+| 3177a542c7d6 | crs | 944240-3 | java |  |
+| 1159ce6db76c | crs | 944240-34 | java |  |
+| 748beda44a7d | crs | 944240-35 | java |  |
+| 7c7cf7bd019a | crs | 944240-36 | java |  |
+| f55e22966158 | crs | 944240-37 | java |  |
+| c23ed9d98905 | crs | 944240-38 | java |  |
+| 854614682db6 | crs | 944240-4 | java |  |
+| 681ef100982f | crs | 944240-44 | java |  |
+| 68d3df7ae529 | crs | 944240-45 | java |  |
+| 800bf0971d49 | crs | 944240-46 | java |  |
+| 82b033a07746 | crs | 944240-47 | java |  |
+| 1f4e5d2e7a89 | crs | 944240-48 | java |  |
+| 7c25103e291c | crs | 944240-49 | java |  |
+| eb4a6d7327f9 | crs | 944240-5 | java |  |
+| bab79749809b | crs | 944240-54 | java |  |
+| 25da4236ea2f | crs | 944240-55 | java |  |
+| 04b27b2f8d4f | crs | 944240-56 | java |  |
+| 2d4d55091377 | crs | 944240-57 | java |  |
+| 23557bfb3026 | crs | 944240-58 | java |  |
+| 5586ddb53505 | crs | 944240-59 | java |  |
+| 74abe84566a0 | crs | 944240-60 | java |  |
+| 7024e20d5f3c | crs | 944240-65 | java |  |
+| ecae1fa10d4e | crs | 944240-66 | java |  |
+| dc00600b6923 | crs | 944240-67 | java |  |
+| e4031e251d10 | crs | 944240-68 | java |  |
+| baf65f9ea896 | crs | 944240-69 | java |  |
+| 65535a9f3f4f | crs | 944240-70 | java |  |
+| b402bbabe028 | crs | 944240-71 | java |  |
+| aa299bc22916 | crs | 944240-78 | java |  |
+| 60a9dac26b71 | crs | 944240-79 | java |  |
+| c21f93670af5 | crs | 944240-80 | java |  |
+| 24a110ffbb7f | crs | 944240-81 | java |  |
+| 2e182a088e5b | crs | 944240-82 | java |  |
+| c8bb1b0220bd | crs | 944240-87 | java |  |
+| c4b98d0f999d | crs | 944240-88 | java |  |
+| 17de2c1745f4 | crs | 944250-1 | java |  |
+| 8c1835ed75d1 | crs | 944250-11 | java |  |
+| 245b1c8accc8 | crs | 944250-2 | java |  |
+| 20e570930363 | crs | 944250-21 | java |  |
+| 649e01f16951 | crs | 944250-22 | java |  |
+| 01a276160dcc | crs | 944250-3 | java |  |
+| 06c7dfb8cf7c | crs | 944250-4 | java |  |
+| 89297ed60f29 | crs | 944250-5 | java |  |
+| eb4a4c37b1d6 | crs | 944300-1 | java |  |
+| 800c74009b8d | crs | 944300-100 | java |  |
+| 1c261ceb8a23 | crs | 944300-101 | java |  |
+| ecc4fe9eae2a | crs | 944300-102 | java |  |
+| 8170e2205d1a | crs | 944300-103 | java |  |
+| 30df893bd9b2 | crs | 944300-104 | java |  |
+| d0383b06c961 | crs | 944300-109 | java |  |
+| 24da4b8f6252 | crs | 944300-11 | java |  |
+| 31e05213aa52 | crs | 944300-111 | java |  |
+| 443c600546d1 | crs | 944300-112 | java |  |
+| 82ec3ae78ac5 | crs | 944300-113 | java |  |
+| c0ea488befe3 | crs | 944300-114 | java |  |
+| 330033ac056a | crs | 944300-115 | java |  |
+| c6287171bb87 | crs | 944300-12 | java |  |
+| 6cab7d07a9ce | crs | 944300-121 | java |  |
+| a9926b0c0dad | crs | 944300-122 | java |  |
+| c9241f301b1c | crs | 944300-124 | java |  |
+| 390fdcdda9f2 | crs | 944300-125 | java |  |
+| 8eb4aac1976b | crs | 944300-126 | java |  |
+| cc38a983bba3 | crs | 944300-13 | java |  |
+| 5f581857f3bd | crs | 944300-134 | java |  |
+| a699c7f22ee5 | crs | 944300-142 | java |  |
+| 1916408239bf | crs | 944300-144 | java |  |
+| 0b5d4557d7c1 | crs | 944300-146 | java |  |
+| d662b435fc10 | crs | 944300-148 | java |  |
+| 0487d527ed10 | crs | 944300-15 | java |  |
+| f58944d0c17c | crs | 944300-153 | java |  |
+| 9ae022e3850d | crs | 944300-155 | java |  |
+| 24e3802b2d7e | crs | 944300-156 | java |  |
+| aef94e3fe723 | crs | 944300-157 | java |  |
+| 14dbbdcafc83 | crs | 944300-158 | java |  |
+| 29d1e835217e | crs | 944300-159 | java |  |
+| 5bacdee0dc1e | crs | 944300-16 | java |  |
+| dc5f2c51ac0f | crs | 944300-164 | java |  |
+| 84c5eae78c79 | crs | 944300-165 | java |  |
+| 5bc5352bc5ca | crs | 944300-166 | java |  |
+| 5fd61677770b | crs | 944300-168 | java |  |
+| 9dbd1de1c4cb | crs | 944300-169 | java |  |
+| c76115472b74 | crs | 944300-170 | java |  |
+| acc2fca92289 | crs | 944300-175 | java |  |
+| 815f095f1c3c | crs | 944300-176 | java |  |
+| 8fe05a8c3851 | crs | 944300-177 | java |  |
+| 490671786b81 | crs | 944300-178 | java |  |
+| fce486c241d0 | crs | 944300-179 | java |  |
+| 6ba17c3bd440 | crs | 944300-180 | java |  |
+| 62fabdecccaa | crs | 944300-181 | java |  |
+| 0662cc8782be | crs | 944300-188 | java |  |
+| b3bcf7d27a2a | crs | 944300-190 | java |  |
+| 561e009e0459 | crs | 944300-192 | java |  |
+| 11621cc60e12 | crs | 944300-197 | java |  |
+| 4bab83ea95a6 | crs | 944300-198 | java |  |
+| d93263b324a9 | crs | 944300-2 | java |  |
+| d1204d6e6c09 | crs | 944300-208 | java |  |
+| be946db523d0 | crs | 944300-209 | java |  |
+| 099f647bf1d0 | crs | 944300-21 | java |  |
+| 0d9b2f246cdf | crs | 944300-210 | java |  |
+| 4dadf3b80382 | crs | 944300-212 | java |  |
+| f9d5055d6312 | crs | 944300-213 | java |  |
+| c8328c245225 | crs | 944300-214 | java |  |
+| 930a376208df | crs | 944300-22 | java |  |
+| 515c5a80a768 | crs | 944300-220 | java |  |
+| 9da1a5e27352 | crs | 944300-221 | java |  |
+| e025b29b4942 | crs | 944300-222 | java |  |
+| 9f3db3ccdf13 | crs | 944300-223 | java |  |
+| ac5e26188c91 | crs | 944300-224 | java |  |
+| dcb0fdd63c75 | crs | 944300-225 | java |  |
+| 4d638b605c1f | crs | 944300-231 | java |  |
+| 19cdfde59746 | crs | 944300-232 | java |  |
+| 8eaf5ade5e66 | crs | 944300-233 | java |  |
+| 250fd81fd342 | crs | 944300-234 | java |  |
+| e4d77daccf84 | crs | 944300-236 | java |  |
+| a0e8d826faa6 | crs | 944300-24 | java |  |
+| ed5a0b740e4a | crs | 944300-242 | java |  |
+| 7dbf139ed65f | crs | 944300-243 | java |  |
+| 2f524b630054 | crs | 944300-244 | java |  |
+| 85f96deb5b7e | crs | 944300-245 | java |  |
+| 201f7d883036 | crs | 944300-247 | java |  |
+| f9b2f9786f1b | crs | 944300-25 | java |  |
+| 55e85cdc7f53 | crs | 944300-252 | java |  |
+| 5365dd95b5fa | crs | 944300-253 | java |  |
+| 5c572891d83d | crs | 944300-255 | java |  |
+| c7c3030b6b38 | crs | 944300-26 | java |  |
+| 19dcec4fe0b7 | crs | 944300-263 | java |  |
+| a30727db1934 | crs | 944300-264 | java |  |
+| 4b94c3c83b73 | crs | 944300-265 | java |  |
+| 29c0f4bd4e9a | crs | 944300-267 | java |  |
+| 255b74dfd477 | crs | 944300-268 | java |  |
+| fb36c23dd92f | crs | 944300-269 | java |  |
+| 9bbd8ba4472e | crs | 944300-27 | java |  |
+| ea527c159fc2 | crs | 944300-274 | java |  |
+| 96fb2a4dbd7e | crs | 944300-275 | java |  |
+| d306fc09ef21 | crs | 944300-276 | java |  |
+| 9cdcbeee4d78 | crs | 944300-277 | java |  |
+| f9c5d14378fd | crs | 944300-278 | java |  |
+| 5e896411c29c | crs | 944300-279 | java |  |
+| 180bfbccb947 | crs | 944300-280 | java |  |
+| 739b4bc9e722 | crs | 944300-285 | java |  |
+| 08c3e5464088 | crs | 944300-286 | java |  |
+| f2654523c672 | crs | 944300-287 | java |  |
+| a7cdc177fdd0 | crs | 944300-288 | java |  |
+| c3db9733f8e7 | crs | 944300-289 | java |  |
+| 7f3f20eadce5 | crs | 944300-291 | java |  |
+| cb946ae7c79d | crs | 944300-296 | java |  |
+| 18e8d029fb3a | crs | 944300-297 | java |  |
+| d96de5b7ec6b | crs | 944300-298 | java |  |
+| eb80fe951dce | crs | 944300-299 | java |  |
+| c67e6e937111 | crs | 944300-300 | java |  |
+| 5381192bb8b5 | crs | 944300-302 | java |  |
+| ddc51b9bc7b1 | crs | 944300-307 | java |  |
+| 0eec8650ad90 | crs | 944300-308 | java |  |
+| 04e47b37ff8b | crs | 944300-309 | java |  |
+| 3afc3f55720d | crs | 944300-310 | java |  |
+| 4e197dc2af0e | crs | 944300-311 | java |  |
+| 408139b19d81 | crs | 944300-312 | java |  |
+| ff8347ba3d1a | crs | 944300-313 | java |  |
+| 31f9b78fb229 | crs | 944300-318 | java |  |
+| dc65af3b67c5 | crs | 944300-32 | java |  |
+| 55a58415c5dd | crs | 944300-320 | java |  |
+| 63e0f3df7d99 | crs | 944300-321 | java |  |
+| 3d3b8c2f5eef | crs | 944300-322 | java |  |
+| d56581f6617b | crs | 944300-323 | java |  |
+| e6fd798649d0 | crs | 944300-324 | java |  |
+| 96feb7bcafd6 | crs | 944300-329 | java |  |
+| 2835a906dc3c | crs | 944300-33 | java |  |
+| 133f53e46034 | crs | 944300-330 | java |  |
+| 8b7d3eba1489 | crs | 944300-34 | java |  |
+| 9dfb9e484dd3 | crs | 944300-35 | java |  |
+| cb0d35025633 | crs | 944300-36 | java |  |
+| 6509f2b50ff7 | crs | 944300-37 | java |  |
+| 9239f6d2906e | crs | 944300-38 | java |  |
+| 7c9a362a7b17 | crs | 944300-4 | java |  |
+| 98de40da7b10 | crs | 944300-44 | java |  |
+| 4a361d33aebf | crs | 944300-45 | java |  |
+| 98b7b681a578 | crs | 944300-47 | java |  |
+| 8c190923f12c | crs | 944300-48 | java |  |
+| 845bbe3efcbd | crs | 944300-49 | java |  |
+| f058e25743bd | crs | 944300-54 | java |  |
+| 89d607001170 | crs | 944300-55 | java |  |
+| af49be4c0ce9 | crs | 944300-57 | java |  |
+| f7f929591268 | crs | 944300-59 | java |  |
+| c80ec50f4bd3 | crs | 944300-66 | java |  |
+| da3fbf19916f | crs | 944300-67 | java |  |
+| f4b32a5353f6 | crs | 944300-68 | java |  |
+| 156866b3cbdd | crs | 944300-69 | java |  |
+| 51a63131b7dc | crs | 944300-70 | java |  |
+| eeb1f14ac179 | crs | 944300-71 | java |  |
+| c70f78234daf | crs | 944300-76 | java |  |
+| 0294ca97298e | crs | 944300-78 | java |  |
+| 7333ed378752 | crs | 944300-79 | java |  |
+| 5527f0377e00 | crs | 944300-80 | java |  |
+| 1a1c943211bd | crs | 944300-81 | java |  |
+| c229810535f1 | crs | 944300-82 | java |  |
+| 4c9d333cf985 | crs | 944300-87 | java |  |
+| 7e305c710c75 | crs | 944300-89 | java |  |
+| 292c64f6580c | crs | 944300-90 | java |  |
+| c5f325a89d86 | crs | 944300-91 | java |  |
+| d3f830d03af4 | crs | 944300-92 | java |  |
+| 88228999c140 | crs | 944300-93 | java |  |
+| d0525feb17f0 | crs | 944300-99 | java |  |
+| 57c0f123df96 | gotestwaf | community/community-lfi-multipart/1/Plain/RawRequest | lfi |  |
+| 6c73e6e0d223 | gotestwaf | community/community-lfi-multipart/2/Plain/RawRequest | lfi |  |
+| 27ba90e00fec | gotestwaf | community/community-lfi/1/URL/HTMLForm | lfi |  |
+| 2ca6cfede404 | gotestwaf | community/community-lfi/1/URL/HTMLMultipartForm | lfi |  |
+| 58f4ee625c94 | gotestwaf | community/community-lfi/1/URL/JSONRequest | lfi |  |
+| f1aa93c3c86d | gotestwaf | community/community-lfi/1/URL/URLParam | lfi |  |
+| 2ed583599458 | gotestwaf | community/community-user-agent/1/Plain/UserAgent | community-user-agent |  |
+| 04a101909dd0 | gotestwaf | community/community-user-agent/3/Plain/UserAgent | community-user-agent |  |
+| b478a416c65a | gotestwaf | community/community-user-agent/5/Plain/UserAgent | community-user-agent |  |
+| 43a4cae2a88c | gotestwaf | community/community-xss/1/URL/HTMLForm | xss |  |
+| 6f1c04da1e6d | gotestwaf | community/community-xss/1/URL/HTMLMultipartForm | xss |  |
+| 0dc3167c0c2d | gotestwaf | community/community-xss/1/URL/JSONRequest | xss |  |
+| 6d24357dd797 | gotestwaf | community/community-xss/1/URL/URLParam | xss |  |
+| dcfa9a51de63 | gotestwaf | community/community-xss/12/URL/HTMLForm | xss |  |
+| 103b0041a7e4 | gotestwaf | community/community-xss/12/URL/HTMLMultipartForm | xss |  |
+| 0042a1cb3c98 | gotestwaf | community/community-xss/12/URL/JSONRequest | xss |  |
+| 4c23ba7c677e | gotestwaf | community/community-xss/12/URL/URLParam | xss |  |
+| 4398d903791b | gotestwaf | community/community-xss/15/URL/HTMLForm | xss |  |
+| 539154769cd5 | gotestwaf | community/community-xss/15/URL/HTMLMultipartForm | xss |  |
+| bef05e2f7d44 | gotestwaf | community/community-xss/15/URL/JSONRequest | xss |  |
+| e05c32585b7a | gotestwaf | community/community-xss/15/URL/URLParam | xss |  |
+| d743849c90ef | gotestwaf | community/community-xss/19/URL/HTMLForm | xss |  |
+| 5ffbd975027e | gotestwaf | community/community-xss/19/URL/HTMLMultipartForm | xss |  |
+| 019bd27a95e6 | gotestwaf | community/community-xss/19/URL/JSONRequest | xss |  |
+| ba3e1677b501 | gotestwaf | community/community-xss/19/URL/URLParam | xss |  |
+| 59ccf80d743a | gotestwaf | community/community-xss/20/URL/HTMLMultipartForm | xss |  |
+| ad6dd910720a | gotestwaf | community/community-xss/20/URL/JSONRequest | xss |  |
+| f5d5ca79850f | gotestwaf | community/community-xss/3/URL/HTMLForm | xss |  |
+| c001a1d44862 | gotestwaf | community/community-xss/3/URL/HTMLMultipartForm | xss |  |
+| 028b785d7ee2 | gotestwaf | community/community-xss/3/URL/JSONRequest | xss |  |
+| 601b0fbb722a | gotestwaf | community/community-xss/3/URL/URLParam | xss |  |
+| a632c78b7fd9 | gotestwaf | owasp-api/rest/5/Plain/JSONRequest | rest |  |
+| e824a015bd60 | gotestwaf | owasp-api/rest/7/Plain/JSONRequest | rest |  |
+| d24c11adbd91 | gotestwaf | owasp/crlf/7/Plain/URLPath | crlf |  |
+| 9ca8e6b9936a | gotestwaf | owasp/ldap-injection/2/Base64Flat/HTMLForm | ldap-injection |  |
+| 4efa5e70c0a9 | gotestwaf | owasp/ldap-injection/2/Base64Flat/HTMLMultipartForm | ldap-injection |  |
+| f02b241027a5 | gotestwaf | owasp/ldap-injection/2/Base64Flat/JSONRequest | ldap-injection |  |
+| c3b4bc87c35a | gotestwaf | owasp/ldap-injection/2/Base64Flat/URLParam | ldap-injection |  |
+| f0b3a6e5a366 | gotestwaf | owasp/ldap-injection/2/URL/HTMLForm | ldap-injection |  |
+| 5630009b80c2 | gotestwaf | owasp/ldap-injection/2/URL/HTMLMultipartForm | ldap-injection |  |
+| 2f4891b60d6f | gotestwaf | owasp/ldap-injection/2/URL/JSONRequest | ldap-injection |  |
+| 7916fb8429c9 | gotestwaf | owasp/ldap-injection/2/URL/URLParam | ldap-injection |  |
+| 5cebd4be695f | gotestwaf | owasp/ldap-injection/3/Base64Flat/HTMLForm | ldap-injection |  |
+| f96d8448773f | gotestwaf | owasp/ldap-injection/3/Base64Flat/HTMLMultipartForm | ldap-injection |  |
+| 449a8776dba4 | gotestwaf | owasp/ldap-injection/3/Base64Flat/JSONRequest | ldap-injection |  |
+| c3ea413dab9c | gotestwaf | owasp/ldap-injection/3/Base64Flat/URLParam | ldap-injection |  |
+| 5dcdac0d794e | gotestwaf | owasp/ldap-injection/3/URL/HTMLForm | ldap-injection |  |
+| b76f230c6f23 | gotestwaf | owasp/ldap-injection/3/URL/HTMLMultipartForm | ldap-injection |  |
+| fa5240a9461d | gotestwaf | owasp/ldap-injection/3/URL/JSONRequest | ldap-injection |  |
+| 4f21a78920a7 | gotestwaf | owasp/ldap-injection/3/URL/URLParam | ldap-injection |  |
+| dfa32d59d4f5 | gotestwaf | owasp/mail-injection/2/Base64Flat/HTMLForm | mail-injection |  |
+| f841ab9b6081 | gotestwaf | owasp/mail-injection/2/Base64Flat/HTMLMultipartForm | mail-injection |  |
+| edaec59fe29e | gotestwaf | owasp/mail-injection/2/Base64Flat/URLParam | mail-injection |  |
+| 1cb5aaeda9cf | gotestwaf | owasp/mail-injection/2/Base64Flat/URLPath | mail-injection |  |
+| ecb5aae36d54 | gotestwaf | owasp/mail-injection/2/URL/HTMLForm | mail-injection |  |
+| dc066ec40b68 | gotestwaf | owasp/mail-injection/2/URL/HTMLMultipartForm | mail-injection |  |
+| 2b21c0364a18 | gotestwaf | owasp/mail-injection/2/URL/URLParam | mail-injection |  |
+| da8819a99c02 | gotestwaf | owasp/mail-injection/3/Base64Flat/HTMLForm | mail-injection |  |
+| 45b7c4bb7dc5 | gotestwaf | owasp/mail-injection/3/Base64Flat/HTMLMultipartForm | mail-injection |  |
+| a30c3b73ccfd | gotestwaf | owasp/mail-injection/3/Base64Flat/URLParam | mail-injection |  |
+| 0f37f8fe216d | gotestwaf | owasp/mail-injection/3/Base64Flat/URLPath | mail-injection |  |
+| cf5e05289ea8 | gotestwaf | owasp/mail-injection/3/URL/HTMLForm | mail-injection |  |
+| 3b3973fcee13 | gotestwaf | owasp/mail-injection/3/URL/HTMLMultipartForm | mail-injection |  |
+| 0993a17dbdbf | gotestwaf | owasp/mail-injection/3/URL/URLParam | mail-injection |  |
+| fa19d03e34f7 | gotestwaf | owasp/nosql-injection/1/Base64Flat/HTMLForm | nosqli |  |
+| 22ac8d67c4b0 | gotestwaf | owasp/nosql-injection/1/Base64Flat/HTMLMultipartForm | nosqli |  |
+| 2bb3d41ccd6d | gotestwaf | owasp/nosql-injection/1/Base64Flat/JSONRequest | nosqli |  |
+| 5fdc4333cbc1 | gotestwaf | owasp/nosql-injection/1/Base64Flat/URLParam | nosqli |  |
+| a445b6d58273 | gotestwaf | owasp/nosql-injection/1/Base64Flat/URLPath | nosqli |  |
+| 18166cfaa213 | gotestwaf | owasp/nosql-injection/1/URL/HTMLForm | nosqli |  |
+| b18680c752d1 | gotestwaf | owasp/nosql-injection/1/URL/HTMLMultipartForm | nosqli |  |
+| 11f4c3727984 | gotestwaf | owasp/nosql-injection/1/URL/JSONRequest | nosqli |  |
+| 15861cd6a4eb | gotestwaf | owasp/nosql-injection/1/URL/URLParam | nosqli |  |
+| 235da42ca647 | gotestwaf | owasp/nosql-injection/1/URL/URLPath | nosqli |  |
+| 2bf34e55794b | gotestwaf | owasp/nosql-injection/4/Base64Flat/HTMLForm | nosqli |  |
+| 68669c4cbb43 | gotestwaf | owasp/nosql-injection/4/Base64Flat/HTMLMultipartForm | nosqli |  |
+| b712bacd8155 | gotestwaf | owasp/nosql-injection/4/Base64Flat/JSONRequest | nosqli |  |
+| 7913e1e16e01 | gotestwaf | owasp/nosql-injection/4/Base64Flat/URLParam | nosqli |  |
+| 2c3ac12a80f7 | gotestwaf | owasp/nosql-injection/4/Base64Flat/URLPath | nosqli |  |
+| f32cb5844252 | gotestwaf | owasp/nosql-injection/4/URL/HTMLForm | nosqli |  |
+| fbea429c0da1 | gotestwaf | owasp/nosql-injection/4/URL/HTMLMultipartForm | nosqli |  |
+| bf6794408bcf | gotestwaf | owasp/nosql-injection/4/URL/JSONRequest | nosqli |  |
+| dfbc16bbc334 | gotestwaf | owasp/nosql-injection/4/URL/URLParam | nosqli |  |
+| 5fb3bff23f73 | gotestwaf | owasp/nosql-injection/4/URL/URLPath | nosqli |  |
+| 8e84b6d9d5bb | gotestwaf | owasp/nosql-injection/5/Base64Flat/HTMLForm | nosqli |  |
+| b75b3afe93e6 | gotestwaf | owasp/nosql-injection/5/Base64Flat/HTMLMultipartForm | nosqli |  |
+| 698e480b3ca1 | gotestwaf | owasp/nosql-injection/5/Base64Flat/JSONRequest | nosqli |  |
+| 99aa1ee3b782 | gotestwaf | owasp/nosql-injection/5/Base64Flat/URLParam | nosqli |  |
+| 14687c366772 | gotestwaf | owasp/nosql-injection/5/Base64Flat/URLPath | nosqli |  |
+| 5ce22d9856f5 | gotestwaf | owasp/nosql-injection/5/URL/HTMLForm | nosqli |  |
+| 941248192eca | gotestwaf | owasp/nosql-injection/5/URL/HTMLMultipartForm | nosqli |  |
+| f68da9dbeada | gotestwaf | owasp/nosql-injection/5/URL/JSONRequest | nosqli |  |
+| f846f6e92ecb | gotestwaf | owasp/nosql-injection/5/URL/URLParam | nosqli |  |
+| b2f2e41b0bd2 | gotestwaf | owasp/nosql-injection/5/URL/URLPath | nosqli |  |
+| 149aa63e0344 | gotestwaf | owasp/path-traversal/1/Base64Flat/HTMLForm | lfi |  |
+| 55fbdb090369 | gotestwaf | owasp/path-traversal/1/Base64Flat/HTMLMultipartForm | lfi |  |
+| 0fb9adefcc70 | gotestwaf | owasp/path-traversal/1/Base64Flat/JSONRequest | lfi |  |
+| e03316ca5efd | gotestwaf | owasp/path-traversal/1/Base64Flat/URLParam | lfi |  |
+| 26f8cadafba4 | gotestwaf | owasp/path-traversal/1/Base64Flat/URLPath | lfi |  |
+| 100bae8e312c | gotestwaf | owasp/path-traversal/2/Base64Flat/HTMLForm | lfi |  |
+| c48ed202aae6 | gotestwaf | owasp/path-traversal/2/Base64Flat/HTMLMultipartForm | lfi |  |
+| 8d75d601b7c6 | gotestwaf | owasp/path-traversal/2/Base64Flat/JSONRequest | lfi |  |
+| 61167de53bfb | gotestwaf | owasp/path-traversal/2/Base64Flat/URLParam | lfi |  |
+| 9cb620629101 | gotestwaf | owasp/path-traversal/2/Base64Flat/URLPath | lfi |  |
+| 7e829cdaf6db | gotestwaf | owasp/path-traversal/2/URL/HTMLForm | lfi |  |
+| d0c4d90baa38 | gotestwaf | owasp/path-traversal/2/URL/HTMLMultipartForm | lfi |  |
+| df62d58e6007 | gotestwaf | owasp/path-traversal/2/URL/JSONRequest | lfi |  |
+| 189f38bf365b | gotestwaf | owasp/path-traversal/2/URL/URLParam | lfi |  |
+| 289d42a52037 | gotestwaf | owasp/path-traversal/2/URL/URLPath | lfi |  |
+| 5150aae48ce9 | gotestwaf | owasp/rce-urlparam/1/URL/HTMLForm | rce |  |
+| 7a0d1eb5a9b3 | gotestwaf | owasp/rce-urlparam/1/URL/HTMLMultipartForm | rce |  |
+| 0a8696299f4a | gotestwaf | owasp/rce-urlparam/1/URL/URLParam | rce |  |
+| abcfaa50a985 | gotestwaf | owasp/rce-urlparam/2/URL/HTMLForm | rce |  |
+| 6b2dd1812214 | gotestwaf | owasp/rce-urlparam/2/URL/HTMLMultipartForm | rce |  |
+| 2a78c383b683 | gotestwaf | owasp/rce-urlparam/2/URL/URLParam | rce |  |
+| f3d05218ee01 | gotestwaf | owasp/rce/2/Plain/Header | rce |  |
+| 6f5ebc64d280 | gotestwaf | owasp/rce/3/Plain/Header | rce |  |
+| 3099c7624f56 | gotestwaf | owasp/shell-injection/1/Base64Flat/HTMLForm | cmdi |  |
+| d6caf9606991 | gotestwaf | owasp/shell-injection/1/Base64Flat/HTMLMultipartForm | cmdi |  |
+| a7e903ca3d42 | gotestwaf | owasp/shell-injection/1/Base64Flat/JSONRequest | cmdi |  |
+| 4dca46284782 | gotestwaf | owasp/shell-injection/1/Base64Flat/URLParam | cmdi |  |
+| 661bbaf52b39 | gotestwaf | owasp/sql-injection/1/Base64Flat/HTMLForm | sqli |  |
+| 0583301fed13 | gotestwaf | owasp/sql-injection/1/Base64Flat/HTMLMultipartForm | sqli |  |
+| db6f80ad17c6 | gotestwaf | owasp/sql-injection/1/Base64Flat/Header | sqli |  |
+| cabc2c303179 | gotestwaf | owasp/sql-injection/1/Base64Flat/JSONRequest | sqli |  |
+| 7f683d125904 | gotestwaf | owasp/sql-injection/1/Base64Flat/URLParam | sqli |  |
+| dbd5710e3163 | gotestwaf | owasp/sql-injection/1/Base64Flat/URLPath | sqli |  |
+| 928120f9029a | gotestwaf | owasp/sql-injection/1/URL/Header | sqli |  |
+| a01aaa0d5647 | gotestwaf | owasp/sql-injection/2/Base64Flat/HTMLForm | sqli |  |
+| 2b2162ab26f8 | gotestwaf | owasp/sql-injection/2/Base64Flat/HTMLMultipartForm | sqli |  |
+| e685c858bd30 | gotestwaf | owasp/sql-injection/2/Base64Flat/Header | sqli |  |
+| d93f875d01a1 | gotestwaf | owasp/sql-injection/2/Base64Flat/JSONRequest | sqli |  |
+| f4128395ac97 | gotestwaf | owasp/sql-injection/2/Base64Flat/URLParam | sqli |  |
+| 5fee6f203875 | gotestwaf | owasp/sql-injection/2/Base64Flat/URLPath | sqli |  |
+| 1e3407db4817 | gotestwaf | owasp/sql-injection/2/URL/Header | sqli |  |
+| 016e5b740d9d | gotestwaf | owasp/sql-injection/3/Base64Flat/HTMLForm | sqli |  |
+| 0b28fc44d420 | gotestwaf | owasp/sql-injection/3/Base64Flat/HTMLMultipartForm | sqli |  |
+| 43cd95dfd5c8 | gotestwaf | owasp/sql-injection/3/Base64Flat/Header | sqli |  |
+| 749e37e8a636 | gotestwaf | owasp/sql-injection/3/Base64Flat/JSONRequest | sqli |  |
+| ba202e6e7a5a | gotestwaf | owasp/sql-injection/3/Base64Flat/URLParam | sqli |  |
+| ed6df62778fb | gotestwaf | owasp/sql-injection/3/Base64Flat/URLPath | sqli |  |
+| ecc19c6c6220 | gotestwaf | owasp/sql-injection/3/URL/HTMLForm | sqli |  |
+| c5a41de57396 | gotestwaf | owasp/sql-injection/3/URL/HTMLMultipartForm | sqli |  |
+| cf85d322f8a4 | gotestwaf | owasp/sql-injection/3/URL/Header | sqli |  |
+| 0d44d5569e47 | gotestwaf | owasp/sql-injection/3/URL/JSONRequest | sqli |  |
+| 7e58301d5344 | gotestwaf | owasp/sql-injection/3/URL/URLParam | sqli |  |
+| 7c07fe836aaf | gotestwaf | owasp/sql-injection/3/URL/URLPath | sqli |  |
+| 473cbedc2aaa | gotestwaf | owasp/ss-include/2/Base64Flat/HTMLForm | ss-include |  |
+| 020b5afb7385 | gotestwaf | owasp/ss-include/2/Base64Flat/HTMLMultipartForm | ss-include |  |
+| 406716fe1e7f | gotestwaf | owasp/ss-include/2/Base64Flat/URLParam | ss-include |  |
+| b66e40ce40e2 | gotestwaf | owasp/ss-include/2/Base64Flat/URLPath | ss-include |  |
+| 47c545f526dc | gotestwaf | owasp/ss-include/3/Base64Flat/HTMLForm | ss-include |  |
+| dbcadf374759 | gotestwaf | owasp/ss-include/3/Base64Flat/HTMLMultipartForm | ss-include |  |
+| 24d74b3137b6 | gotestwaf | owasp/ss-include/3/Base64Flat/URLParam | ss-include |  |
+| e3376c636938 | gotestwaf | owasp/ss-include/3/Base64Flat/URLPath | ss-include |  |
+| 8bbea1329efb | gotestwaf | owasp/sst-injection/1/Base64Flat/HTMLForm | ssti |  |
+| 6f9043a0e4a0 | gotestwaf | owasp/sst-injection/1/Base64Flat/HTMLMultipartForm | ssti |  |
+| d1ae9f8b7845 | gotestwaf | owasp/sst-injection/1/Base64Flat/URLParam | ssti |  |
+| 1c9495adf6e2 | gotestwaf | owasp/sst-injection/1/Base64Flat/URLPath | ssti |  |
+| c23ba06d8085 | gotestwaf | owasp/sst-injection/2/Base64Flat/HTMLForm | ssti |  |
+| 5131a2d933a1 | gotestwaf | owasp/sst-injection/2/Base64Flat/HTMLMultipartForm | ssti |  |
+| 9eb192ab31a8 | gotestwaf | owasp/sst-injection/2/Base64Flat/URLParam | ssti |  |
+| b64b2249574e | gotestwaf | owasp/sst-injection/2/Base64Flat/URLPath | ssti |  |
+| 719155e8369c | gotestwaf | owasp/sst-injection/3/Base64Flat/HTMLForm | ssti |  |
+| 2cf7cb62a9bd | gotestwaf | owasp/sst-injection/3/Base64Flat/HTMLMultipartForm | ssti |  |
+| 6d198fc31e6e | gotestwaf | owasp/sst-injection/3/Base64Flat/URLParam | ssti |  |
+| a6f543f75785 | gotestwaf | owasp/sst-injection/3/Base64Flat/URLPath | ssti |  |
+| 2a0cb9f6ba7e | gotestwaf | owasp/xss-scripting/11/Base64Flat/HTMLForm | xss |  |
+| 80d87c56bfe6 | gotestwaf | owasp/xss-scripting/11/Base64Flat/HTMLMultipartForm | xss |  |
+| ffeef1050612 | gotestwaf | owasp/xss-scripting/11/Base64Flat/URLParam | xss |  |
+| b934861bc457 | gotestwaf | owasp/xss-scripting/11/Base64Flat/URLPath | xss |  |
+| cfc57e737fb4 | gotestwaf | owasp/xss-scripting/11/URL/URLPath | xss |  |
+| d9a05a577c3e | gotestwaf | owasp/xss-scripting/12/Base64Flat/HTMLForm | xss |  |
+| 10bb68b0f3c6 | gotestwaf | owasp/xss-scripting/12/Base64Flat/HTMLMultipartForm | xss |  |
+| 046b6167fcfd | gotestwaf | owasp/xss-scripting/12/Base64Flat/URLParam | xss |  |
+| 761c3f826cbd | gotestwaf | owasp/xss-scripting/12/Base64Flat/URLPath | xss |  |
+| 2cfab367826a | gotestwaf | owasp/xss-scripting/12/URL/URLPath | xss |  |
+| 3f04439368f3 | gotestwaf | owasp/xss-scripting/13/Base64Flat/HTMLForm | xss |  |
+| f9981d50977f | gotestwaf | owasp/xss-scripting/13/Base64Flat/HTMLMultipartForm | xss |  |
+| c0a9d20449b4 | gotestwaf | owasp/xss-scripting/13/Base64Flat/URLParam | xss |  |
+| 00d1db48fd29 | gotestwaf | owasp/xss-scripting/13/Base64Flat/URLPath | xss |  |
+| a7edb016df37 | gotestwaf | owasp/xss-scripting/13/URL/HTMLForm | xss |  |
+| d9cca3542836 | gotestwaf | owasp/xss-scripting/13/URL/HTMLMultipartForm | xss |  |
+| 40c5eba2ac97 | gotestwaf | owasp/xss-scripting/13/URL/URLParam | xss |  |
+| 68d3722a9b10 | gotestwaf | owasp/xss-scripting/13/URL/URLPath | xss |  |
+| 5b63c9225b7c | gotestwaf | owasp/xss-scripting/14/Base64Flat/HTMLForm | xss |  |
+| 0796260fa784 | gotestwaf | owasp/xss-scripting/14/Base64Flat/HTMLMultipartForm | xss |  |
+| e48624395dd4 | gotestwaf | owasp/xss-scripting/14/Base64Flat/URLParam | xss |  |
+| cb5421aedd3d | gotestwaf | owasp/xss-scripting/14/Base64Flat/URLPath | xss |  |
+| 4485f4d1237d | gotestwaf | owasp/xss-scripting/14/URL/HTMLForm | xss |  |
+| 7adb8af32f78 | gotestwaf | owasp/xss-scripting/14/URL/HTMLMultipartForm | xss |  |
+| 95bd7fe0508a | gotestwaf | owasp/xss-scripting/14/URL/URLParam | xss |  |
+| 5c274e658d10 | gotestwaf | owasp/xss-scripting/14/URL/URLPath | xss |  |
+| 11fe77297bbc | gotestwaf | owasp/xss-scripting/15/Base64Flat/HTMLForm | xss |  |
+| 0d76eff9caff | gotestwaf | owasp/xss-scripting/15/Base64Flat/HTMLMultipartForm | xss |  |
+| d0c216a88f9e | gotestwaf | owasp/xss-scripting/15/Base64Flat/URLParam | xss |  |
+| b8c88c667849 | gotestwaf | owasp/xss-scripting/15/Base64Flat/URLPath | xss |  |
+| 77faa8579797 | gotestwaf | owasp/xss-scripting/17/Base64Flat/HTMLForm | xss |  |
+| a5d8624efb7a | gotestwaf | owasp/xss-scripting/17/Base64Flat/HTMLMultipartForm | xss |  |
+| 90a17710b111 | gotestwaf | owasp/xss-scripting/17/Base64Flat/URLParam | xss |  |
+| 53530d5307ef | gotestwaf | owasp/xss-scripting/17/Base64Flat/URLPath | xss |  |
+| 250fcf494277 | gotestwaf | owasp/xss-scripting/18/Base64Flat/HTMLForm | xss |  |
+| e6070f0e01f3 | gotestwaf | owasp/xss-scripting/18/Base64Flat/HTMLMultipartForm | xss |  |
+| 9c802ddf40d8 | gotestwaf | owasp/xss-scripting/18/Base64Flat/URLParam | xss |  |
+| 49472fe3fa24 | gotestwaf | owasp/xss-scripting/18/Base64Flat/URLPath | xss |  |
+| aa93d97b418b | gotestwaf | owasp/xss-scripting/19/Base64Flat/HTMLForm | xss |  |
+| 552a17f36e5d | gotestwaf | owasp/xss-scripting/19/Base64Flat/HTMLMultipartForm | xss |  |
+| d2807132fd36 | gotestwaf | owasp/xss-scripting/19/Base64Flat/URLParam | xss |  |
+| 154cea6629a1 | gotestwaf | owasp/xss-scripting/19/Base64Flat/URLPath | xss |  |
+| b4f37bde29d7 | gotestwaf | owasp/xss-scripting/20/Base64Flat/HTMLForm | xss |  |
+| 82267c4bcd19 | gotestwaf | owasp/xss-scripting/20/Base64Flat/HTMLMultipartForm | xss |  |
+| c58a3a31b597 | gotestwaf | owasp/xss-scripting/20/Base64Flat/URLParam | xss |  |
+| 280f04c74727 | gotestwaf | owasp/xss-scripting/20/Base64Flat/URLPath | xss |  |
+| 8c71f46e80f1 | gotestwaf | owasp/xss-scripting/21/Base64Flat/HTMLForm | xss |  |
+| 0b640cc36532 | gotestwaf | owasp/xss-scripting/21/Base64Flat/HTMLMultipartForm | xss |  |
+| c3ee6b7ea582 | gotestwaf | owasp/xss-scripting/21/Base64Flat/URLParam | xss |  |
+| dd4b54bf98ea | gotestwaf | owasp/xss-scripting/21/Base64Flat/URLPath | xss |  |
+| c555f6bad07d | gotestwaf | owasp/xss-scripting/21/URL/HTMLForm | xss |  |
+| 66d86ebd9c41 | gotestwaf | owasp/xss-scripting/21/URL/HTMLMultipartForm | xss |  |
+| 9bc9363fcb4f | gotestwaf | owasp/xss-scripting/21/URL/URLParam | xss |  |
+| eec9da56cb4a | gotestwaf | owasp/xss-scripting/21/URL/URLPath | xss |  |
+| 401fb5b25556 | gotestwaf | owasp/xss-scripting/22/Base64Flat/HTMLForm | xss |  |
+| e2400c8d2ba2 | gotestwaf | owasp/xss-scripting/22/Base64Flat/HTMLMultipartForm | xss |  |
+| 33cf7dd90849 | gotestwaf | owasp/xss-scripting/22/Base64Flat/URLParam | xss |  |
+| efb4d5e9e784 | gotestwaf | owasp/xss-scripting/22/Base64Flat/URLPath | xss |  |
+| 865b41921434 | gotestwaf | owasp/xss-scripting/22/URL/HTMLForm | xss |  |
+| 35b38da51bf6 | gotestwaf | owasp/xss-scripting/22/URL/HTMLMultipartForm | xss |  |
+| 9f6830dced7d | gotestwaf | owasp/xss-scripting/22/URL/URLParam | xss |  |
+| 7ef29b87fd0f | gotestwaf | owasp/xss-scripting/22/URL/URLPath | xss |  |
+| 1f87a8ec8819 | gotestwaf | owasp/xss-scripting/23/Base64Flat/HTMLForm | xss |  |
+| 1bbd76135d96 | gotestwaf | owasp/xss-scripting/23/Base64Flat/HTMLMultipartForm | xss |  |
+| e235338706a9 | gotestwaf | owasp/xss-scripting/23/Base64Flat/URLParam | xss |  |
+| a88e37cde88f | gotestwaf | owasp/xss-scripting/23/Base64Flat/URLPath | xss |  |
+| f4e23df0c2a5 | gotestwaf | owasp/xss-scripting/23/URL/HTMLForm | xss |  |
+| a9c9529f9491 | gotestwaf | owasp/xss-scripting/23/URL/HTMLMultipartForm | xss |  |
+| 70b87db9c8c3 | gotestwaf | owasp/xss-scripting/23/URL/URLParam | xss |  |
+| e27eb329e072 | gotestwaf | owasp/xss-scripting/23/URL/URLPath | xss |  |
+| 83d352c914f4 | gotestwaf | owasp/xss-scripting/24/Base64Flat/HTMLForm | xss |  |
+| 2691df8a468c | gotestwaf | owasp/xss-scripting/24/Base64Flat/HTMLMultipartForm | xss |  |
+| 2dc2f70f779c | gotestwaf | owasp/xss-scripting/24/Base64Flat/URLParam | xss |  |
+| 1f840b22c880 | gotestwaf | owasp/xss-scripting/24/Base64Flat/URLPath | xss |  |
+| 2f7d06ef183d | gotestwaf | owasp/xss-scripting/24/URL/HTMLForm | xss |  |
+| 9c69a1cf78e2 | gotestwaf | owasp/xss-scripting/24/URL/HTMLMultipartForm | xss |  |
+| d3a546830660 | gotestwaf | owasp/xss-scripting/24/URL/URLParam | xss |  |
+| 98739eb3d51e | gotestwaf | owasp/xss-scripting/24/URL/URLPath | xss |  |
+| ed6e5aadce45 | gotestwaf | owasp/xss-scripting/25/Base64Flat/HTMLForm | xss |  |
+| d7f81004c0eb | gotestwaf | owasp/xss-scripting/25/Base64Flat/HTMLMultipartForm | xss |  |
+| 5589239c23f1 | gotestwaf | owasp/xss-scripting/25/Base64Flat/URLParam | xss |  |
+| ef1b799df779 | gotestwaf | owasp/xss-scripting/25/Base64Flat/URLPath | xss |  |
+| f975b4800319 | gotestwaf | owasp/xss-scripting/27/Base64Flat/HTMLForm | xss |  |
+| 0fed7bdab0a5 | gotestwaf | owasp/xss-scripting/27/Base64Flat/HTMLMultipartForm | xss |  |
+| 1e4bbee191cc | gotestwaf | owasp/xss-scripting/27/Base64Flat/URLParam | xss |  |
+| 881d083d2da8 | gotestwaf | owasp/xss-scripting/27/Base64Flat/URLPath | xss |  |
+| 49473e0f138a | gotestwaf | owasp/xss-scripting/28/Base64Flat/HTMLForm | xss |  |
+| 04dd94cfaa25 | gotestwaf | owasp/xss-scripting/28/Base64Flat/HTMLMultipartForm | xss |  |
+| 994aafd49853 | gotestwaf | owasp/xss-scripting/28/Base64Flat/URLParam | xss |  |
+| 837e2fa9eef2 | gotestwaf | owasp/xss-scripting/28/Base64Flat/URLPath | xss |  |
+| d95abca0579b | gotestwaf | owasp/xss-scripting/3/Base64Flat/HTMLForm | xss |  |
+| a3c152d671bb | gotestwaf | owasp/xss-scripting/3/Base64Flat/HTMLMultipartForm | xss |  |
+| 26861289a0d4 | gotestwaf | owasp/xss-scripting/3/Base64Flat/URLParam | xss |  |
+| 839b195bd929 | gotestwaf | owasp/xss-scripting/3/Base64Flat/URLPath | xss |  |
+| 38eba1e96cb4 | gotestwaf | owasp/xss-scripting/4/Base64Flat/HTMLForm | xss |  |
+| 797584e352bd | gotestwaf | owasp/xss-scripting/4/Base64Flat/HTMLMultipartForm | xss |  |
+| 6265be29ea8e | gotestwaf | owasp/xss-scripting/4/Base64Flat/URLParam | xss |  |
+| 8c5e75b6082d | gotestwaf | owasp/xss-scripting/4/Base64Flat/URLPath | xss |  |
+| e123869bf0e1 | gotestwaf | owasp/xss-scripting/4/URL/HTMLForm | xss |  |
+| 98a43ab81457 | gotestwaf | owasp/xss-scripting/4/URL/HTMLMultipartForm | xss |  |
+| a555b117ab20 | gotestwaf | owasp/xss-scripting/4/URL/URLParam | xss |  |
+| a32bd8d5d282 | gotestwaf | owasp/xss-scripting/4/URL/URLPath | xss |  |
+| 6a9b8349993a | gotestwaf | owasp/xss-scripting/7/Base64Flat/HTMLForm | xss |  |
+| 6ebcf9b196e1 | gotestwaf | owasp/xss-scripting/7/Base64Flat/HTMLMultipartForm | xss |  |
+| 908f2a065841 | gotestwaf | owasp/xss-scripting/7/Base64Flat/URLParam | xss |  |
+| b11aea77f8cc | gotestwaf | owasp/xss-scripting/7/Base64Flat/URLPath | xss |  |
+| 0f842e7d921e | gotestwaf | owasp/xss-scripting/9/Base64Flat/HTMLForm | xss |  |
+| 63446ae7163d | gotestwaf | owasp/xss-scripting/9/Base64Flat/HTMLMultipartForm | xss |  |
+| b87e899b4bb7 | gotestwaf | owasp/xss-scripting/9/Base64Flat/URLParam | xss |  |
+| 4aa8e625db91 | gotestwaf | owasp/xss-scripting/9/Base64Flat/URLPath | xss |  |
+| e3773409bbae | gotestwaf | owasp/xss-scripting/9/URL/URLPath | xss |  |
+
+### Flagged legitimate requests (development and baseline)
+
+| Case | Source | Source case | Category | Rules |
+|---|---|---|---|---|
+| 2e1c8d512583 | generated-legit | pasted-code/035d70e9daa8012d | pasted-code | AEG-SQLI-001 |
+| bbf800e0f82b | generated-legit | pasted-code/089b9e7ce886bc21 | pasted-code | AEG-SQLI-001 |
+| 9021d3347fcb | generated-legit | pasted-code/0c4cc1a3baf1a338 | pasted-code | AEG-SSTI-001 |
+| aa5af48b16ac | generated-legit | pasted-code/0d11e5d6b2b192fe | pasted-code | AEG-SQLI-001 |
+| a6b765d2947b | generated-legit | pasted-code/110a63fb59134434 | pasted-code | AEG-SQLI-001 |
+| 79bd355420fd | generated-legit | pasted-code/11fa8bbd3f0708bf | pasted-code | AEG-XSS-001 |
+| edebb7d417b8 | generated-legit | pasted-code/15733934a5cec503 | pasted-code | AEG-LFI-001 |
+| 324627bdd084 | generated-legit | pasted-code/16408e87bd3f9b38 | pasted-code | AEG-CMDI-001 |
+| 4b40a227d214 | generated-legit | pasted-code/16ef6a516e8a93d5 | pasted-code | AEG-XSS-001 |
+| 1c79f932e320 | generated-legit | pasted-code/17d1a212a26b0c1c | pasted-code | AEG-XSS-001 |
+| de7255708963 | generated-legit | pasted-code/250037355977079b | pasted-code | AEG-SQLI-001 |
+| dead0cd80748 | generated-legit | pasted-code/2a6634273daaa68d | pasted-code | AEG-XSS-001 |
+| a1feae251948 | generated-legit | pasted-code/31fd351c4fb1b333 | pasted-code | AEG-XSS-001 |
+| 4fddfa33e72d | generated-legit | pasted-code/337b8b94605acfcb | pasted-code | AEG-SQLI-001 |
+| 9a68051d8f39 | generated-legit | pasted-code/33cb9c5f3b541d9b | pasted-code | AEG-CMDI-001 |
+| e3da62f5da9d | generated-legit | pasted-code/3738d70eb0a8ed04 | pasted-code | AEG-CMDI-001 |
+| 17b3f55b36a2 | generated-legit | pasted-code/38785e0bb4eff0f7 | pasted-code | AEG-CMDI-001 |
+| 5315f87fbdea | generated-legit | pasted-code/3c71a822bee8f61b | pasted-code | AEG-XSS-001 |
+| 06c764da8750 | generated-legit | pasted-code/3d10d8bd515dfdb7 | pasted-code | AEG-CMDI-001 |
+| c382bf48b0a6 | generated-legit | pasted-code/42ec88562513bfcd | pasted-code | AEG-SQLI-001 |
+| 1e199cf7b435 | generated-legit | pasted-code/45fcc4b9693279c2 | pasted-code | AEG-SQLI-001 |
+| 03cede77cd9c | generated-legit | pasted-code/465c5d53243437e9 | pasted-code | AEG-SQLI-001 |
+| a9f75c01fe67 | generated-legit | pasted-code/4ad05589ec7609a2 | pasted-code | AEG-SQLI-001 |
+| c2d38673a67d | generated-legit | pasted-code/4ccc50d3f672e983 | pasted-code | AEG-SQLI-001 |
+| 101de2e651a2 | generated-legit | pasted-code/55c7ff332df378fe | pasted-code | AEG-SQLI-001 |
+| 6568db98c5be | generated-legit | pasted-code/5e553e7db38e3a93 | pasted-code | AEG-SQLI-001 |
+| e2e9f2bda198 | generated-legit | pasted-code/5ebe94af05acd386 | pasted-code | AEG-LFI-001 |
+| a8ed9a3e409a | generated-legit | pasted-code/6140f7174a4d0a28 | pasted-code | AEG-SSRF-002 |
+| 2799efeed0b6 | generated-legit | pasted-code/6e233a18ac18c225 | pasted-code | AEG-XSS-001 |
+| 048d0697c18e | generated-legit | pasted-code/6e27bd4977c85eac | pasted-code | AEG-SQLI-001 |
+| 9ee6fbd85792 | generated-legit | pasted-code/6f56e39437359f35 | pasted-code | AEG-CMDI-001 |
+| 8d385f05dea0 | generated-legit | pasted-code/7bd564358310e9f6 | pasted-code | AEG-SQLI-001 |
+| f3fa4985d09e | generated-legit | pasted-code/82ceb741ecea49e1 | pasted-code | AEG-XSS-001 |
+| 3226219b5784 | generated-legit | pasted-code/842b1764b63bea11 | pasted-code | AEG-XSS-001 |
+| 31b224ed0966 | generated-legit | pasted-code/86e040ecd5c184cc | pasted-code | AEG-CMDI-001 |
+| a0b34bbcdb42 | generated-legit | pasted-code/8bd487ff7edfdfbb | pasted-code | AEG-CMDI-001 |
+| 01f21cb035f0 | generated-legit | pasted-code/8e66bb69fd97194e | pasted-code | AEG-LFI-001 |
+| 401d16fb0738 | generated-legit | pasted-code/91495f5582d910f2 | pasted-code | AEG-CMDI-001 |
+| 8f2da104ae4f | generated-legit | pasted-code/9eb79f4586fc78a6 | pasted-code | AEG-SQLI-001 |
+| 9a1132cae784 | generated-legit | pasted-code/a0c811aa4602345c | pasted-code | AEG-SQLI-001 |
+| 0879b2a454e2 | generated-legit | pasted-code/a5ed5417bfd18418 | pasted-code | AEG-LFI-002 |
+| e1ae4b0b0d1b | generated-legit | pasted-code/aca5d480ea2d90ec | pasted-code | AEG-CMDI-001 |
+| 0edf25469407 | generated-legit | pasted-code/adcea670048d38a4 | pasted-code | AEG-CMDI-001 |
+| 45e42793c3b1 | generated-legit | pasted-code/af75122b50e34bed | pasted-code | AEG-XSS-001 |
+| 2de8661e9330 | generated-legit | pasted-code/bcf417c7472b70cb | pasted-code | AEG-SQLI-001 |
+| b1d772e006ae | generated-legit | pasted-code/bd68b7f9f0bee30c | pasted-code | AEG-CMDI-001 |
+| 31d35b5345fc | generated-legit | pasted-code/c206b432c5282f6c | pasted-code | AEG-SSRF-002 |
+| fbeacbcf1ff2 | generated-legit | pasted-code/c6f84c9b83ca5ae1 | pasted-code | AEG-CMDI-001 |
+| 8879cc24f400 | generated-legit | pasted-code/c95f5f04333ea20f | pasted-code | AEG-CMDI-001 |
+| d7278caad4b5 | generated-legit | pasted-code/ca156e91e51ae813 | pasted-code | AEG-SQLI-001 |
+| 838946a57200 | generated-legit | pasted-code/caf6a3a0a4ba853b | pasted-code | AEG-SSTI-001 |
+| 5a0e372a6cfe | generated-legit | pasted-code/ceaa2e82d43bcd78 | pasted-code | AEG-CMDI-001 |
+| caf5b16e4801 | generated-legit | pasted-code/ceaea25e3791faf9 | pasted-code | AEG-XSS-001 |
+| 84fe0fd71cfe | generated-legit | pasted-code/cec493fc774ceb01 | pasted-code | AEG-XSS-001 |
+| d926cc620d92 | generated-legit | pasted-code/d4fbc5e6e1f05302 | pasted-code | AEG-LFI-001 |
+| f9f92da3b9c6 | generated-legit | pasted-code/d64aa5700572a993 | pasted-code | AEG-SQLI-001 |
+| 1767a595823a | generated-legit | pasted-code/d88805611380cf3b | pasted-code | AEG-SQLI-001 |
+| 2e0ab0bef0b2 | generated-legit | pasted-code/d97b1271ed174580 | pasted-code | AEG-XSS-001 |
+| 45ea83f31dec | generated-legit | pasted-code/da1e7acc26038ebf | pasted-code | AEG-LFI-001 |
+| f2ddc094ba79 | generated-legit | pasted-code/db1755cb19c0819b | pasted-code | AEG-CMDI-001 |
+| 3418635ae7c8 | generated-legit | pasted-code/db211ccf1f6fc5c3 | pasted-code | AEG-LFI-001 |
+| 3d287e3a9b34 | generated-legit | pasted-code/dc5dc3ca1dca94ac | pasted-code | AEG-XSS-001 |
+| 17bdecab116e | generated-legit | pasted-code/dd2b226e14f4debf | pasted-code | AEG-LFI-001 |
+| 2c680ddf8eea | generated-legit | pasted-code/df75a28eb7e9ee90 | pasted-code | AEG-XSS-001 |
+| 24708b4d5797 | generated-legit | pasted-code/e4a36b6e4abd465d | pasted-code | AEG-SQLI-001 |
+| 33344c9dce1c | generated-legit | pasted-code/e5a73e9d4b1e94fb | pasted-code | AEG-CMDI-001 |
+| 2a2a7f19f5a4 | generated-legit | pasted-code/e8fd88e6c19e45e6 | pasted-code | AEG-XSS-001 |
+| e8f36ca781c8 | generated-legit | pasted-code/ea54895517768c73 | pasted-code | AEG-XSS-001 |
+| 02473bfbc1d3 | generated-legit | pasted-code/ec1e16a2456890e4 | pasted-code | AEG-SQLI-001 |
+| 71d4497bcca1 | generated-legit | pasted-code/ed7a692ab5a8130c | pasted-code | AEG-LFI-001 |
+| 64177559f271 | generated-legit | pasted-code/f40a215bcaae3dfb | pasted-code | AEG-XSS-001 |
+| 554236bed941 | generated-legit | pasted-code/fcb2593a77fc5cbe | pasted-code | AEG-LFI-001 |
+| b9f0180468e8 | generated-legit | pasted-code/fcfd4c490439c4cc | pasted-code | AEG-XSS-001 |
+| 310a4a882dfd | generated-legit | pasted-code/fdb9f27bbba76717 | pasted-code | AEG-XSS-001 |
+| 8def9169a17a | generated-legit | pasted-code/fe3eff2c09d0f706 | pasted-code | AEG-SQLI-001 |
+| bf4bfac6b372 | generated-legit | prices-and-quantities/0a2cf469b57795d9 | prices-and-quantities | AEG-SQLI-001 |
+| 5aa90781248b | generated-legit | prices-and-quantities/503d0f1b009d7a18 | prices-and-quantities | AEG-SQLI-001 |
+| 01e08c6f81e7 | generated-legit | prices-and-quantities/bce40a00ce9fab45 | prices-and-quantities | AEG-SQLI-001 |
+| 7c547bb350e5 | generated-legit | prices-and-quantities/d5797e6ecf9d35b8 | prices-and-quantities | AEG-SQLI-001 |
+| 17e687c29eb0 | generated-legit | punctuation-prose/a48c02aef41202fd | punctuation-prose | AEG-SQLI-001 |
+| 22a0e9282d57 | generated-legit | urls-in-text/02768d283efac72a | urls-in-text | AEG-LFI-001 |
+| a3292cd30a93 | generated-legit | urls-in-text/0eb0b207780587f2 | urls-in-text | AEG-LFI-001 |
+| 02139d3f456a | generated-legit | urls-in-text/4b59cc9212fd47d5 | urls-in-text | AEG-LFI-001 |
+| d9416bb8990d | generated-legit | urls-in-text/4ef0a2702a5e3d21 | urls-in-text | AEG-SSRF-002 |
+| 2b9064b4d4f0 | generated-legit | urls-in-text/5ac4ca169c438ad2 | urls-in-text | AEG-SSRF-002 |
+| 331df8868ef6 | generated-legit | urls-in-text/66473cc7c989f6fa | urls-in-text | AEG-LFI-001 |
+| 936a86dc6f2b | generated-legit | urls-in-text/84806cecd6a20941 | urls-in-text | AEG-SSRF-002 |
+| daf0a8ff601c | generated-legit | urls-in-text/9a07d377c3033856 | urls-in-text | AEG-LFI-001 |
+| f7c55025bb7b | generated-legit | urls-in-text/9bbe87f93a126e19 | urls-in-text | AEG-SSRF-002 |
+| 4dc19f74d217 | generated-legit | urls-in-text/a16cf7d8ae68a30e | urls-in-text | AEG-LFI-001 |
+| 6e627be2d2e7 | generated-legit | urls-in-text/bfde091d43fe5c63 | urls-in-text | AEG-SSRF-002 |
+
+## Configuration: example-policy
+
+### Headline (held-out)
+
+- Blocked rate: 32.1% (420 of 1310 attacks)
+- Detection rate (blocked or flagged): 32.1% (420 of 1310 attacks)
+- False positive rate (blocked or flagged): 3.4% (53 of 1538 legitimate requests)
+- Attacks outside the rates: 0 rejected, 0 unknown, 1 not sent
+- Legitimate requests outside the rates: 0 rejected, 0 unknown, 0 not sent
+
+The false positive total depends on which legitimate requests the sources hold and in what proportion: read the rates by source and category below.
+
+### Totals (each case counted once)
+
+| Split | Expected | Sent | Blocked | Flagged | Route only | Passed | Rejected | Unknown | Not sent | Blocked rate | Blocked or flagged rate |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | attack | 230 | 226 | 0 | 0 | 3 | 1 | 0 | 0 | 98.7% | 98.7% |
+| baseline | legit | 195 | 0 | 0 | 0 | 195 | 0 | 0 | 0 | 0.0% | 0.0% |
+| dev | attack | 3135 | 930 | 1 | 2204 | 0 | 0 | 0 | 3 | 29.7% | 29.7% |
+| dev | legit | 3581 | 131 | 0 | 3450 | 0 | 0 | 0 | 0 | 3.7% | 3.7% |
+| dev | near-miss | 598 | 58 | 1 | 539 | 0 | 0 | 0 | 3 | 9.7% | 9.9% |
+| held-out | attack | 1310 | 420 | 0 | 890 | 0 | 0 | 0 | 1 | 32.1% | 32.1% |
+| held-out | legit | 1538 | 53 | 0 | 1485 | 0 | 0 | 0 | 0 | 3.4% | 3.4% |
+| held-out | near-miss | 280 | 37 | 2 | 241 | 0 | 0 | 0 | 0 | 13.2% | 13.9% |
+
+### Why cases were not sent
+
+Over all splits and expectations. A case that was not sent says nothing about the firewall and is in no rate.
+
+| Reason | Cases |
+|---|---|
+| net/http would replace or leave out the Content-Length header | 7 |
+
+A case with several sources is counted under each of them below.
+
+### False positives by source and category
+
+Legitimate requests blocked or flagged, of those judged. "All splits" includes baseline.
+
+| Source | Category | Held-out | Development | All splits |
+|---|---|---|---|---|
+| baseline | fp | n/a | n/a | 0.0% (0 of 195) |
+| baseline | (all categories) | n/a | n/a | 0.0% (0 of 195) |
+| generated-legit | addresses | 0.0% (0 of 181) | 0.0% (0 of 319) | 0.0% (0 of 500) |
+| generated-legit | names | 0.0% (0 of 158) | 0.0% (0 of 342) | 0.0% (0 of 500) |
+| generated-legit | other-languages | 0.0% (0 of 144) | 0.0% (0 of 356) | 0.0% (0 of 500) |
+| generated-legit | pasted-code | 12.7% (28 of 221) | 14.8% (75 of 507) | 14.1% (103 of 728) |
+| generated-legit | prices-and-quantities | 14.0% (20 of 143) | 12.3% (44 of 357) | 12.8% (64 of 500) |
+| generated-legit | punctuation-prose | 0.0% (0 of 141) | 0.3% (1 of 359) | 0.2% (1 of 500) |
+| generated-legit | reviews | 0.0% (0 of 210) | 0.0% (0 of 540) | 0.0% (0 of 750) |
+| generated-legit | support-messages | 0.0% (0 of 157) | 0.0% (0 of 343) | 0.0% (0 of 500) |
+| generated-legit | urls-in-text | 2.2% (3 of 135) | 3.0% (11 of 365) | 2.8% (14 of 500) |
+| generated-legit | (all categories) | 3.4% (51 of 1490) | 3.8% (131 of 3488) | 3.7% (182 of 4978) |
+| gotestwaf | fp | 4.2% (2 of 48) | 0.0% (0 of 93) | 1.4% (2 of 141) |
+| gotestwaf | (all categories) | 4.2% (2 of 48) | 0.0% (0 of 93) | 1.4% (2 of 141) |
+| (all sources) | (all categories) | 3.4% (53 of 1538) | 3.7% (131 of 3581) | 3.5% (184 of 5314) |
+
+### Near-miss requests blocked or flagged, by source and category
+
+Near-misses are in no false positive rate and no detection rate.
+
+| Source | Category | Held-out | Development | All splits |
+|---|---|---|---|---|
+| crs | cmdi | 1.2% (1 of 84) | 1.2% (2 of 163) | 1.2% (3 of 247) |
+| crs | codei | 13.3% (4 of 30) | 6.5% (4 of 62) | 8.7% (8 of 92) |
+| crs | java | 90.9% (10 of 11) | 95.5% (21 of 22) | 93.9% (31 of 33) |
+| crs | lfi | 25.0% (1 of 4) | 18.2% (2 of 11) | 20.0% (3 of 15) |
+| crs | other | 30.8% (4 of 13) | 3.8% (1 of 26) | 12.8% (5 of 39) |
+| crs | protocol | 7.1% (4 of 56) | 4.6% (7 of 153) | 5.3% (11 of 209) |
+| crs | rfi | 0.0% (0 of 1) | 0.0% (0 of 3) | 0.0% (0 of 4) |
+| crs | scanner | 0.0% (0 of 1) | 0.0% (0 of 2) | 0.0% (0 of 3) |
+| crs | session | n/a | 40.0% (2 of 5) | 40.0% (2 of 5) |
+| crs | sqli | 2.1% (1 of 48) | 8.4% (9 of 107) | 6.5% (10 of 155) |
+| crs | xss | 10.0% (2 of 20) | 2.9% (1 of 34) | 5.6% (3 of 54) |
+| crs | (all categories) | 10.1% (27 of 268) | 8.3% (49 of 588) | 8.9% (76 of 856) |
+| generated-legit | pasted-code | 100.0% (12 of 12) | 100.0% (10 of 10) | 100.0% (22 of 22) |
+| generated-legit | (all categories) | 100.0% (12 of 12) | 100.0% (10 of 10) | 100.0% (22 of 22) |
+| (all sources) | (all categories) | 13.9% (39 of 280) | 9.9% (59 of 598) | 11.2% (98 of 878) |
+
+### By source
+
+| Source | Split | Expected | Sent | Blocked | Flagged | Route only | Passed | Rejected | Unknown | Not sent | Blocked rate | Blocked or flagged rate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | baseline | attack | 230 | 226 | 0 | 0 | 3 | 1 | 0 | 0 | 98.7% | 98.7% |
+| baseline | baseline | legit | 195 | 0 | 0 | 0 | 195 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | dev | attack | 2667 | 740 | 1 | 1926 | 0 | 0 | 0 | 3 | 27.7% | 27.8% |
+| crs | dev | near-miss | 588 | 48 | 1 | 539 | 0 | 0 | 0 | 3 | 8.2% | 8.3% |
+| crs | held-out | attack | 1107 | 333 | 0 | 774 | 0 | 0 | 0 | 1 | 30.1% | 30.1% |
+| crs | held-out | near-miss | 268 | 25 | 2 | 241 | 0 | 0 | 0 | 0 | 9.3% | 10.1% |
+| generated-legit | dev | legit | 3488 | 131 | 0 | 3357 | 0 | 0 | 0 | 0 | 3.8% | 3.8% |
+| generated-legit | held-out | legit | 1490 | 51 | 0 | 1439 | 0 | 0 | 0 | 0 | 3.4% | 3.4% |
+| generated-legit | dev | near-miss | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| generated-legit | held-out | near-miss | 12 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | dev | attack | 468 | 190 | 0 | 278 | 0 | 0 | 0 | 0 | 40.6% | 40.6% |
+| gotestwaf | held-out | attack | 203 | 87 | 0 | 116 | 0 | 0 | 0 | 0 | 42.9% | 42.9% |
+| gotestwaf | dev | legit | 93 | 0 | 0 | 93 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | held-out | legit | 48 | 2 | 0 | 46 | 0 | 0 | 0 | 0 | 4.2% | 4.2% |
+
+### By source and category
+
+| Source | Category | Split | Expected | Sent | Blocked | Flagged | Route only | Passed | Rejected | Unknown | Not sent | Blocked rate | Blocked or flagged rate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | cmdi | baseline | attack | 29 | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | codei | baseline | attack | 8 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | fp | baseline | legit | 195 | 0 | 0 | 0 | 195 | 0 | 0 | 0 | 0.0% | 0.0% |
+| baseline | lfi | baseline | attack | 11 | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | log4shell | baseline | attack | 4 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | misc | baseline | attack | 2 | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 50.0% | 50.0% |
+| baseline | nosqli | baseline | attack | 3 | 2 | 0 | 0 | 1 | 0 | 0 | 0 | 66.7% | 66.7% |
+| baseline | protocol | baseline | attack | 7 | 5 | 0 | 0 | 1 | 1 | 0 | 0 | 83.3% | 83.3% |
+| baseline | rfi | baseline | attack | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | scanner | baseline | attack | 46 | 46 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | session | baseline | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | sqli | baseline | attack | 47 | 47 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | ssrf | baseline | attack | 5 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | ssti | baseline | attack | 38 | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | xss | baseline | attack | 23 | 23 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| baseline | xxe | baseline | attack | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| crs | cmdi | dev | attack | 492 | 79 | 0 | 413 | 0 | 0 | 0 | 0 | 16.1% | 16.1% |
+| crs | cmdi | dev | near-miss | 163 | 2 | 0 | 161 | 0 | 0 | 0 | 0 | 1.2% | 1.2% |
+| crs | cmdi | held-out | attack | 210 | 37 | 0 | 173 | 0 | 0 | 0 | 0 | 17.6% | 17.6% |
+| crs | cmdi | held-out | near-miss | 84 | 0 | 1 | 83 | 0 | 0 | 0 | 0 | 0.0% | 1.2% |
+| crs | codei | dev | attack | 206 | 43 | 0 | 163 | 0 | 0 | 0 | 0 | 20.9% | 20.9% |
+| crs | codei | dev | near-miss | 62 | 4 | 0 | 58 | 0 | 0 | 0 | 0 | 6.5% | 6.5% |
+| crs | codei | held-out | attack | 95 | 27 | 0 | 68 | 0 | 0 | 0 | 0 | 28.4% | 28.4% |
+| crs | codei | held-out | near-miss | 30 | 4 | 0 | 26 | 0 | 0 | 0 | 0 | 13.3% | 13.3% |
+| crs | java | dev | attack | 768 | 281 | 0 | 487 | 0 | 0 | 0 | 0 | 36.6% | 36.6% |
+| crs | java | dev | near-miss | 22 | 21 | 0 | 1 | 0 | 0 | 0 | 0 | 95.5% | 95.5% |
+| crs | java | held-out | attack | 296 | 125 | 0 | 171 | 0 | 0 | 0 | 0 | 42.2% | 42.2% |
+| crs | java | held-out | near-miss | 11 | 10 | 0 | 1 | 0 | 0 | 0 | 0 | 90.9% | 90.9% |
+| crs | lfi | dev | attack | 44 | 10 | 0 | 34 | 0 | 0 | 0 | 0 | 22.7% | 22.7% |
+| crs | lfi | dev | near-miss | 11 | 2 | 0 | 9 | 0 | 0 | 0 | 0 | 18.2% | 18.2% |
+| crs | lfi | held-out | attack | 21 | 4 | 0 | 17 | 0 | 0 | 0 | 0 | 19.0% | 19.0% |
+| crs | lfi | held-out | near-miss | 4 | 1 | 0 | 3 | 0 | 0 | 0 | 0 | 25.0% | 25.0% |
+| crs | other | dev | attack | 153 | 44 | 0 | 109 | 0 | 0 | 0 | 0 | 28.8% | 28.8% |
+| crs | other | dev | near-miss | 26 | 1 | 0 | 25 | 0 | 0 | 0 | 0 | 3.8% | 3.8% |
+| crs | other | held-out | attack | 75 | 24 | 0 | 51 | 0 | 0 | 0 | 0 | 32.0% | 32.0% |
+| crs | other | held-out | near-miss | 13 | 4 | 0 | 9 | 0 | 0 | 0 | 0 | 30.8% | 30.8% |
+| crs | protocol | dev | attack | 202 | 43 | 1 | 158 | 0 | 0 | 0 | 3 | 21.3% | 21.8% |
+| crs | protocol | dev | near-miss | 153 | 6 | 1 | 146 | 0 | 0 | 0 | 3 | 3.9% | 4.6% |
+| crs | protocol | held-out | attack | 87 | 13 | 0 | 74 | 0 | 0 | 0 | 1 | 14.9% | 14.9% |
+| crs | protocol | held-out | near-miss | 56 | 3 | 1 | 52 | 0 | 0 | 0 | 0 | 5.4% | 7.1% |
+| crs | rfi | dev | attack | 22 | 10 | 0 | 12 | 0 | 0 | 0 | 0 | 45.5% | 45.5% |
+| crs | rfi | dev | near-miss | 3 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | rfi | held-out | attack | 11 | 3 | 0 | 8 | 0 | 0 | 0 | 0 | 27.3% | 27.3% |
+| crs | rfi | held-out | near-miss | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | scanner | dev | attack | 8 | 6 | 0 | 2 | 0 | 0 | 0 | 0 | 75.0% | 75.0% |
+| crs | scanner | dev | near-miss | 2 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | scanner | held-out | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| crs | scanner | held-out | near-miss | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| crs | session | dev | attack | 33 | 6 | 0 | 27 | 0 | 0 | 0 | 0 | 18.2% | 18.2% |
+| crs | session | dev | near-miss | 5 | 2 | 0 | 3 | 0 | 0 | 0 | 0 | 40.0% | 40.0% |
+| crs | session | held-out | attack | 9 | 5 | 0 | 4 | 0 | 0 | 0 | 0 | 55.6% | 55.6% |
+| crs | sqli | dev | attack | 597 | 154 | 0 | 443 | 0 | 0 | 0 | 0 | 25.8% | 25.8% |
+| crs | sqli | dev | near-miss | 107 | 9 | 0 | 98 | 0 | 0 | 0 | 0 | 8.4% | 8.4% |
+| crs | sqli | held-out | attack | 247 | 65 | 0 | 182 | 0 | 0 | 0 | 0 | 26.3% | 26.3% |
+| crs | sqli | held-out | near-miss | 48 | 1 | 0 | 47 | 0 | 0 | 0 | 0 | 2.1% | 2.1% |
+| crs | xss | dev | attack | 142 | 64 | 0 | 78 | 0 | 0 | 0 | 0 | 45.1% | 45.1% |
+| crs | xss | dev | near-miss | 34 | 1 | 0 | 33 | 0 | 0 | 0 | 0 | 2.9% | 2.9% |
+| crs | xss | held-out | attack | 55 | 29 | 0 | 26 | 0 | 0 | 0 | 0 | 52.7% | 52.7% |
+| crs | xss | held-out | near-miss | 20 | 2 | 0 | 18 | 0 | 0 | 0 | 0 | 10.0% | 10.0% |
+| generated-legit | addresses | dev | legit | 319 | 0 | 0 | 319 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | addresses | held-out | legit | 181 | 0 | 0 | 181 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | names | dev | legit | 342 | 0 | 0 | 342 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | names | held-out | legit | 158 | 0 | 0 | 158 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | other-languages | dev | legit | 356 | 0 | 0 | 356 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | other-languages | held-out | legit | 144 | 0 | 0 | 144 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | pasted-code | dev | legit | 507 | 75 | 0 | 432 | 0 | 0 | 0 | 0 | 14.8% | 14.8% |
+| generated-legit | pasted-code | dev | near-miss | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| generated-legit | pasted-code | held-out | legit | 221 | 28 | 0 | 193 | 0 | 0 | 0 | 0 | 12.7% | 12.7% |
+| generated-legit | pasted-code | held-out | near-miss | 12 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| generated-legit | prices-and-quantities | dev | legit | 357 | 44 | 0 | 313 | 0 | 0 | 0 | 0 | 12.3% | 12.3% |
+| generated-legit | prices-and-quantities | held-out | legit | 143 | 20 | 0 | 123 | 0 | 0 | 0 | 0 | 14.0% | 14.0% |
+| generated-legit | punctuation-prose | dev | legit | 359 | 1 | 0 | 358 | 0 | 0 | 0 | 0 | 0.3% | 0.3% |
+| generated-legit | punctuation-prose | held-out | legit | 141 | 0 | 0 | 141 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | reviews | dev | legit | 540 | 0 | 0 | 540 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | reviews | held-out | legit | 210 | 0 | 0 | 210 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | support-messages | dev | legit | 343 | 0 | 0 | 343 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | support-messages | held-out | legit | 157 | 0 | 0 | 157 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| generated-legit | urls-in-text | dev | legit | 365 | 11 | 0 | 354 | 0 | 0 | 0 | 0 | 3.0% | 3.0% |
+| generated-legit | urls-in-text | held-out | legit | 135 | 3 | 0 | 132 | 0 | 0 | 0 | 0 | 2.2% | 2.2% |
+| gotestwaf | cmdi | dev | attack | 8 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | cmdi | held-out | attack | 24 | 4 | 0 | 20 | 0 | 0 | 0 | 0 | 16.7% | 16.7% |
+| gotestwaf | community-user-agent | dev | attack | 8 | 5 | 0 | 3 | 0 | 0 | 0 | 0 | 62.5% | 62.5% |
+| gotestwaf | community-user-agent | held-out | attack | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | crlf | dev | attack | 5 | 4 | 0 | 1 | 0 | 0 | 0 | 0 | 80.0% | 80.0% |
+| gotestwaf | crlf | held-out | attack | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | fp | dev | legit | 93 | 0 | 0 | 93 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | fp | held-out | legit | 48 | 2 | 0 | 46 | 0 | 0 | 0 | 0 | 4.2% | 4.2% |
+| gotestwaf | ldap-injection | dev | attack | 16 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | ldap-injection | held-out | attack | 8 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | lfi | dev | attack | 30 | 9 | 0 | 21 | 0 | 0 | 0 | 0 | 30.0% | 30.0% |
+| gotestwaf | mail-injection | dev | attack | 16 | 2 | 0 | 14 | 0 | 0 | 0 | 0 | 12.5% | 12.5% |
+| gotestwaf | mail-injection | held-out | attack | 8 | 1 | 0 | 7 | 0 | 0 | 0 | 0 | 12.5% | 12.5% |
+| gotestwaf | non-crud | dev | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | non-crud | held-out | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | nosqli | dev | attack | 30 | 0 | 0 | 30 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | nosqli | held-out | attack | 20 | 0 | 0 | 20 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
+| gotestwaf | rce | dev | attack | 22 | 14 | 0 | 8 | 0 | 0 | 0 | 0 | 63.6% | 63.6% |
+| gotestwaf | rce | held-out | attack | 8 | 7 | 0 | 1 | 0 | 0 | 0 | 0 | 87.5% | 87.5% |
+| gotestwaf | rest | dev | attack | 4 | 2 | 0 | 2 | 0 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | rest | held-out | attack | 3 | 1 | 0 | 2 | 0 | 0 | 0 | 0 | 33.3% | 33.3% |
+| gotestwaf | soap | dev | attack | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | soap | held-out | attack | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | sqli | dev | attack | 47 | 21 | 0 | 26 | 0 | 0 | 0 | 0 | 44.7% | 44.7% |
+| gotestwaf | sqli | held-out | attack | 18 | 4 | 0 | 14 | 0 | 0 | 0 | 0 | 22.2% | 22.2% |
+| gotestwaf | ss-include | dev | attack | 16 | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | ss-include | held-out | attack | 8 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | ssti | dev | attack | 24 | 12 | 0 | 12 | 0 | 0 | 0 | 0 | 50.0% | 50.0% |
+| gotestwaf | xss | dev | attack | 230 | 97 | 0 | 133 | 0 | 0 | 0 | 0 | 42.2% | 42.2% |
+| gotestwaf | xss | held-out | attack | 99 | 56 | 0 | 43 | 0 | 0 | 0 | 0 | 56.6% | 56.6% |
+| gotestwaf | xxe | dev | attack | 8 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+| gotestwaf | xxe | held-out | attack | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% |
+
+### Distinct attack payloads (all splits)
+
+- Judged in at least one case: 2278
+- Blocked or flagged in at least one placement: 22.9% (522 of 2278)
+- Blocked or flagged in every judged placement: 20.9% (476 of 2278)
+
+### Missed attacks (development and baseline)
+
+| Case | Source | Source case | Category | Rules |
+|---|---|---|---|---|
+| 0dbbdd503e14 | baseline | attack/content-type abuse | protocol |  |
+| 90200325bc36 | baseline | attack/operator in query | nosqli |  |
+| dd341a923b2b | baseline | attack/xpath injection | misc |  |
+| 232c0bc9ba2d | crs | 913100-10 | scanner | AEG-ROUTE-001 |
+| 4c286f811ff2 | crs | 913100-11 | scanner | AEG-ROUTE-001 |
+| f2c977eeaa4a | crs | 920120-10 | protocol | AEG-ROUTE-001 |
+| d218fe826b09 | crs | 920120-12 | protocol | AEG-ROUTE-001 |
+| c93c3aa91cee | crs | 920120-13 | protocol | AEG-ROUTE-001 |
+| 8fe9897157f9 | crs | 920120-14 | protocol | AEG-ROUTE-001 |
+| c7bfcf8fdd59 | crs | 920120-16 | protocol | AEG-ROUTE-001 |
+| 3250b5aeefa8 | crs | 920120-17 | protocol | AEG-ROUTE-001 |
+| c1140ba37f32 | crs | 920120-2 | protocol | AEG-ROUTE-001 |
+| f02c57b0cce1 | crs | 920120-3 | protocol | AEG-ROUTE-001 |
+| 8b5838115414 | crs | 920120-36 | protocol | AEG-ROUTE-001 |
+| db3609a17a67 | crs | 920120-37 | protocol | AEG-ROUTE-001 |
+| 61a682add1e6 | crs | 920120-40 | protocol | AEG-ROUTE-001 |
+| 65aa322eecc0 | crs | 920120-41 | protocol | AEG-ROUTE-001 |
+| 5ee5b198df54 | crs | 920120-5 | protocol | AEG-ROUTE-001 |
+| 7c9f06e1b250 | crs | 920120-7 | protocol | AEG-ROUTE-001 |
+| e5a795eb1553 | crs | 920120-8 | protocol | AEG-ROUTE-001 |
+| 68c5252e2e67 | crs | 920121-1 | protocol | AEG-ROUTE-001 |
+| d22dfc63bf7e | crs | 920121-2 | protocol | AEG-ROUTE-001 |
+| 8c230e7a5f40 | crs | 920121-4 | protocol | AEG-ROUTE-001 |
+| 3d49248c2151 | crs | 920170-2 | protocol | AEG-ROUTE-001 |
+| 8245bca218a0 | crs | 920170-3 | protocol | AEG-ROUTE-001 |
+| a7146d96f1d8 | crs | 920190-2 | protocol | AEG-ROUTE-001 |
+| 8e6a31bcf85b | crs | 920200-1 | protocol | AEG-ROUTE-001 |
+| 449a8b08d5eb | crs | 920200-3 | protocol | AEG-ROUTE-001 |
+| 83f3dbb69143 | crs | 920200-4 | protocol | AEG-ROUTE-001 |
+| 8767d5e24a35 | crs | 920201-1 | protocol | AEG-ROUTE-001 |
+| 74c38d50564b | crs | 920202-2 | protocol | AEG-ROUTE-001 |
+| 3c8a8d6ad75d | crs | 920210-3 | protocol | AEG-ROUTE-001 |
+| d3c7e74041ad | crs | 920210-6 | protocol | AEG-ROUTE-001 |
+| 189b87f63989 | crs | 920210-7 | protocol | AEG-ROUTE-001 |
+| 943f8e0ca07e | crs | 920230-1 | protocol | AEG-ROUTE-001 |
+| f9f340437fc5 | crs | 920240-5 | protocol | AEG-ROUTE-001 |
+| 051179c600b4 | crs | 920240-6 | protocol | AEG-ROUTE-001 |
+| d80651209cce | crs | 920250-2 | protocol | AEG-ROUTE-001 |
+| 5eab439b0481 | crs | 920250-3 | protocol | AEG-ROUTE-001 |
+| a390d7595481 | crs | 920250-4 | protocol | AEG-ROUTE-001 |
+| 6e3b94cd826a | crs | 920260-1 | protocol | AEG-ROUTE-001 |
+| 73ee391ef1fb | crs | 920260-3 | protocol | AEG-ROUTE-001 |
+| 17cedb1bd6d4 | crs | 920271-1 | protocol | AEG-ROUTE-001 |
+| 856c78f7823c | crs | 920271-2 | protocol | AEG-ROUTE-001 |
+| fb2c2fcfdf95 | crs | 920271-4 | protocol | AEG-ROUTE-001 |
+| 129fe6513682 | crs | 920272-1 | protocol | AEG-ROUTE-001 |
+| 31c81136d5d5 | crs | 920272-2 | protocol | AEG-ROUTE-001 |
+| 2b694461bf40 | crs | 920272-3 | protocol | AEG-ROUTE-001 |
+| 9a37ef0e02d3 | crs | 920273-3 | protocol | AEG-ROUTE-001 |
+| 26ce517bf4ab | crs | 920273-5 | protocol | AEG-ROUTE-001 |
+| 2a34f0eb1d97 | crs | 920274-4 | protocol | AEG-ROUTE-001 |
+| cf5136fad2bf | crs | 920275-1 | protocol | AEG-ROUTE-001 |
+| 465ab29855e7 | crs | 920275-4 | protocol | AEG-ROUTE-001 |
+| 6eb2f83581f2 | crs | 920300-1 | protocol | AEG-ROUTE-001 |
+| 9072d4fa31f8 | crs | 920311-1 | protocol | AEG-ROUTE-001 |
+| cf0a2b4d1898 | crs | 920320-1 | protocol | AEG-ROUTE-001 |
+| 91347f23f1f6 | crs | 920330-1 | protocol | AEG-ROUTE-001 |
+| 4fccb428e984 | crs | 920350-1 | protocol | AEG-ROUTE-001 |
+| 6b3ff78b57fb | crs | 920350-4 | protocol | AEG-ROUTE-001 |
+| e2258d3fa6c5 | crs | 920350-5 | protocol | AEG-ROUTE-001 |
+| 91e025e13c3b | crs | 920350-6 | protocol | AEG-ROUTE-001 |
+| eb0634b030df | crs | 920360-1 | protocol | AEG-ROUTE-001 |
+| 553f8bb1b468 | crs | 920370-1 | protocol | AEG-ROUTE-001 |
+| a3d762cba5c6 | crs | 920380-1 | protocol | AEG-ROUTE-001 |
+| 21118514a126 | crs | 920410-1 | protocol | AEG-ROUTE-001 |
+| 3a7d143270ed | crs | 920440-4 | protocol | AEG-ROUTE-001 |
+| a3542079d53a | crs | 920440-5 | protocol | AEG-ROUTE-001 |
+| e9e2dd64d233 | crs | 920440-6 | protocol | AEG-ROUTE-001 |
+| d5624f8e5551 | crs | 920440-7 | protocol | AEG-ROUTE-001 |
+| 747f8e40a761 | crs | 920450-1 | protocol | AEG-ROUTE-001 |
+| 12cc438396fe | crs | 920450-2 | protocol | AEG-ROUTE-001 |
+| 7d8ad0219dcf | crs | 920451-1 | protocol | AEG-ROUTE-001 |
+| 58b1ba125e19 | crs | 920460-2 | protocol | AEG-ROUTE-001 |
+| f5803c7039c3 | crs | 920460-3 | protocol | AEG-ROUTE-001 |
+| f806e2337192 | crs | 920470-12 | protocol | AEG-ROUTE-001 |
+| 2147f7d03965 | crs | 920480-11 | protocol | AEG-ROUTE-001 |
+| 4c1084e0084e | crs | 920480-14 | protocol | AEG-ROUTE-001 |
+| fba4cc14f4b5 | crs | 920480-16 | protocol | AEG-ROUTE-001 |
+| b4d944c68646 | crs | 920480-17 | protocol | AEG-ROUTE-001 |
+| c982e62ecc14 | crs | 920480-19 | protocol | AEG-ROUTE-001 |
+| d8ad2805807f | crs | 920480-22 | protocol | AEG-ROUTE-001 |
+| 2dba59300f94 | crs | 920490-1 | protocol | AEG-ROUTE-001 |
+| 30d391e8ec72 | crs | 920500-2 | protocol | AEG-ROUTE-001 |
+| 97e54438f181 | crs | 920510-1 | protocol | AEG-ROUTE-001 |
+| 23542ecf53e3 | crs | 920510-2 | protocol | AEG-ROUTE-001 |
+| a6116479d4c2 | crs | 920510-3 | protocol | AEG-ROUTE-001 |
+| 1c029768b31a | crs | 920510-4 | protocol | AEG-ROUTE-001 |
+| 120c575e373b | crs | 920520-10 | protocol | AEG-ROUTE-001 |
+| 59d082ac20ca | crs | 920530-2 | protocol | AEG-ROUTE-001 |
+| 52c27fb1c5a7 | crs | 920530-4 | protocol | AEG-ROUTE-001 |
+| 144da38f6cf7 | crs | 920540-1 | protocol | AEG-ROUTE-001 |
+| 5af2f6465fb1 | crs | 920540-2 | protocol | AEG-ROUTE-001 |
+| ed14ddf299e9 | crs | 920600-1 | protocol | AEG-ROUTE-001 |
+| f84c86f268fc | crs | 920600-7 | protocol | AEG-ROUTE-001 |
+| 6df274073f16 | crs | 920650-1 | protocol | AEG-ROUTE-001 |
+| 6ffd1c7f8a4a | crs | 920650-10 | protocol | AEG-ROUTE-001 |
+| c7376ca11d0b | crs | 920650-13 | protocol | AEG-ROUTE-001 |
+| d31f6634f8b1 | crs | 920650-14 | protocol | AEG-ROUTE-001 |
+| dd618e384049 | crs | 920650-16 | protocol | AEG-ROUTE-001 |
+| 878399a8789c | crs | 920650-17 | protocol | AEG-ROUTE-001 |
+| 086dcca497e0 | crs | 920650-2 | protocol | AEG-ROUTE-001 |
+| c35935639ab9 | crs | 920650-3 | protocol | AEG-ROUTE-001 |
+| 6db5f52886b7 | crs | 920650-34 | protocol | AEG-ROUTE-001 |
+| 43543e636784 | crs | 920650-35 | protocol | AEG-ROUTE-001 |
+| 737591550da2 | crs | 920650-5 | protocol | AEG-ROUTE-001 |
+| 3bf5bbac16de | crs | 920650-6 | protocol | AEG-ROUTE-001 |
+| 06a5d5a26632 | crs | 920650-8 | protocol | AEG-ROUTE-001 |
+| 7991d2a96a59 | crs | 920650-9 | protocol | AEG-ROUTE-001 |
+| 2d074408a660 | crs | 920660-11 | protocol | AEG-ROUTE-001 |
+| ebee8492710c | crs | 920660-13 | protocol | AEG-ROUTE-001 |
+| 658f0d08a326 | crs | 920660-14 | protocol | AEG-ROUTE-001 |
+| f9d9997e1aae | crs | 920660-15 | protocol | AEG-ROUTE-001 |
+| 02893d4db8bd | crs | 920660-16 | protocol | AEG-ROUTE-001 |
+| 6897514aa7a9 | crs | 920660-2 | protocol | AEG-ROUTE-001 |
+| eb89cc91eaeb | crs | 920660-3 | protocol | AEG-ROUTE-001 |
+| ab5453c6c89f | crs | 920660-4 | protocol | AEG-ROUTE-001 |
+| 8ed1af9a971b | crs | 920660-6 | protocol | AEG-ROUTE-001 |
+| 4ffd6c89269a | crs | 920660-8 | protocol | AEG-ROUTE-001 |
+| aa5baf262312 | crs | 921110-2 | protocol | AEG-ROUTE-001 |
+| 44dfb0bfe3ab | crs | 921110-7 | protocol | AEG-ROUTE-001 |
+| b80cf4605cd8 | crs | 921130-2 | protocol | AEG-ROUTE-001 |
+| 08f7b0c969a0 | crs | 921140-2 | protocol | AEG-ROUTE-001 |
+| b8c7ce18ff90 | crs | 921150-1 | protocol | AEG-ROUTE-001 |
+| 980d84110bf3 | crs | 921150-2 | protocol | AEG-ROUTE-001 |
+| a70ca1aaa6e1 | crs | 921151-2 | protocol | AEG-ROUTE-001 |
+| cabd1360fa08 | crs | 921151-3 | protocol | AEG-ROUTE-001 |
+| 943404516ee3 | crs | 921160-2 | protocol | AEG-ROUTE-001 |
+| 8cefb8e7da32 | crs | 921160-3 | protocol | AEG-ROUTE-001 |
+| f34675514ab4 | crs | 921160-5 | protocol | AEG-ROUTE-001 |
+| 6b0bab28f88c | crs | 921160-6 | protocol | AEG-ROUTE-001 |
+| 6087eee88c69 | crs | 921160-7 | protocol | AEG-ROUTE-001 |
+| 8f578280542e | crs | 921180-6 | protocol | AEG-ROUTE-001 |
+| 052c68ed2b52 | crs | 921200-13 | protocol | AEG-ROUTE-001 |
+| 50e57940b43e | crs | 921200-14 | protocol | AEG-ROUTE-001 |
+| 8446d2674414 | crs | 921200-16 | protocol | AEG-ROUTE-001 |
+| 6742c9102b35 | crs | 921200-17 | protocol | AEG-ROUTE-001 |
+| b4af6c0595cc | crs | 921200-19 | protocol | AEG-ROUTE-001 |
+| f3296bd79345 | crs | 921200-21 | protocol | AEG-ROUTE-001 |
+| 87a37df66ebe | crs | 921200-22 | protocol | AEG-ROUTE-001 |
+| e4d9bcc50a23 | crs | 921200-24 | protocol | AEG-ROUTE-001 |
+| cf83edb8bdad | crs | 921200-31 | protocol | AEG-ROUTE-001 |
+| 7ad97c50770c | crs | 921210-1 | protocol | AEG-ROUTE-001 |
+| 1bf8b44533ed | crs | 921220-1 | protocol | AEG-ROUTE-001 |
+| 650daa56e622 | crs | 921230-1 | protocol | AEG-ROUTE-001 |
+| cd264a28a6dc | crs | 921240-2 | protocol | AEG-ROUTE-001 |
+| e9dde67f2672 | crs | 921421-3 | protocol | AEG-ROUTE-001 |
+| 25d7212a946c | crs | 921421-4 | protocol | AEG-ROUTE-001 |
+| 43c678d894ac | crs | 921422-6 | protocol | AEG-ROUTE-001 |
+| 9705cbaabe0e | crs | 921422-7 | protocol | AEG-ROUTE-001 |
+| d4db87f7340c | crs | 922100-1 | protocol | AEG-ROUTE-001 |
+| f7c53f54ec93 | crs | 922100-3 | protocol | AEG-ROUTE-001 |
+| 61774d145610 | crs | 922100-5 | protocol | AEG-ROUTE-001 |
+| a7aea7f2ae0f | crs | 922100-7 | protocol | AEG-ROUTE-001 |
+| 8bd1c1fe05ed | crs | 922110-11 | protocol | AEG-ROUTE-001 |
+| 72e93be9009e | crs | 922110-15 | protocol | AEG-ROUTE-001 |
+| 265cb6100717 | crs | 922110-2 | protocol | AEG-ROUTE-001 |
+| b4175c5ba130 | crs | 922110-20 | protocol | AEG-ROUTE-001 |
+| 6303c3847b9a | crs | 922110-23 | protocol | AEG-ROUTE-001 |
+| 4620b540f8a2 | crs | 922110-24 | protocol | AEG-ROUTE-001 |
+| 3754d284cb01 | crs | 922110-4 | protocol | AEG-ROUTE-001 |
+| 1fb3a109efb6 | crs | 922110-7 | protocol | AEG-ROUTE-001 |
+| 4704786ec663 | crs | 922110-9 | protocol | AEG-ROUTE-001 |
+| f0d60bceebc8 | crs | 922120-1 | protocol | AEG-ROUTE-001 |
+| e0e86eff119d | crs | 930100-1 | lfi | AEG-ROUTE-001 |
+| 0d1768b1a633 | crs | 930100-4 | lfi | AEG-ROUTE-001 |
+| 6d1971f325b2 | crs | 930110-10 | lfi | AEG-ROUTE-001 |
+| 376273039e3f | crs | 930110-11 | lfi | AEG-ROUTE-001 |
+| 707ae6acb531 | crs | 930110-12 | lfi | AEG-ROUTE-001 |
+| 52caa5baffed | crs | 930120-13 | lfi | AEG-ROUTE-001 |
+| 9d785347f656 | crs | 930120-14 | lfi | AEG-ROUTE-001 |
+| cb0f6578f016 | crs | 930120-4 | lfi | AEG-ROUTE-001 |
+| 6c2433e9f930 | crs | 930120-5 | lfi | AEG-ROUTE-001 |
+| 994795e4358d | crs | 930120-6 | lfi | AEG-ROUTE-001 |
+| 61c4aaaad5c2 | crs | 930120-8 | lfi | AEG-ROUTE-001 |
+| 07c49ad1c84a | crs | 930121-1 | lfi | AEG-ROUTE-001 |
+| 292ddfff82bd | crs | 930121-10 | lfi | AEG-ROUTE-001 |
+| e3384ebc489a | crs | 930121-2 | lfi | AEG-ROUTE-001 |
+| 24b26e142d77 | crs | 930121-3 | lfi | AEG-ROUTE-001 |
+| 9d70f1570e00 | crs | 930121-5 | lfi | AEG-ROUTE-001 |
+| 9a57d05b6b05 | crs | 930121-7 | lfi | AEG-ROUTE-001 |
+| b0658e7556f2 | crs | 930121-8 | lfi | AEG-ROUTE-001 |
+| c14f7335a5af | crs | 930130-1 | lfi | AEG-ROUTE-001 |
+| beac987fc33a | crs | 930130-13 | lfi | AEG-ROUTE-001 |
+| ad909fc35d0a | crs | 930130-6 | lfi | AEG-ROUTE-001 |
+| 4030f31d3d03 | crs | 930130-9 | lfi | AEG-ROUTE-001 |
+| 4bd760f51aca | crs | 930140-1 | lfi | AEG-ROUTE-001 |
+| d7f3191b7f76 | crs | 930140-10 | lfi | AEG-ROUTE-001 |
+| 6bf6377d07d0 | crs | 930140-12 | lfi | AEG-ROUTE-001 |
+| 179627e3a280 | crs | 930140-13 | lfi | AEG-ROUTE-001 |
+| c1668ad8b612 | crs | 930140-14 | lfi | AEG-ROUTE-001 |
+| a7c0c38eeb1f | crs | 930140-2 | lfi | AEG-ROUTE-001 |
+| a584edeb248e | crs | 930140-21 | lfi | AEG-ROUTE-001 |
+| 8f03cb90ba33 | crs | 930140-3 | lfi | AEG-ROUTE-001 |
+| 365c19eacad6 | crs | 930140-5 | lfi | AEG-ROUTE-001 |
+| 437cd0632b67 | crs | 930140-6 | lfi | AEG-ROUTE-001 |
+| 3f5797ee50e2 | crs | 930140-8 | lfi | AEG-ROUTE-001 |
+| ee333b83bae4 | crs | 930140-9 | lfi | AEG-ROUTE-001 |
+| 9816ef18dab1 | crs | 931100-2 | rfi | AEG-ROUTE-001 |
+| ae8afc1b02f9 | crs | 931100-4 | rfi | AEG-ROUTE-001 |
+| 2ab36371f7d7 | crs | 931120-1 | rfi | AEG-ROUTE-001 |
+| 301cdd9d466b | crs | 931120-2 | rfi | AEG-ROUTE-001 |
+| 6ea9546e9468 | crs | 931120-5 | rfi | AEG-ROUTE-001 |
+| a44b6014bb48 | crs | 931130-12 | rfi | AEG-ROUTE-001 |
+| 5b4f3bc5e7a8 | crs | 931130-13 | rfi | AEG-ROUTE-001 |
+| 1768362448f2 | crs | 931130-14 | rfi | AEG-ROUTE-001 |
+| ed969edfdf21 | crs | 931130-20 | rfi | AEG-ROUTE-001 |
+| 214f416a725a | crs | 931130-21 | rfi | AEG-ROUTE-001 |
+| 9cd8bb36ce60 | crs | 931130-3 | rfi | AEG-ROUTE-001 |
+| 020d2b8f8574 | crs | 931130-6 | rfi | AEG-ROUTE-001 |
+| e820ea18361f | crs | 932120-1 | cmdi | AEG-ROUTE-001 |
+| 9881967bebbf | crs | 932120-11 | cmdi | AEG-ROUTE-001 |
+| a3523b798139 | crs | 932120-12 | cmdi | AEG-ROUTE-001 |
+| 351b818097db | crs | 932120-2 | cmdi | AEG-ROUTE-001 |
+| 830a2aa60c22 | crs | 932120-3 | cmdi | AEG-ROUTE-001 |
+| a698142895a1 | crs | 932125-1 | cmdi | AEG-ROUTE-001 |
+| d4f01f9f67b8 | crs | 932125-2 | cmdi | AEG-ROUTE-001 |
+| 3c27dd8f0165 | crs | 932125-8 | cmdi | AEG-ROUTE-001 |
+| 8a100f5dd8a6 | crs | 932130-11 | cmdi | AEG-ROUTE-001 |
+| e293cfd1f4cb | crs | 932130-12 | cmdi | AEG-ROUTE-001 |
+| c5dd253564f4 | crs | 932130-13 | cmdi | AEG-ROUTE-001 |
+| 846f660310a8 | crs | 932130-16 | cmdi | AEG-ROUTE-001 |
+| 915261619385 | crs | 932130-17 | cmdi | AEG-ROUTE-001 |
+| 869e13ed2bad | crs | 932130-19 | cmdi | AEG-ROUTE-001 |
+| 0da9da0ec626 | crs | 932130-2 | cmdi | AEG-ROUTE-001 |
+| c3bf0c490058 | crs | 932130-20 | cmdi | AEG-ROUTE-001 |
+| cbe8306ee198 | crs | 932130-21 | cmdi | AEG-ROUTE-001 |
+| 6059214e8529 | crs | 932130-22 | cmdi | AEG-ROUTE-001 |
+| b393e69b0d1f | crs | 932130-26 | cmdi | AEG-ROUTE-001 |
+| 0708751b847c | crs | 932130-28 | cmdi | AEG-ROUTE-001 |
+| c6adef8d0299 | crs | 932130-3 | cmdi | AEG-ROUTE-001 |
+| 725b7e764329 | crs | 932130-30 | cmdi | AEG-ROUTE-001 |
+| c5fdeac29c3a | crs | 932130-32 | cmdi | AEG-ROUTE-001 |
+| 1def7807088e | crs | 932130-36 | cmdi | AEG-ROUTE-001 |
+| 5a70b20191c3 | crs | 932130-37 | cmdi | AEG-ROUTE-001 |
+| bdce8438c6cc | crs | 932130-38 | cmdi | AEG-ROUTE-001 |
+| a631c62f1b89 | crs | 932130-4 | cmdi | AEG-ROUTE-001 |
+| 7db2e61ceb85 | crs | 932130-7 | cmdi | AEG-ROUTE-001 |
+| 971771ce7a47 | crs | 932130-9 | cmdi | AEG-ROUTE-001 |
+| ce1f600b61ec | crs | 932140-1 | cmdi | AEG-ROUTE-001 |
+| 2e941c227afa | crs | 932140-10 | cmdi | AEG-ROUTE-001 |
+| ea76a169ee94 | crs | 932140-100 | cmdi | AEG-ROUTE-001 |
+| 41dc66819ccb | crs | 932140-102 | cmdi | AEG-ROUTE-001 |
+| 469d5c800b58 | crs | 932140-104 | cmdi | AEG-ROUTE-001 |
+| 1077cb77639f | crs | 932140-106 | cmdi | AEG-ROUTE-001 |
+| 754e92b3aa08 | crs | 932140-107 | cmdi | AEG-ROUTE-001 |
+| 8e5ca49ec8ee | crs | 932140-109 | cmdi | AEG-ROUTE-001 |
+| c170f1cd67c4 | crs | 932140-11 | cmdi | AEG-ROUTE-001 |
+| 463a6230fd95 | crs | 932140-113 | cmdi | AEG-ROUTE-001 |
+| aebc52aee2ff | crs | 932140-114 | cmdi | AEG-ROUTE-001 |
+| 92313226dff6 | crs | 932140-115 | cmdi | AEG-ROUTE-001 |
+| fe7f365801dc | crs | 932140-116 | cmdi | AEG-ROUTE-001 |
+| 40200703fbff | crs | 932140-118 | cmdi | AEG-ROUTE-001 |
+| 74fa79a86bbb | crs | 932140-119 | cmdi | AEG-ROUTE-001 |
+| 5691a03ad41a | crs | 932140-12 | cmdi | AEG-ROUTE-001 |
+| 5753e364aad5 | crs | 932140-121 | cmdi | AEG-ROUTE-001 |
+| 635d8cb07603 | crs | 932140-123 | cmdi | AEG-ROUTE-001 |
+| ccc01b56148f | crs | 932140-124 | cmdi | AEG-ROUTE-001 |
+| 9a00390f82d0 | crs | 932140-127 | cmdi | AEG-ROUTE-001 |
+| 53a260d85a83 | crs | 932140-128 | cmdi | AEG-ROUTE-001 |
+| 06b8fb8aaff3 | crs | 932140-129 | cmdi | AEG-ROUTE-001 |
+| 58a9799d4102 | crs | 932140-130 | cmdi | AEG-ROUTE-001 |
+| 12f7e3a4cd31 | crs | 932140-131 | cmdi | AEG-ROUTE-001 |
+| ca50653c23bb | crs | 932140-133 | cmdi | AEG-ROUTE-001 |
+| 6cdc5c944112 | crs | 932140-14 | cmdi | AEG-ROUTE-001 |
+| c5c852e8f558 | crs | 932140-143 | cmdi | AEG-ROUTE-001 |
+| 0d3f7c1c832c | crs | 932140-144 | cmdi | AEG-ROUTE-001 |
+| 4501c8b5d457 | crs | 932140-145 | cmdi | AEG-ROUTE-001 |
+| fec50eb8caac | crs | 932140-147 | cmdi | AEG-ROUTE-001 |
+| e7d1e9f94c2d | crs | 932140-149 | cmdi | AEG-ROUTE-001 |
+| cd82e673df21 | crs | 932140-150 | cmdi | AEG-ROUTE-001 |
+| 5aac230c8e4b | crs | 932140-151 | cmdi | AEG-ROUTE-001 |
+| 60e3ee238a6e | crs | 932140-16 | cmdi | AEG-ROUTE-001 |
+| 2a5d32b2495d | crs | 932140-160 | cmdi | AEG-ROUTE-001 |
+| 85ef6acf037b | crs | 932140-17 | cmdi | AEG-ROUTE-001 |
+| 5267d6037c1e | crs | 932140-18 | cmdi | AEG-ROUTE-001 |
+| 75208da1ab8e | crs | 932140-19 | cmdi | AEG-ROUTE-001 |
+| be757472ce5b | crs | 932140-2 | cmdi | AEG-ROUTE-001 |
+| 99a93d246f1c | crs | 932140-20 | cmdi | AEG-ROUTE-001 |
+| c2ada6773022 | crs | 932140-21 | cmdi | AEG-ROUTE-001 |
+| 4cdc83cc6c32 | crs | 932140-22 | cmdi | AEG-ROUTE-001 |
+| 3d73fbaf24e2 | crs | 932140-25 | cmdi | AEG-ROUTE-001 |
+| d4d51bb85eff | crs | 932140-26 | cmdi | AEG-ROUTE-001 |
+| 2f59955c50ff | crs | 932140-27 | cmdi | AEG-ROUTE-001 |
+| fec4cf370691 | crs | 932140-28 | cmdi | AEG-ROUTE-001 |
+| e96dfbffdbb7 | crs | 932140-29 | cmdi | AEG-ROUTE-001 |
+| e25ba0bf6f4c | crs | 932140-30 | cmdi | AEG-ROUTE-001 |
+| aa33c047aeac | crs | 932140-33 | cmdi | AEG-ROUTE-001 |
+| 80d983ffc8bf | crs | 932140-34 | cmdi | AEG-ROUTE-001 |
+| 976b40ab607e | crs | 932140-35 | cmdi | AEG-ROUTE-001 |
+| 8dfb45d9e0d5 | crs | 932140-36 | cmdi | AEG-ROUTE-001 |
+| cf5a1e98475d | crs | 932140-38 | cmdi | AEG-ROUTE-001 |
+| b7a0b372f9e3 | crs | 932140-39 | cmdi | AEG-ROUTE-001 |
+| 1fd2d2149b15 | crs | 932140-4 | cmdi | AEG-ROUTE-001 |
+| e1282d2c54f0 | crs | 932140-40 | cmdi | AEG-ROUTE-001 |
+| 658910f71d25 | crs | 932140-42 | cmdi | AEG-ROUTE-001 |
+| 67a10254843f | crs | 932140-43 | cmdi | AEG-ROUTE-001 |
+| f118a345d302 | crs | 932140-45 | cmdi | AEG-ROUTE-001 |
+| 3b8242172f99 | crs | 932140-47 | cmdi | AEG-ROUTE-001 |
+| d80d7375eb40 | crs | 932140-5 | cmdi | AEG-ROUTE-001 |
+| ef485b3dde96 | crs | 932140-50 | cmdi | AEG-ROUTE-001 |
+| b3b80dd42e20 | crs | 932140-52 | cmdi | AEG-ROUTE-001 |
+| caeebee3980a | crs | 932140-53 | cmdi | AEG-ROUTE-001 |
+| a5a805ca464b | crs | 932140-54 | cmdi | AEG-ROUTE-001 |
+| d4985bead8f5 | crs | 932140-56 | cmdi | AEG-ROUTE-001 |
+| 9f827ced6bc3 | crs | 932140-57 | cmdi | AEG-ROUTE-001 |
+| 0a6cd6c3c899 | crs | 932140-58 | cmdi | AEG-ROUTE-001 |
+| 880decd17ad9 | crs | 932140-60 | cmdi | AEG-ROUTE-001 |
+| d26a217478c3 | crs | 932140-64 | cmdi | AEG-ROUTE-001 |
+| 1629544d84ff | crs | 932140-66 | cmdi | AEG-ROUTE-001 |
+| 44194bdd9bf6 | crs | 932140-67 | cmdi | AEG-ROUTE-001 |
+| ba74d8266fa7 | crs | 932140-68 | cmdi | AEG-ROUTE-001 |
+| 9104522b9bd0 | crs | 932140-69 | cmdi | AEG-ROUTE-001 |
+| 55fa5c4fe87b | crs | 932140-70 | cmdi | AEG-ROUTE-001 |
+| 559ddb5c5824 | crs | 932140-71 | cmdi | AEG-ROUTE-001 |
+| b8c1bf73faee | crs | 932140-72 | cmdi | AEG-ROUTE-001 |
+| 2807de4e8ea2 | crs | 932140-74 | cmdi | AEG-ROUTE-001 |
+| 26af31bd0f42 | crs | 932140-75 | cmdi | AEG-ROUTE-001 |
+| b65bec61d166 | crs | 932140-76 | cmdi | AEG-ROUTE-001 |
+| 02e1ca7c157f | crs | 932140-77 | cmdi | AEG-ROUTE-001 |
+| 940fdce6ed08 | crs | 932140-78 | cmdi | AEG-ROUTE-001 |
+| d621c251855c | crs | 932140-80 | cmdi | AEG-ROUTE-001 |
+| 034fe5f27985 | crs | 932140-81 | cmdi | AEG-ROUTE-001 |
+| 10201844a6f4 | crs | 932140-83 | cmdi | AEG-ROUTE-001 |
+| 0e6b9f8c5cc6 | crs | 932140-84 | cmdi | AEG-ROUTE-001 |
+| 695f32ed28aa | crs | 932140-86 | cmdi | AEG-ROUTE-001 |
+| 6a94a1bc60c5 | crs | 932140-87 | cmdi | AEG-ROUTE-001 |
+| 3e2c87b02448 | crs | 932140-89 | cmdi | AEG-ROUTE-001 |
+| a72067a06900 | crs | 932140-9 | cmdi | AEG-ROUTE-001 |
+| 1a248e51b12a | crs | 932140-90 | cmdi | AEG-ROUTE-001 |
+| 6cb3d3532b92 | crs | 932140-91 | cmdi | AEG-ROUTE-001 |
+| d34e42e067f0 | crs | 932140-93 | cmdi | AEG-ROUTE-001 |
+| 58a56bd0a278 | crs | 932140-95 | cmdi | AEG-ROUTE-001 |
+| 10c053280e08 | crs | 932140-97 | cmdi | AEG-ROUTE-001 |
+| 5860e4b2087b | crs | 932140-99 | cmdi | AEG-ROUTE-001 |
+| c1be339ad133 | crs | 932160-10 | cmdi | AEG-ROUTE-001 |
+| c204183ccbca | crs | 932160-11 | cmdi | AEG-ROUTE-001 |
+| 0a73e1b35668 | crs | 932160-12 | cmdi | AEG-ROUTE-001 |
+| 1f64849e4153 | crs | 932160-2 | cmdi | AEG-ROUTE-001 |
+| 9ce68ea61894 | crs | 932160-3 | cmdi | AEG-ROUTE-001 |
+| d82e3ca096c1 | crs | 932160-5 | cmdi | AEG-ROUTE-001 |
+| 2c49d24aa02c | crs | 932160-6 | cmdi | AEG-ROUTE-001 |
+| b07916184c41 | crs | 932160-8 | cmdi | AEG-ROUTE-001 |
+| 8ee1499f8e40 | crs | 932160-9 | cmdi | AEG-ROUTE-001 |
+| 1e08f636bfb6 | crs | 932170-1 | cmdi | AEG-ROUTE-001 |
+| 8486e544c7db | crs | 932171-1 | cmdi | AEG-ROUTE-001 |
+| 6694ba853548 | crs | 932171-2 | cmdi | AEG-ROUTE-001 |
+| 7e14d5d2c546 | crs | 932175-1 | cmdi | AEG-ROUTE-001 |
+| 479d71617c65 | crs | 932175-10 | cmdi | AEG-ROUTE-001 |
+| f75c643086ef | crs | 932175-11 | cmdi | AEG-ROUTE-001 |
+| 2990e7020f3f | crs | 932175-12 | cmdi | AEG-ROUTE-001 |
+| 3ffe311f5ab7 | crs | 932175-13 | cmdi | AEG-ROUTE-001 |
+| bcbd75aa6130 | crs | 932175-14 | cmdi | AEG-ROUTE-001 |
+| f0b8744c2b10 | crs | 932175-15 | cmdi | AEG-ROUTE-001 |
+| 1209e1139778 | crs | 932175-17 | cmdi | AEG-ROUTE-001 |
+| ce8134da9188 | crs | 932175-2 | cmdi | AEG-ROUTE-001 |
+| 1a469190d09d | crs | 932175-3 | cmdi | AEG-ROUTE-001 |
+| 391e06be2f71 | crs | 932175-4 | cmdi | AEG-ROUTE-001 |
+| 9558ccf8d4d3 | crs | 932175-5 | cmdi | AEG-ROUTE-001 |
+| 76a0718f1b40 | crs | 932175-9 | cmdi | AEG-ROUTE-001 |
+| 20019e5922b4 | crs | 932180-1 | cmdi | AEG-ROUTE-001 |
+| 9da0a5a31a9e | crs | 932180-12 | cmdi | AEG-ROUTE-001 |
+| 256db889391a | crs | 932180-13 | cmdi | AEG-ROUTE-001 |
+| 009079bb789c | crs | 932180-17 | cmdi | AEG-ROUTE-001 |
+| f5cc5d015bac | crs | 932180-18 | cmdi | AEG-ROUTE-001 |
+| 43884570d405 | crs | 932180-20 | cmdi | AEG-ROUTE-001 |
+| 00746dd63f65 | crs | 932180-22 | cmdi | AEG-ROUTE-001 |
+| 1271579b23d0 | crs | 932180-25 | cmdi | AEG-ROUTE-001 |
+| 10f3dfdf798c | crs | 932180-28 | cmdi | AEG-ROUTE-001 |
+| 554e7b32c2c7 | crs | 932180-29 | cmdi | AEG-ROUTE-001 |
+| bc65c4c0a41f | crs | 932180-32 | cmdi | AEG-ROUTE-001 |
+| 5dbb16ba3a7e | crs | 932180-33 | cmdi | AEG-ROUTE-001 |
+| 1fc19fd8dde4 | crs | 932180-8 | cmdi | AEG-ROUTE-001 |
+| 288c3671832b | crs | 932190-1 | cmdi | AEG-ROUTE-001 |
+| 11a726493363 | crs | 932190-2 | cmdi | AEG-ROUTE-001 |
+| e028baf425d7 | crs | 932190-3 | cmdi | AEG-ROUTE-001 |
+| 8005db16b767 | crs | 932190-5 | cmdi | AEG-ROUTE-001 |
+| e96723b22238 | crs | 932190-6 | cmdi | AEG-ROUTE-001 |
+| 76fa35057302 | crs | 932190-8 | cmdi | AEG-ROUTE-001 |
+| 7847825b1210 | crs | 932200-10 | cmdi | AEG-ROUTE-001 |
+| b7990e4a6d55 | crs | 932200-14 | cmdi | AEG-ROUTE-001 |
+| fe7ef7afea94 | crs | 932200-20 | cmdi | AEG-ROUTE-001 |
+| d2915a7da1fc | crs | 932200-4 | cmdi | AEG-ROUTE-001 |
+| 998c6ab52de2 | crs | 932200-6 | cmdi | AEG-ROUTE-001 |
+| 97d926183de0 | crs | 932200-7 | cmdi | AEG-ROUTE-001 |
+| 95b96e97f356 | crs | 932200-9 | cmdi | AEG-ROUTE-001 |
+| 885a9b4cb767 | crs | 932210-2 | cmdi | AEG-ROUTE-001 |
+| b5a51aeb9d6e | crs | 932210-4 | cmdi | AEG-ROUTE-001 |
+| af52d191291f | crs | 932210-6 | cmdi | AEG-ROUTE-001 |
+| 5a320270c071 | crs | 932220-1 | cmdi | AEG-ROUTE-001 |
+| 47cc5404f59d | crs | 932220-10 | cmdi | AEG-ROUTE-001 |
+| fbd4c4a182fe | crs | 932220-11 | cmdi | AEG-ROUTE-001 |
+| 269f5315daed | crs | 932220-2 | cmdi | AEG-ROUTE-001 |
+| a6d20effa24a | crs | 932220-4 | cmdi | AEG-ROUTE-001 |
+| 369edeed71bf | crs | 932220-6 | cmdi | AEG-ROUTE-001 |
+| 241a7da373e3 | crs | 932220-7 | cmdi | AEG-ROUTE-001 |
+| fc750d0dea4e | crs | 932220-9 | cmdi | AEG-ROUTE-001 |
+| 40c2a630d1c5 | crs | 932230-28 | cmdi | AEG-ROUTE-001 |
+| bd09f93eb40b | crs | 932230-29 | cmdi | AEG-ROUTE-001 |
+| 4c67f9bf9e2e | crs | 932230-31 | cmdi | AEG-ROUTE-001 |
+| 8118c4095ff7 | crs | 932230-33 | cmdi | AEG-ROUTE-001 |
+| e7996c15bf6c | crs | 932230-34 | cmdi | AEG-ROUTE-001 |
+| d55eebbf44c2 | crs | 932230-36 | cmdi | AEG-ROUTE-001 |
+| a7cfa8e438c8 | crs | 932230-37 | cmdi | AEG-ROUTE-001 |
+| 79a9ed3574d6 | crs | 932230-45 | cmdi | AEG-ROUTE-001 |
+| 7d9c943d2c15 | crs | 932230-51 | cmdi | AEG-ROUTE-001 |
+| 7d58cebab3f5 | crs | 932230-52 | cmdi | AEG-ROUTE-001 |
+| 50d558687489 | crs | 932230-53 | cmdi | AEG-ROUTE-001 |
+| d1ef430bcc87 | crs | 932230-55 | cmdi | AEG-ROUTE-001 |
+| aec4fc7fd0ac | crs | 932230-62 | cmdi | AEG-ROUTE-001 |
+| 40b9b05e0b50 | crs | 932230-63 | cmdi | AEG-ROUTE-001 |
+| 69e2faa053d7 | crs | 932231-1 | cmdi | AEG-ROUTE-001 |
+| e0ed7f8e853a | crs | 932232-13 | cmdi | AEG-ROUTE-001 |
+| 531efd139c54 | crs | 932232-3 | cmdi | AEG-ROUTE-001 |
+| 5d69592e8bb0 | crs | 932232-7 | cmdi | AEG-ROUTE-001 |
+| baff15d1af58 | crs | 932232-8 | cmdi | AEG-ROUTE-001 |
+| c96ec0654b11 | crs | 932235-1 | cmdi | AEG-ROUTE-001 |
+| cbf9d10deb21 | crs | 932235-13 | cmdi | AEG-ROUTE-001 |
+| f7c138601a25 | crs | 932235-14 | cmdi | AEG-ROUTE-001 |
+| a25b148a8be2 | crs | 932235-15 | cmdi | AEG-ROUTE-001 |
+| ee98415fd246 | crs | 932235-16 | cmdi | AEG-ROUTE-001 |
+| 000ea0ba48ad | crs | 932235-19 | cmdi | AEG-ROUTE-001 |
+| 4893e2a45d06 | crs | 932235-22 | cmdi | AEG-ROUTE-001 |
+| dac4d6212ca9 | crs | 932235-23 | cmdi | AEG-ROUTE-001 |
+| 61a8a63ef346 | crs | 932235-24 | cmdi | AEG-ROUTE-001 |
+| 535ede1099ac | crs | 932235-26 | cmdi | AEG-ROUTE-001 |
+| e34817520a26 | crs | 932235-28 | cmdi | AEG-ROUTE-001 |
+| cebdd639f2fc | crs | 932235-29 | cmdi | AEG-ROUTE-001 |
+| bb826093f738 | crs | 932235-31 | cmdi | AEG-ROUTE-001 |
+| 438a02ea7cf9 | crs | 932235-32 | cmdi | AEG-ROUTE-001 |
+| 7f3e67095e72 | crs | 932235-33 | cmdi | AEG-ROUTE-001 |
+| 6241ad6b1176 | crs | 932235-37 | cmdi | AEG-ROUTE-001 |
+| daced35b0b58 | crs | 932235-4 | cmdi | AEG-ROUTE-001 |
+| 77574f245817 | crs | 932235-5 | cmdi | AEG-ROUTE-001 |
+| 9a65b2ec82a8 | crs | 932235-50 | cmdi | AEG-ROUTE-001 |
+| 6a4156c62d53 | crs | 932235-51 | cmdi | AEG-ROUTE-001 |
+| 9de997b3cbeb | crs | 932235-54 | cmdi | AEG-ROUTE-001 |
+| c0263ddfa541 | crs | 932235-59 | cmdi | AEG-ROUTE-001 |
+| baa1c20346a6 | crs | 932235-6 | cmdi | AEG-ROUTE-001 |
+| dd1038adef56 | crs | 932235-7 | cmdi | AEG-ROUTE-001 |
+| a42e74038e70 | crs | 932235-8 | cmdi | AEG-ROUTE-001 |
+| f2fdfa26003b | crs | 932235-9 | cmdi | AEG-ROUTE-001 |
+| 98337186c3c3 | crs | 932236-1 | cmdi | AEG-ROUTE-001 |
+| 07d05a84e67e | crs | 932236-101 | cmdi | AEG-ROUTE-001 |
+| 2b563e7a8706 | crs | 932236-102 | cmdi | AEG-ROUTE-001 |
+| 2cab69c0cbe3 | crs | 932236-108 | cmdi | AEG-ROUTE-001 |
+| 75133ab827aa | crs | 932236-114 | cmdi | AEG-ROUTE-001 |
+| 1cc82e438819 | crs | 932236-116 | cmdi | AEG-ROUTE-001 |
+| 5254305645ac | crs | 932236-117 | cmdi | AEG-ROUTE-001 |
+| 53bfd4baa21e | crs | 932236-14 | cmdi | AEG-ROUTE-001 |
+| 2ab1fad848db | crs | 932236-16 | cmdi | AEG-ROUTE-001 |
+| ca31da14e49a | crs | 932236-49 | cmdi | AEG-ROUTE-001 |
+| dc66edf1fc60 | crs | 932236-50 | cmdi | AEG-ROUTE-001 |
+| c7d5109a4d60 | crs | 932236-58 | cmdi | AEG-ROUTE-001 |
+| 527698810c88 | crs | 932236-60 | cmdi | AEG-ROUTE-001 |
+| 55ff6153be5e | crs | 932236-64 | cmdi | AEG-ROUTE-001 |
+| 321c4f9fb715 | crs | 932236-65 | cmdi | AEG-ROUTE-001 |
+| a3f52f49c586 | crs | 932236-66 | cmdi | AEG-ROUTE-001 |
+| e0c6c62dd3ce | crs | 932236-67 | cmdi | AEG-ROUTE-001 |
+| 9bc11662e0f4 | crs | 932236-68 | cmdi | AEG-ROUTE-001 |
+| d757e7df2153 | crs | 932236-69 | cmdi | AEG-ROUTE-001 |
+| 3175bc85d2cd | crs | 932236-71 | cmdi | AEG-ROUTE-001 |
+| e41199cc2fee | crs | 932236-74 | cmdi | AEG-ROUTE-001 |
+| 478e4182fa3e | crs | 932236-75 | cmdi | AEG-ROUTE-001 |
+| d0c58a00d880 | crs | 932236-76 | cmdi | AEG-ROUTE-001 |
+| 32ef2bd8a2a7 | crs | 932236-77 | cmdi | AEG-ROUTE-001 |
+| 94f831bd67f9 | crs | 932236-78 | cmdi | AEG-ROUTE-001 |
+| 74a2b8154462 | crs | 932236-79 | cmdi | AEG-ROUTE-001 |
+| 434d5b696503 | crs | 932236-88 | cmdi | AEG-ROUTE-001 |
+| 94ab33116c66 | crs | 932236-90 | cmdi | AEG-ROUTE-001 |
+| 33d17ca68374 | crs | 932236-91 | cmdi | AEG-ROUTE-001 |
+| ee15378bdc63 | crs | 932236-93 | cmdi | AEG-ROUTE-001 |
+| 244ab465ad7a | crs | 932236-94 | cmdi | AEG-ROUTE-001 |
+| 56a8e92530df | crs | 932236-95 | cmdi | AEG-ROUTE-001 |
+| a7c178c7eafd | crs | 932236-96 | cmdi | AEG-ROUTE-001 |
+| 8783a0a338b3 | crs | 932236-97 | cmdi | AEG-ROUTE-001 |
+| 840cd65705a0 | crs | 932236-99 | cmdi | AEG-ROUTE-001 |
+| 2261fa10f67f | crs | 932237-1 | cmdi | AEG-ROUTE-001 |
+| ffec269537d3 | crs | 932237-10 | cmdi | AEG-ROUTE-001 |
+| e0f78b3106d2 | crs | 932237-12 | cmdi | AEG-ROUTE-001 |
+| 27a316768719 | crs | 932237-13 | cmdi | AEG-ROUTE-001 |
+| 7a24649c3438 | crs | 932237-14 | cmdi | AEG-ROUTE-001 |
+| 87c3ca44c6b3 | crs | 932237-15 | cmdi | AEG-ROUTE-001 |
+| fe42757cc534 | crs | 932237-16 | cmdi | AEG-ROUTE-001 |
+| b7c4460615bc | crs | 932237-18 | cmdi | AEG-ROUTE-001 |
+| aeb0c9a42d3f | crs | 932237-20 | cmdi | AEG-ROUTE-001 |
+| d92b62f8b485 | crs | 932237-21 | cmdi | AEG-ROUTE-001 |
+| ea6bd91b4774 | crs | 932237-22 | cmdi | AEG-ROUTE-001 |
+| a30ee97eadc2 | crs | 932237-23 | cmdi | AEG-ROUTE-001 |
+| b6ff46b642c1 | crs | 932237-24 | cmdi | AEG-ROUTE-001 |
+| bb3717aa3502 | crs | 932237-25 | cmdi | AEG-ROUTE-001 |
+| 4ff99998e994 | crs | 932237-26 | cmdi | AEG-ROUTE-001 |
+| 8aa9f22e2dae | crs | 932237-32 | cmdi | AEG-ROUTE-001 |
+| 9cf392f542b0 | crs | 932237-33 | cmdi | AEG-ROUTE-001 |
+| be7c0c97452f | crs | 932237-4 | cmdi | AEG-ROUTE-001 |
+| c3de02d9064a | crs | 932237-9 | cmdi | AEG-ROUTE-001 |
+| 4ec0e43f7d36 | crs | 932238-10 | cmdi | AEG-ROUTE-001 |
+| 2fa68b882b7c | crs | 932238-12 | cmdi | AEG-ROUTE-001 |
+| a8ed00d0ec99 | crs | 932238-3 | cmdi | AEG-ROUTE-001 |
+| 7501d26347e7 | crs | 932238-4 | cmdi | AEG-ROUTE-001 |
+| 223f6a8cf8fe | crs | 932238-5 | cmdi | AEG-ROUTE-001 |
+| 74b8c790cb59 | crs | 932238-6 | cmdi | AEG-ROUTE-001 |
+| 74c1d0bdc4cf | crs | 932238-8 | cmdi | AEG-ROUTE-001 |
+| 419e83e32e0d | crs | 932239-18 | cmdi | AEG-ROUTE-001 |
+| 56c2bc5189d2 | crs | 932239-19 | cmdi | AEG-ROUTE-001 |
+| 1701f91fe624 | crs | 932239-2 | cmdi | AEG-ROUTE-001 |
+| 6b4a5c32a188 | crs | 932239-28 | cmdi | AEG-ROUTE-001 |
+| 955128105e22 | crs | 932239-30 | cmdi | AEG-ROUTE-001 |
+| ae468a4f936f | crs | 932239-32 | cmdi | AEG-ROUTE-001 |
+| a97c02480b2d | crs | 932239-33 | cmdi | AEG-ROUTE-001 |
+| 74f554a8db78 | crs | 932239-35 | cmdi | AEG-ROUTE-001 |
+| 7e5964912491 | crs | 932239-37 | cmdi | AEG-ROUTE-001 |
+| 17b20ccd1781 | crs | 932239-9 | cmdi | AEG-ROUTE-001 |
+| b5a707c6f010 | crs | 932240-1 | cmdi | AEG-ROUTE-001 |
+| 624458f6cd7c | crs | 932240-11 | cmdi | AEG-ROUTE-001 |
+| ebabfaeef93a | crs | 932240-13 | cmdi | AEG-ROUTE-001 |
+| 1f5d7f957473 | crs | 932240-15 | cmdi | AEG-ROUTE-001 |
+| dda2ea6cbee3 | crs | 932240-3 | cmdi | AEG-ROUTE-001 |
+| 99c7ba7d7dfd | crs | 932240-4 | cmdi | AEG-ROUTE-001 |
+| 7cf82e4e862d | crs | 932240-5 | cmdi | AEG-ROUTE-001 |
+| 33459dfe50d8 | crs | 932250-17 | cmdi | AEG-ROUTE-001 |
+| 3fca61aecb74 | crs | 932250-23 | cmdi | AEG-ROUTE-001 |
+| 4da55df10995 | crs | 932250-28 | cmdi | AEG-ROUTE-001 |
+| fe601f382892 | crs | 932250-29 | cmdi | AEG-ROUTE-001 |
+| 389c7477afa0 | crs | 932250-30 | cmdi | AEG-ROUTE-001 |
+| 55197a812689 | crs | 932250-4 | cmdi | AEG-ROUTE-001 |
+| af4d5ee658fe | crs | 932250-5 | cmdi | AEG-ROUTE-001 |
+| e8f07bcc89a7 | crs | 932250-9 | cmdi | AEG-ROUTE-001 |
+| adc1b2b7ac13 | crs | 932260-10 | cmdi | AEG-ROUTE-001 |
+| 622e0765dd7e | crs | 932260-12 | cmdi | AEG-ROUTE-001 |
+| e4363d845aa0 | crs | 932260-16 | cmdi | AEG-ROUTE-001 |
+| d7e111e833c6 | crs | 932260-50 | cmdi | AEG-ROUTE-001 |
+| 51113e33ee0b | crs | 932260-7 | cmdi | AEG-ROUTE-001 |
+| d3a1af720ae8 | crs | 932260-9 | cmdi | AEG-ROUTE-001 |
+| eae353d3256f | crs | 932270-10 | cmdi | AEG-ROUTE-001 |
+| 9111abb81db8 | crs | 932270-18 | cmdi | AEG-ROUTE-001 |
+| ef38de399d59 | crs | 932270-21 | cmdi | AEG-ROUTE-001 |
+| f21fdecda3dc | crs | 932270-23 | cmdi | AEG-ROUTE-001 |
+| d4799072efd6 | crs | 932270-24 | cmdi | AEG-ROUTE-001 |
+| a9641c5a8df2 | crs | 932270-25 | cmdi | AEG-ROUTE-001 |
+| 0b6bfec294a0 | crs | 932270-29 | cmdi | AEG-ROUTE-001 |
+| 6a1304ca8814 | crs | 932270-3 | cmdi | AEG-ROUTE-001 |
+| fcb35e3d73c5 | crs | 932270-30 | cmdi | AEG-ROUTE-001 |
+| ccd0c505691f | crs | 932270-34 | cmdi | AEG-ROUTE-001 |
+| e53b3de167aa | crs | 932270-4 | cmdi | AEG-ROUTE-001 |
+| 1fc217265913 | crs | 932270-8 | cmdi | AEG-ROUTE-001 |
+| 4892f6aecbff | crs | 932270-9 | cmdi | AEG-ROUTE-001 |
+| 73c2131a7d04 | crs | 932271-1 | cmdi | AEG-ROUTE-001 |
+| c542b1dbe04c | crs | 932271-2 | cmdi | AEG-ROUTE-001 |
+| eea7583843f1 | crs | 932280-2 | cmdi | AEG-ROUTE-001 |
+| 94a11bf56ef4 | crs | 932280-3 | cmdi | AEG-ROUTE-001 |
+| 4431ee91b266 | crs | 932280-4 | cmdi | AEG-ROUTE-001 |
+| 2696a4c7fa55 | crs | 932280-6 | cmdi | AEG-ROUTE-001 |
+| 5ec21097eff1 | crs | 932280-8 | cmdi | AEG-ROUTE-001 |
+| 559d31a5487a | crs | 932281-1 | cmdi | AEG-ROUTE-001 |
+| e4ee1f6d4ca8 | crs | 932281-10 | cmdi | AEG-ROUTE-001 |
+| db906746fcda | crs | 932281-2 | cmdi | AEG-ROUTE-001 |
+| 63e4779b8039 | crs | 932281-3 | cmdi | AEG-ROUTE-001 |
+| 40a69850736a | crs | 932281-4 | cmdi | AEG-ROUTE-001 |
+| 95d617c01761 | crs | 932281-5 | cmdi | AEG-ROUTE-001 |
+| 478914b50a70 | crs | 932281-7 | cmdi | AEG-ROUTE-001 |
+| a6d84433c80a | crs | 932290-1 | cmdi | AEG-ROUTE-001 |
+| fd65d3a90ad1 | crs | 932290-2 | cmdi | AEG-ROUTE-001 |
+| 9e2371c06992 | crs | 932290-3 | cmdi | AEG-ROUTE-001 |
+| f6b83d5aca88 | crs | 932290-6 | cmdi | AEG-ROUTE-001 |
+| 66967d5ae902 | crs | 932290-7 | cmdi | AEG-ROUTE-001 |
+| 1ac45b96ba50 | crs | 932290-8 | cmdi | AEG-ROUTE-001 |
+| d5e9d9b038af | crs | 932290-9 | cmdi | AEG-ROUTE-001 |
+| b780b2d56b6f | crs | 932300-1 | cmdi | AEG-ROUTE-001 |
+| fbbbdec2b7b4 | crs | 932300-10 | cmdi | AEG-ROUTE-001 |
+| a1a97cd6e56d | crs | 932300-4 | cmdi | AEG-ROUTE-001 |
+| 71db29fcb7df | crs | 932301-4 | cmdi | AEG-ROUTE-001 |
+| da0ea4fc02e4 | crs | 932301-6 | cmdi | AEG-ROUTE-001 |
+| 6e5a2f025c03 | crs | 932310-1 | cmdi | AEG-ROUTE-001 |
+| e98386017550 | crs | 932310-3 | cmdi | AEG-ROUTE-001 |
+| e31703e6501b | crs | 932311-10 | cmdi | AEG-ROUTE-001 |
+| abcb48cf76f3 | crs | 932311-11 | cmdi | AEG-ROUTE-001 |
+| 318a3632b57b | crs | 932311-12 | cmdi | AEG-ROUTE-001 |
+| 85d553ce5196 | crs | 932311-3 | cmdi | AEG-ROUTE-001 |
+| 8ccb904d06f4 | crs | 932311-7 | cmdi | AEG-ROUTE-001 |
+| f8367ec91119 | crs | 932311-9 | cmdi | AEG-ROUTE-001 |
+| 7744974823b6 | crs | 932320-1 | cmdi | AEG-ROUTE-001 |
+| 9c803f5deba1 | crs | 932320-6 | cmdi | AEG-ROUTE-001 |
+| 3108f43de4bf | crs | 932320-8 | cmdi | AEG-ROUTE-001 |
+| be6fca0f8001 | crs | 932330-3 | cmdi | AEG-ROUTE-001 |
+| 47718a21f5ef | crs | 932331-1 | cmdi | AEG-ROUTE-001 |
+| 857556859900 | crs | 932331-4 | cmdi | AEG-ROUTE-001 |
+| beac8e1e38be | crs | 932340-16 | cmdi | AEG-ROUTE-001 |
+| cb2c3e260cb5 | crs | 932340-2 | cmdi | AEG-ROUTE-001 |
+| 0411ae714cd4 | crs | 932340-21 | cmdi | AEG-ROUTE-001 |
+| 77e67d89aab9 | crs | 932340-23 | cmdi | AEG-ROUTE-001 |
+| 7fc3b598e8c5 | crs | 932340-25 | cmdi | AEG-ROUTE-001 |
+| 71f725da8154 | crs | 932340-3 | cmdi | AEG-ROUTE-001 |
+| 18c2fbfe8129 | crs | 932340-30 | cmdi | AEG-ROUTE-001 |
+| 5385fd8c0d6c | crs | 932340-31 | cmdi | AEG-ROUTE-001 |
+| fa55a804df51 | crs | 932340-6 | cmdi | AEG-ROUTE-001 |
+| 440fb5971689 | crs | 932350-2 | cmdi | AEG-ROUTE-001 |
+| fb3061f71fd6 | crs | 932350-3 | cmdi | AEG-ROUTE-001 |
+| ad6055d43134 | crs | 932350-5 | cmdi | AEG-ROUTE-001 |
+| 50ae05e31c14 | crs | 932350-8 | cmdi | AEG-ROUTE-001 |
+| 38f3248a3cf9 | crs | 932370-1 | cmdi | AEG-ROUTE-001 |
+| b0e724f1a113 | crs | 932370-3 | cmdi | AEG-ROUTE-001 |
+| dbd036c09832 | crs | 932370-7 | cmdi | AEG-ROUTE-001 |
+| 571db55e46b7 | crs | 932371-1 | cmdi | AEG-ROUTE-001 |
+| c283db43ff65 | crs | 932380-1 | cmdi | AEG-ROUTE-001 |
+| 8a96ff28602a | crs | 932380-16 | cmdi | AEG-ROUTE-001 |
+| 95d6c8151795 | crs | 932380-18 | cmdi | AEG-ROUTE-001 |
+| b98b9633f4fe | crs | 932380-2 | cmdi | AEG-ROUTE-001 |
+| 817c24c49fd9 | crs | 932380-20 | cmdi | AEG-ROUTE-001 |
+| d8d8bd96cbbb | crs | 932380-21 | cmdi | AEG-ROUTE-001 |
+| 3cb66191575f | crs | 932380-23 | cmdi | AEG-ROUTE-001 |
+| d6161fa47116 | crs | 932380-25 | cmdi | AEG-ROUTE-001 |
+| 5b6298193a62 | crs | 932380-3 | cmdi | AEG-ROUTE-001 |
+| ec78dbe2d0d7 | crs | 932380-4 | cmdi | AEG-ROUTE-001 |
+| aa7ac3aa12c8 | crs | 932390-1 | cmdi | AEG-ROUTE-001 |
+| b967a8ae6e2a | crs | 932390-10 | cmdi | AEG-ROUTE-001 |
+| 1620b44d1f14 | crs | 932390-2 | cmdi | AEG-ROUTE-001 |
+| 3f5d97551332 | crs | 932390-3 | cmdi | AEG-ROUTE-001 |
+| e2c5e820fae3 | crs | 932390-4 | cmdi | AEG-ROUTE-001 |
+| ae44a726c145 | crs | 932390-5 | cmdi | AEG-ROUTE-001 |
+| d1e42f5e7172 | crs | 932390-6 | cmdi | AEG-ROUTE-001 |
+| 1e01f188d535 | crs | 932390-9 | cmdi | AEG-ROUTE-001 |
+| e18fe12dcfb1 | crs | 932400-1 | cmdi | AEG-ROUTE-001 |
+| b7ce59c658c1 | crs | 933100-1 | codei | AEG-ROUTE-001 |
+| 980cf980bd3a | crs | 933100-16 | codei | AEG-ROUTE-001 |
+| de021fd7aaf7 | crs | 933100-18 | codei | AEG-ROUTE-001 |
+| 86e217dcd569 | crs | 933100-19 | codei | AEG-ROUTE-001 |
+| 6a866019d7d7 | crs | 933100-20 | codei | AEG-ROUTE-001 |
+| 72c1272611f4 | crs | 933100-22 | codei | AEG-ROUTE-001 |
+| f228acc48c64 | crs | 933100-26 | codei | AEG-ROUTE-001 |
+| d68f92d05f40 | crs | 933100-27 | codei | AEG-ROUTE-001 |
+| 3b5990d564c1 | crs | 933100-29 | codei | AEG-ROUTE-001 |
+| 33e1ff17cc2f | crs | 933100-3 | codei | AEG-ROUTE-001 |
+| c53baee48feb | crs | 933100-30 | codei | AEG-ROUTE-001 |
+| 3801ba664c0d | crs | 933100-40 | codei | AEG-ROUTE-001 |
+| 15bf0c515942 | crs | 933100-55 | codei | AEG-ROUTE-001 |
+| 7ec468ef06d2 | crs | 933100-66 | codei | AEG-ROUTE-001 |
+| 8aa50d929940 | crs | 933100-87 | codei | AEG-ROUTE-001 |
+| f68e1a33e29c | crs | 933100-89 | codei | AEG-ROUTE-001 |
+| b1268ec90587 | crs | 933100-9 | codei | AEG-ROUTE-001 |
+| f47f26709439 | crs | 933100-91 | codei | AEG-ROUTE-001 |
+| e1131724b82e | crs | 933100-93 | codei | AEG-ROUTE-001 |
+| dbadacff693e | crs | 933110-10 | codei | AEG-ROUTE-001 |
+| 8ee48c2b2cca | crs | 933110-12 | codei | AEG-ROUTE-001 |
+| e5be7d26fd07 | crs | 933110-13 | codei | AEG-ROUTE-001 |
+| 22fe1955ac70 | crs | 933110-17 | codei | AEG-ROUTE-001 |
+| b1de22fd3d3a | crs | 933110-18 | codei | AEG-ROUTE-001 |
+| 5a648874f3b0 | crs | 933110-2 | codei | AEG-ROUTE-001 |
+| 1148239484c2 | crs | 933110-20 | codei | AEG-ROUTE-001 |
+| 8b09746519da | crs | 933110-21 | codei | AEG-ROUTE-001 |
+| d87baeab7dbc | crs | 933110-24 | codei | AEG-ROUTE-001 |
+| 8a420893e0d2 | crs | 933110-25 | codei | AEG-ROUTE-001 |
+| cd9f734b945a | crs | 933110-28 | codei | AEG-ROUTE-001 |
+| e254640f1cc8 | crs | 933110-3 | codei | AEG-ROUTE-001 |
+| e3e053d41fd1 | crs | 933110-33 | codei | AEG-ROUTE-001 |
+| 235d7b45ba6f | crs | 933110-34 | codei | AEG-ROUTE-001 |
+| 44fd93b8d7f7 | crs | 933110-36 | codei | AEG-ROUTE-001 |
+| 0bd2f2aea211 | crs | 933110-38 | codei | AEG-ROUTE-001 |
+| c28eb7cb6746 | crs | 933110-4 | codei | AEG-ROUTE-001 |
+| 56b2c000bdca | crs | 933110-5 | codei | AEG-ROUTE-001 |
+| 6178b539db9c | crs | 933110-7 | codei | AEG-ROUTE-001 |
+| eb3f20ee2699 | crs | 933110-8 | codei | AEG-ROUTE-001 |
+| 47279ee5b95b | crs | 933111-1 | codei | AEG-ROUTE-001 |
+| a6919502ffed | crs | 933111-2 | codei | AEG-ROUTE-001 |
+| c65888287ee6 | crs | 933111-3 | codei | AEG-ROUTE-001 |
+| 78a980f5d0a0 | crs | 933111-4 | codei | AEG-ROUTE-001 |
+| a148771c100b | crs | 933111-5 | codei | AEG-ROUTE-001 |
+| e9a90ac53cca | crs | 933111-6 | codei | AEG-ROUTE-001 |
+| abbd127b30ac | crs | 933120-1 | codei | AEG-ROUTE-001 |
+| a2ea7501fe0a | crs | 933120-11 | codei | AEG-ROUTE-001 |
+| fc6f89860ddc | crs | 933120-12 | codei | AEG-ROUTE-001 |
+| 3a66b72137a0 | crs | 933120-5 | codei | AEG-ROUTE-001 |
+| 575cdd9a39b9 | crs | 933120-6 | codei | AEG-ROUTE-001 |
+| de516a058cd9 | crs | 933120-7 | codei | AEG-ROUTE-001 |
+| 81e47b40096d | crs | 933120-8 | codei | AEG-ROUTE-001 |
+| 3d0a9d0c7ddb | crs | 933131-3 | codei | AEG-ROUTE-001 |
+| 979ac8eeb2f9 | crs | 933135-1 | codei | AEG-ROUTE-001 |
+| e7020640cf45 | crs | 933135-2 | codei | AEG-ROUTE-001 |
+| 7f5204d6489a | crs | 933135-3 | codei | AEG-ROUTE-001 |
+| 7a8e429a4aae | crs | 933135-4 | codei | AEG-ROUTE-001 |
+| 8833b127cfe3 | crs | 933150-1 | codei | AEG-ROUTE-001 |
+| 03ba9baf0e2f | crs | 933150-10 | codei | AEG-ROUTE-001 |
+| b0d69189fa55 | crs | 933150-11 | codei | AEG-ROUTE-001 |
+| 6dfdf18dda80 | crs | 933150-12 | codei | AEG-ROUTE-001 |
+| 425ed99a1d2a | crs | 933150-14 | codei | AEG-ROUTE-001 |
+| 3e97c8d9d610 | crs | 933150-17 | codei | AEG-ROUTE-001 |
+| 432cbe92fd86 | crs | 933150-2 | codei | AEG-ROUTE-001 |
+| 196dd83590f8 | crs | 933150-3 | codei | AEG-ROUTE-001 |
+| c34be7549379 | crs | 933150-30 | codei | AEG-ROUTE-001 |
+| e06c430497d3 | crs | 933150-38 | codei | AEG-ROUTE-001 |
+| 6d7c66ecb18e | crs | 933150-39 | codei | AEG-ROUTE-001 |
+| d15890273798 | crs | 933150-4 | codei | AEG-ROUTE-001 |
+| 94727849e75c | crs | 933150-41 | codei | AEG-ROUTE-001 |
+| 96294dfe0c04 | crs | 933150-6 | codei | AEG-ROUTE-001 |
+| 79db923c0d72 | crs | 933150-8 | codei | AEG-ROUTE-001 |
+| fa103becfb7b | crs | 933150-9 | codei | AEG-ROUTE-001 |
+| 7e027dfc3f2c | crs | 933151-2 | codei | AEG-ROUTE-001 |
+| 82c00399f6c1 | crs | 933152-4 | codei | AEG-ROUTE-001 |
+| 19fd9c84c4cb | crs | 933153-1 | codei | AEG-ROUTE-001 |
+| 33588fbfd431 | crs | 933153-2 | codei | AEG-ROUTE-001 |
+| 317a509d65a1 | crs | 933153-4 | codei | AEG-ROUTE-001 |
+| 3b1f9c69f4bf | crs | 933160-10 | codei | AEG-ROUTE-001 |
+| 3f3da5b656e0 | crs | 933160-11 | codei | AEG-ROUTE-001 |
+| ced177c2b8cd | crs | 933160-12 | codei | AEG-ROUTE-001 |
+| 728d2adb7f21 | crs | 933160-13 | codei | AEG-ROUTE-001 |
+| f57e82e8a2d3 | crs | 933160-14 | codei | AEG-ROUTE-001 |
+| 6f04d8916abf | crs | 933160-16 | codei | AEG-ROUTE-001 |
+| 54f267350a93 | crs | 933160-19 | codei | AEG-ROUTE-001 |
+| 279c3cc41aa9 | crs | 933160-2 | codei | AEG-ROUTE-001 |
+| 63ae3c531f8d | crs | 933160-22 | codei | AEG-ROUTE-001 |
+| b8ee68181cfc | crs | 933160-23 | codei | AEG-ROUTE-001 |
+| ad447737afae | crs | 933160-24 | codei | AEG-ROUTE-001 |
+| aa19edfd87f8 | crs | 933160-26 | codei | AEG-ROUTE-001 |
+| 3f7aa6338777 | crs | 933160-27 | codei | AEG-ROUTE-001 |
+| bf976ca24d02 | crs | 933160-28 | codei | AEG-ROUTE-001 |
+| afab23540025 | crs | 933160-29 | codei | AEG-ROUTE-001 |
+| 81af2acbe020 | crs | 933160-34 | codei | AEG-ROUTE-001 |
+| b897525761f6 | crs | 933160-36 | codei | AEG-ROUTE-001 |
+| 13999e9d8c09 | crs | 933160-37 | codei | AEG-ROUTE-001 |
+| 5209c3ecb409 | crs | 933160-38 | codei | AEG-ROUTE-001 |
+| f26838791cce | crs | 933160-39 | codei | AEG-ROUTE-001 |
+| 62c705150183 | crs | 933160-48 | codei | AEG-ROUTE-001 |
+| cd451e6a0ce1 | crs | 933160-49 | codei | AEG-ROUTE-001 |
+| 698344c50574 | crs | 933160-50 | codei | AEG-ROUTE-001 |
+| 128cd82463ca | crs | 933160-7 | codei | AEG-ROUTE-001 |
+| fea973bb5e0e | crs | 933160-8 | codei | AEG-ROUTE-001 |
+| 974a0a0167fc | crs | 933161-3 | codei | AEG-ROUTE-001 |
+| 6af1ad0352b4 | crs | 933161-6 | codei | AEG-ROUTE-001 |
+| 4408b0a12f27 | crs | 933161-7 | codei | AEG-ROUTE-001 |
+| 19868b38abf0 | crs | 933161-8 | codei | AEG-ROUTE-001 |
+| e1095885385c | crs | 933170-10 | codei | AEG-ROUTE-001 |
+| 16555b7710a8 | crs | 933170-2 | codei | AEG-ROUTE-001 |
+| 1907fa7447c6 | crs | 933170-3 | codei | AEG-ROUTE-001 |
+| 57ac5a8008b8 | crs | 933170-4 | codei | AEG-ROUTE-001 |
+| afd39edb4163 | crs | 933170-7 | codei | AEG-ROUTE-001 |
+| 4a80d8ab2225 | crs | 933170-8 | codei | AEG-ROUTE-001 |
+| 2dd98ef789d7 | crs | 933170-9 | codei | AEG-ROUTE-001 |
+| c89c3896ee39 | crs | 933180-10 | codei | AEG-ROUTE-001 |
+| 1aed62a839ba | crs | 933180-11 | codei | AEG-ROUTE-001 |
+| 2cd480af2a86 | crs | 933180-13 | codei | AEG-ROUTE-001 |
+| 00f51b9285d7 | crs | 933180-14 | codei | AEG-ROUTE-001 |
+| 6f0d270f2b1e | crs | 933180-15 | codei | AEG-ROUTE-001 |
+| 8bbf37e5acdb | crs | 933180-16 | codei | AEG-ROUTE-001 |
+| 22693e40dc4c | crs | 933180-17 | codei | AEG-ROUTE-001 |
+| cec96a5ffa6f | crs | 933180-19 | codei | AEG-ROUTE-001 |
+| 7f04da8e2f67 | crs | 933180-2 | codei | AEG-ROUTE-001 |
+| 0e294fc2048d | crs | 933180-20 | codei | AEG-ROUTE-001 |
+| b203ef0bad1f | crs | 933180-22 | codei | AEG-ROUTE-001 |
+| 87f5e88127d3 | crs | 933180-23 | codei | AEG-ROUTE-001 |
+| 239428f84952 | crs | 933180-25 | codei | AEG-ROUTE-001 |
+| 46802a0d96a7 | crs | 933180-26 | codei | AEG-ROUTE-001 |
+| 8f286094b2c5 | crs | 933180-27 | codei | AEG-ROUTE-001 |
+| 50ceac3787fd | crs | 933180-28 | codei | AEG-ROUTE-001 |
+| c3d4302be1ea | crs | 933180-3 | codei | AEG-ROUTE-001 |
+| 422094a3c905 | crs | 933180-30 | codei | AEG-ROUTE-001 |
+| 63be8339fae6 | crs | 933180-31 | codei | AEG-ROUTE-001 |
+| 6601a2709bc0 | crs | 933180-33 | codei | AEG-ROUTE-001 |
+| 194fc495bf45 | crs | 933180-34 | codei | AEG-ROUTE-001 |
+| 553c79a0163e | crs | 933180-36 | codei | AEG-ROUTE-001 |
+| fda3cc4ac8e2 | crs | 933180-37 | codei | AEG-ROUTE-001 |
+| 7704743c2bec | crs | 933180-38 | codei | AEG-ROUTE-001 |
+| cda6c4f3279a | crs | 933180-4 | codei | AEG-ROUTE-001 |
+| 5ea55648eab4 | crs | 933180-5 | codei | AEG-ROUTE-001 |
+| b7ef6f71ef5f | crs | 933180-6 | codei | AEG-ROUTE-001 |
+| 772e492c4388 | crs | 933180-8 | codei | AEG-ROUTE-001 |
+| e5ffac327c7b | crs | 933180-9 | codei | AEG-ROUTE-001 |
+| fb7362f79710 | crs | 933210-11 | codei | AEG-ROUTE-001 |
+| 3cbba5abf5a6 | crs | 933210-12 | codei | AEG-ROUTE-001 |
+| 2321fa31b348 | crs | 933210-13 | codei | AEG-ROUTE-001 |
+| 96dd9549b222 | crs | 933210-14 | codei | AEG-ROUTE-001 |
+| fe4cccd4c042 | crs | 933210-16 | codei | AEG-ROUTE-001 |
+| e1e57946edcc | crs | 933210-20 | codei | AEG-ROUTE-001 |
+| 4b7a25ec4e55 | crs | 933210-21 | codei | AEG-ROUTE-001 |
+| bcd1de8851c3 | crs | 933210-3 | codei | AEG-ROUTE-001 |
+| 00e92bf401bd | crs | 933210-4 | codei | AEG-ROUTE-001 |
+| 2e4a032b8c83 | crs | 933210-7 | codei | AEG-ROUTE-001 |
+| 7809a6158e60 | crs | 933210-8 | codei | AEG-ROUTE-001 |
+| 8a418f8eab4b | crs | 933210-9 | codei | AEG-ROUTE-001 |
+| 7688ba403ef6 | crs | 933220-1 | codei | AEG-ROUTE-001 |
+| 92c5a7ca1459 | crs | 933220-15 | codei | AEG-ROUTE-001 |
+| 3c7a7a2e9174 | crs | 933220-16 | codei | AEG-ROUTE-001 |
+| 9278f82f9ef8 | crs | 933220-2 | codei | AEG-ROUTE-001 |
+| 065a2a1f3530 | crs | 933220-4 | codei | AEG-ROUTE-001 |
+| 81c11dbfe11a | crs | 933220-5 | codei | AEG-ROUTE-001 |
+| 3d22af32c806 | crs | 933220-6 | codei | AEG-ROUTE-001 |
+| 5a91921ea545 | crs | 933220-7 | codei | AEG-ROUTE-001 |
+| e50508cdaa8b | crs | 934100-1 | other | AEG-ROUTE-001 |
+| 1a3bf494a811 | crs | 934100-10 | other | AEG-ROUTE-001 |
+| a52b3a6a5cf5 | crs | 934100-11 | other | AEG-ROUTE-001 |
+| 478ed91a7a31 | crs | 934100-12 | other | AEG-ROUTE-001 |
+| 6338d1e450be | crs | 934100-13 | other | AEG-ROUTE-001 |
+| 1e4d9357e616 | crs | 934100-14 | other | AEG-ROUTE-001 |
+| c5ef406163e6 | crs | 934100-15 | other | AEG-ROUTE-001 |
+| 21b398c42eb8 | crs | 934100-20 | other | AEG-ROUTE-001 |
+| e7def5c70c32 | crs | 934100-21 | other | AEG-ROUTE-001 |
+| d5b0c29229fa | crs | 934100-24 | other | AEG-ROUTE-001 |
+| 71c4341d37ff | crs | 934100-25 | other | AEG-ROUTE-001 |
+| 73f35cf71728 | crs | 934100-26 | other | AEG-ROUTE-001 |
+| 037c5b33c343 | crs | 934100-29 | other | AEG-ROUTE-001 |
+| 3aa1cefd1018 | crs | 934100-3 | other | AEG-ROUTE-001 |
+| 33e14959bb1c | crs | 934100-31 | other | AEG-ROUTE-001 |
+| 1b7c41cb3cec | crs | 934100-32 | other | AEG-ROUTE-001 |
+| b3674d2f09cc | crs | 934100-33 | other | AEG-ROUTE-001 |
+| ec394b941a08 | crs | 934100-5 | other | AEG-ROUTE-001 |
+| dcd9b26f81a0 | crs | 934100-6 | other | AEG-ROUTE-001 |
+| 41f5f219eeac | crs | 934100-7 | other | AEG-ROUTE-001 |
+| 7ce58b169bea | crs | 934100-8 | other | AEG-ROUTE-001 |
+| 456c3e75e6a6 | crs | 934101-10 | other | AEG-ROUTE-001 |
+| 92cb670ddd41 | crs | 934101-8 | other | AEG-ROUTE-001 |
+| 5d34d7818c10 | crs | 934101-9 | other | AEG-ROUTE-001 |
+| 9cea99ff6288 | crs | 934110-3 | other | AEG-ROUTE-001 |
+| 51be1e082fbf | crs | 934110-5 | other | AEG-ROUTE-001 |
+| 03e85ca4bff5 | crs | 934110-9 | other | AEG-ROUTE-001 |
+| 2a5848bdd7f4 | crs | 934120-2 | other | AEG-ROUTE-001 |
+| dc285a1106fb | crs | 934120-20 | other | AEG-ROUTE-001 |
+| 95c3642f5972 | crs | 934120-25 | other | AEG-ROUTE-001 |
+| aac99a94afbc | crs | 934120-26 | other | AEG-ROUTE-001 |
+| 6a35fa1ce177 | crs | 934120-38 | other | AEG-ROUTE-001 |
+| fd39cbdaf7cc | crs | 934120-39 | other | AEG-ROUTE-001 |
+| 6696b08317e8 | crs | 934120-41 | other | AEG-ROUTE-001 |
+| eadb43d7f6d0 | crs | 934120-42 | other | AEG-ROUTE-001 |
+| 237cda874177 | crs | 934120-45 | other | AEG-ROUTE-001 |
+| bdf607687afd | crs | 934120-46 | other | AEG-ROUTE-001 |
+| 064a8d3561a2 | crs | 934120-47 | other | AEG-ROUTE-001 |
+| a3eb0b902a67 | crs | 934120-48 | other | AEG-ROUTE-001 |
+| a0a2d5ca48fc | crs | 934120-49 | other | AEG-ROUTE-001 |
+| 54fa4b7e549b | crs | 934130-12 | other | AEG-ROUTE-001 |
+| 65788d1a84e6 | crs | 934140-1 | other | AEG-ROUTE-001 |
+| fe1be6f7941f | crs | 934140-10 | other | AEG-ROUTE-001 |
+| 0ee6f9e2b173 | crs | 934140-11 | other | AEG-ROUTE-001 |
+| 6e8c2264bb4f | crs | 934140-12 | other | AEG-ROUTE-001 |
+| 61c2288b4d2f | crs | 934140-13 | other | AEG-ROUTE-001 |
+| aed67a581873 | crs | 934140-14 | other | AEG-ROUTE-001 |
+| 228fd560810f | crs | 934140-16 | other | AEG-ROUTE-001 |
+| e24f6c30b3e3 | crs | 934140-17 | other | AEG-ROUTE-001 |
+| 697e126e2836 | crs | 934140-19 | other | AEG-ROUTE-001 |
+| ba9bf16180bb | crs | 934140-2 | other | AEG-ROUTE-001 |
+| a6fb95d132ff | crs | 934140-20 | other | AEG-ROUTE-001 |
+| 215d3f9dd2b1 | crs | 934140-24 | other | AEG-ROUTE-001 |
+| fb0138a3b01e | crs | 934140-26 | other | AEG-ROUTE-001 |
+| 43ab9aae2493 | crs | 934140-27 | other | AEG-ROUTE-001 |
+| b25839fd453e | crs | 934140-28 | other | AEG-ROUTE-001 |
+| fe0f59c0dd29 | crs | 934140-29 | other | AEG-ROUTE-001 |
+| b11554c54341 | crs | 934140-3 | other | AEG-ROUTE-001 |
+| 4675e87225f3 | crs | 934140-30 | other | AEG-ROUTE-001 |
+| c9ee89f88710 | crs | 934140-31 | other | AEG-ROUTE-001 |
+| e0e2c9b8ef5c | crs | 934140-32 | other | AEG-ROUTE-001 |
+| 30fdb6f7ef4f | crs | 934140-33 | other | AEG-ROUTE-001 |
+| 5350c9c6f0ae | crs | 934140-34 | other | AEG-ROUTE-001 |
+| f39fa0927fa7 | crs | 934140-36 | other | AEG-ROUTE-001 |
+| 7c3eca101f8b | crs | 934140-39 | other | AEG-ROUTE-001 |
+| 5ad838569a62 | crs | 934140-43 | other | AEG-ROUTE-001 |
+| 32b454324f00 | crs | 934140-6 | other | AEG-ROUTE-001 |
+| 82ad7fa989f3 | crs | 934140-7 | other | AEG-ROUTE-001 |
+| 72fd8c480125 | crs | 934140-8 | other | AEG-ROUTE-001 |
+| 0922dbe5c13e | crs | 934140-9 | other | AEG-ROUTE-001 |
+| b22f2f293774 | crs | 934160-12 | other | AEG-ROUTE-001 |
+| 5c130ca3f8f4 | crs | 934160-13 | other | AEG-ROUTE-001 |
+| a2948ff05f79 | crs | 934160-15 | other | AEG-ROUTE-001 |
+| afb880f8bef1 | crs | 934160-17 | other | AEG-ROUTE-001 |
+| 2cea77512394 | crs | 934160-2 | other | AEG-ROUTE-001 |
+| 77d2d5456a7c | crs | 934160-21 | other | AEG-ROUTE-001 |
+| 7224f6950261 | crs | 934160-22 | other | AEG-ROUTE-001 |
+| 8b346b2c749a | crs | 934160-25 | other | AEG-ROUTE-001 |
+| dd803f3afa7c | crs | 934160-3 | other | AEG-ROUTE-001 |
+| df4c07cc9060 | crs | 934160-4 | other | AEG-ROUTE-001 |
+| 2359a9c3221b | crs | 934160-5 | other | AEG-ROUTE-001 |
+| 162873d55d45 | crs | 934160-7 | other | AEG-ROUTE-001 |
+| 5196ef9562a2 | crs | 934160-8 | other | AEG-ROUTE-001 |
+| de27b403b70b | crs | 934160-9 | other | AEG-ROUTE-001 |
+| ac5302b5b391 | crs | 934170-1 | other | AEG-ROUTE-001 |
+| 847a122b79e3 | crs | 934170-3 | other | AEG-ROUTE-001 |
+| 2dac73f1c249 | crs | 934170-4 | other | AEG-ROUTE-001 |
+| eb4257b07115 | crs | 934180-2 | other | AEG-ROUTE-001 |
+| 080059212343 | crs | 934190-1 | other | AEG-ROUTE-001 |
+| f7961361709f | crs | 934190-10 | other | AEG-ROUTE-001 |
+| 5cd1958d0be5 | crs | 934190-12 | other | AEG-ROUTE-001 |
+| 23fc77a33b65 | crs | 934190-13 | other | AEG-ROUTE-001 |
+| 0b93905343f4 | crs | 934190-14 | other | AEG-ROUTE-001 |
+| 18423eda645f | crs | 934190-15 | other | AEG-ROUTE-001 |
+| 4c3a198c8a0b | crs | 934190-16 | other | AEG-ROUTE-001 |
+| 1afc614de45d | crs | 934190-4 | other | AEG-ROUTE-001 |
+| e5a8065e3a6f | crs | 934190-5 | other | AEG-ROUTE-001 |
+| 4da12650f9f9 | crs | 934190-7 | other | AEG-ROUTE-001 |
+| fad91a12a333 | crs | 934190-9 | other | AEG-ROUTE-001 |
+| cc10696bf985 | crs | 934200-11 | other | AEG-ROUTE-001 |
+| 33ea85952b31 | crs | 934200-12 | other | AEG-ROUTE-001 |
+| b63c53f1aa5d | crs | 934200-13 | other | AEG-ROUTE-001 |
+| b5b2901798dc | crs | 934200-16 | other | AEG-ROUTE-001 |
+| de477f9dac17 | crs | 934210-10 | other | AEG-ROUTE-001 |
+| 5f207e57d472 | crs | 934210-3 | other | AEG-ROUTE-001 |
+| 875d53654306 | crs | 934210-4 | other | AEG-ROUTE-001 |
+| a4ae5447665e | crs | 934220-1 | other | AEG-ROUTE-001 |
+| b5e10f8e9f1d | crs | 934220-6 | other | AEG-ROUTE-001 |
+| 007ca9129c61 | crs | 934220-7 | other | AEG-ROUTE-001 |
+| 63972d33d977 | crs | 941110-11 | xss | AEG-ROUTE-001 |
+| b33a919c9b56 | crs | 941110-12 | xss | AEG-ROUTE-001 |
+| df1ba1f2c4a1 | crs | 941110-3 | xss | AEG-ROUTE-001 |
+| b7e84014f642 | crs | 941110-6 | xss | AEG-ROUTE-001 |
+| ad4cac8ca2ea | crs | 941110-7 | xss | AEG-ROUTE-001 |
+| 20567c674c8d | crs | 941110-8 | xss | AEG-ROUTE-001 |
+| 537d6577bac2 | crs | 941110-9 | xss | AEG-ROUTE-001 |
+| f8f9bfaeb4b4 | crs | 941120-1 | xss | AEG-ROUTE-001 |
+| cad6438208e2 | crs | 941120-10 | xss | AEG-ROUTE-001 |
+| a2e3fd3c6e07 | crs | 941120-12 | xss | AEG-ROUTE-001 |
+| 9820e00dbcb3 | crs | 941120-13 | xss | AEG-ROUTE-001 |
+| fea2f2a7314a | crs | 941120-2 | xss | AEG-ROUTE-001 |
+| 87a77f6505b2 | crs | 941120-24 | xss | AEG-ROUTE-001 |
+| cc16057ed017 | crs | 941120-25 | xss | AEG-ROUTE-001 |
+| 23c9fb85ad92 | crs | 941120-4 | xss | AEG-ROUTE-001 |
+| cdb2b59bdd33 | crs | 941120-51 | xss | AEG-ROUTE-001 |
+| e743c6c1018f | crs | 941130-15 | xss | AEG-ROUTE-001 |
+| f1a2b3d4fdc8 | crs | 941130-19 | xss | AEG-ROUTE-001 |
+| 38444e6b28b4 | crs | 941130-20 | xss | AEG-ROUTE-001 |
+| 29ae2ba51fa1 | crs | 941130-5 | xss | AEG-ROUTE-001 |
+| d4eeeba4cac1 | crs | 941140-10 | xss | AEG-ROUTE-001 |
+| 6d5f74ad0361 | crs | 941140-4 | xss | AEG-ROUTE-001 |
+| 83f6b1cd9dbb | crs | 941140-7 | xss | AEG-ROUTE-001 |
+| d5a505d53092 | crs | 941150-1 | xss | AEG-ROUTE-001 |
+| 76358e5f74f3 | crs | 941160-10 | xss | AEG-ROUTE-001 |
+| 62c1ab8a6344 | crs | 941160-11 | xss | AEG-ROUTE-001 |
+| 1a477ba95cdc | crs | 941160-12 | xss | AEG-ROUTE-001 |
+| 27ec59463ee9 | crs | 941160-13 | xss | AEG-ROUTE-001 |
+| b10eb8a92030 | crs | 941160-16 | xss | AEG-ROUTE-001 |
+| d758f7bf6df1 | crs | 941160-17 | xss | AEG-ROUTE-001 |
+| 87eb78856ccf | crs | 941160-3 | xss | AEG-ROUTE-001 |
+| 29f1595d39b5 | crs | 941160-4 | xss | AEG-ROUTE-001 |
+| 327a23845850 | crs | 941160-7 | xss | AEG-ROUTE-001 |
+| c4004b167e9a | crs | 941160-8 | xss | AEG-ROUTE-001 |
+| 9bbf8cadd6d9 | crs | 941160-9 | xss | AEG-ROUTE-001 |
+| a8cab5255ca8 | crs | 941170-4 | xss | AEG-ROUTE-001 |
+| 682f343bbe36 | crs | 941170-6 | xss | AEG-ROUTE-001 |
+| 77a5b3d8b5d6 | crs | 941180-1 | xss | AEG-ROUTE-001 |
+| c00b06fb6c7a | crs | 941180-3 | xss | AEG-ROUTE-001 |
+| 568e2b434b9e | crs | 941180-6 | xss | AEG-ROUTE-001 |
+| cbbb0b28eb18 | crs | 941180-8 | xss | AEG-ROUTE-001 |
+| 065bf7c4c7f7 | crs | 941180-9 | xss | AEG-ROUTE-001 |
+| 7bdc41a3d27d | crs | 941181-1 | xss | AEG-ROUTE-001 |
+| bd49b03c28f3 | crs | 941181-3 | xss | AEG-ROUTE-001 |
+| cc464809ca31 | crs | 941181-4 | xss | AEG-ROUTE-001 |
+| 5c1e6a72e7b3 | crs | 941190-3 | xss | AEG-ROUTE-001 |
+| 676d3fa0984c | crs | 941200-1 | xss | AEG-ROUTE-001 |
+| 333e36258051 | crs | 941200-2 | xss | AEG-ROUTE-001 |
+| 32b3aee4c9c4 | crs | 941200-3 | xss | AEG-ROUTE-001 |
+| 43f2ce716dcc | crs | 941200-4 | xss | AEG-ROUTE-001 |
+| a5e559410d8b | crs | 941210-2 | xss | AEG-ROUTE-001 |
+| f389a237e877 | crs | 941240-2 | xss | AEG-ROUTE-001 |
+| 3df105bbc4d8 | crs | 941300-1 | xss | AEG-ROUTE-001 |
+| 21eb77d05a76 | crs | 941310-1 | xss | AEG-ROUTE-001 |
+| a2942c63fb5d | crs | 941310-12 | xss | AEG-ROUTE-001 |
+| 6aacb5af9829 | crs | 941310-2 | xss | AEG-ROUTE-001 |
+| 18b386696684 | crs | 941320-1 | xss | AEG-ROUTE-001 |
+| 4d6604d96316 | crs | 941330-1 | xss | AEG-ROUTE-001 |
+| fe48eb6a2b20 | crs | 941340-1 | xss | AEG-ROUTE-001 |
+| cf021d688862 | crs | 941360-2 | xss | AEG-ROUTE-001 |
+| 6eb5f05d6893 | crs | 941370-10 | xss | AEG-ROUTE-001 |
+| 25c8d2adbd60 | crs | 941370-2 | xss | AEG-ROUTE-001 |
+| b2419f5bc35e | crs | 941370-3 | xss | AEG-ROUTE-001 |
+| 1a3638f3d77b | crs | 941370-7 | xss | AEG-ROUTE-001 |
+| 9dc302e8fa8e | crs | 941370-8 | xss | AEG-ROUTE-001 |
+| 7a764a8baec6 | crs | 941370-9 | xss | AEG-ROUTE-001 |
+| 4b020a8599b5 | crs | 941390-1 | xss | AEG-ROUTE-001 |
+| 6c339ca48efa | crs | 941390-3 | xss | AEG-ROUTE-001 |
+| 2f9cb3eb7176 | crs | 941390-4 | xss | AEG-ROUTE-001 |
+| 6dee8bddd1ff | crs | 941390-5 | xss | AEG-ROUTE-001 |
+| 3badcf1c4a81 | crs | 941390-7 | xss | AEG-ROUTE-001 |
+| a8fa63efb773 | crs | 941390-8 | xss | AEG-ROUTE-001 |
+| dd3e8fd29009 | crs | 941390-9 | xss | AEG-ROUTE-001 |
+| ee2cc254c411 | crs | 941400-1 | xss | AEG-ROUTE-001 |
+| 7faf699c7585 | crs | 941400-3 | xss | AEG-ROUTE-001 |
+| 9594a63655a5 | crs | 941400-4 | xss | AEG-ROUTE-001 |
+| 67816b4b265d | crs | 941400-5 | xss | AEG-ROUTE-001 |
+| 71ff1eeb504d | crs | 941400-7 | xss | AEG-ROUTE-001 |
+| 618b94bec7e9 | crs | 942100-16 | sqli | AEG-ROUTE-001 |
+| 2dfd4cc1cc0e | crs | 942100-17 | sqli | AEG-ROUTE-001 |
+| b2b4fc9af461 | crs | 942101-1 | sqli | AEG-ROUTE-001 |
+| 0a43c8224e73 | crs | 942101-5 | sqli | AEG-ROUTE-001 |
+| e56f8673c042 | crs | 942101-7 | sqli | AEG-ROUTE-001 |
+| 31fb6e795e41 | crs | 942120-1 | sqli | AEG-ROUTE-001 |
+| 3db5e56457fc | crs | 942120-10 | sqli | AEG-ROUTE-001 |
+| e050554cf098 | crs | 942120-11 | sqli | AEG-ROUTE-001 |
+| 2a54490526f7 | crs | 942120-13 | sqli | AEG-ROUTE-001 |
+| 1130eeb0c119 | crs | 942120-14 | sqli | AEG-ROUTE-001 |
+| bc89f7ebe394 | crs | 942120-15 | sqli | AEG-ROUTE-001 |
+| e14491975a79 | crs | 942120-19 | sqli | AEG-ROUTE-001 |
+| db6eebaa6f4d | crs | 942120-2 | sqli | AEG-ROUTE-001 |
+| 9d42907f6710 | crs | 942120-20 | sqli | AEG-ROUTE-001 |
+| 53ec5d781bb8 | crs | 942120-21 | sqli | AEG-ROUTE-001 |
+| 81871ac63691 | crs | 942120-26 | sqli | AEG-ROUTE-001 |
+| 0e3d72a1d650 | crs | 942120-31 | sqli | AEG-ROUTE-001 |
+| b1282fec2e90 | crs | 942120-32 | sqli | AEG-ROUTE-001 |
+| 730f80ae4597 | crs | 942120-35 | sqli | AEG-ROUTE-001 |
+| ec9d2e416bdd | crs | 942120-37 | sqli | AEG-ROUTE-001 |
+| cc589ef5ba84 | crs | 942120-4 | sqli | AEG-ROUTE-001 |
+| def0f080f313 | crs | 942120-42 | sqli | AEG-ROUTE-001 |
+| b0de9ec68d37 | crs | 942120-43 | sqli | AEG-ROUTE-001 |
+| 0e438a3194c1 | crs | 942120-44 | sqli | AEG-ROUTE-001 |
+| 5992d4ac5e0f | crs | 942120-6 | sqli | AEG-ROUTE-001 |
+| 651f2cfd0409 | crs | 942120-7 | sqli | AEG-ROUTE-001 |
+| 2b215a29c028 | crs | 942120-9 | sqli | AEG-ROUTE-001 |
+| c786e26b3792 | crs | 942130-10 | sqli | AEG-ROUTE-001 |
+| d0679f2feb44 | crs | 942130-2 | sqli | AEG-ROUTE-001 |
+| 02b5484ebbf2 | crs | 942130-6 | sqli | AEG-ROUTE-001 |
+| 78bbde8ea836 | crs | 942130-9 | sqli | AEG-ROUTE-001 |
+| 6f9637ed1169 | crs | 942131-2 | sqli | AEG-ROUTE-001 |
+| 858503cd60a9 | crs | 942131-6 | sqli | AEG-ROUTE-001 |
+| 703fde46b32c | crs | 942140-1 | sqli | AEG-ROUTE-001 |
+| 5c597f590317 | crs | 942140-10 | sqli | AEG-ROUTE-001 |
+| b1b5518e7c36 | crs | 942140-11 | sqli | AEG-ROUTE-001 |
+| 6bdfc4067799 | crs | 942140-12 | sqli | AEG-ROUTE-001 |
+| 5fe92d43c4ea | crs | 942140-13 | sqli | AEG-ROUTE-001 |
+| 69ac4159080c | crs | 942140-15 | sqli | AEG-ROUTE-001 |
+| 08357782f1b3 | crs | 942140-17 | sqli | AEG-ROUTE-001 |
+| ac3721b9b2e6 | crs | 942140-2 | sqli | AEG-ROUTE-001 |
+| 2cdea8a349e8 | crs | 942140-3 | sqli | AEG-ROUTE-001 |
+| 21176df65db6 | crs | 942140-4 | sqli | AEG-ROUTE-001 |
+| 4382cf709154 | crs | 942140-5 | sqli | AEG-ROUTE-001 |
+| a488f4c610a1 | crs | 942140-6 | sqli | AEG-ROUTE-001 |
+| 944871a2980a | crs | 942150-12 | sqli | AEG-ROUTE-001 |
+| 9784bab1b679 | crs | 942150-13 | sqli | AEG-ROUTE-001 |
+| 7223ca713244 | crs | 942150-17 | sqli | AEG-ROUTE-001 |
+| bfc6d0458e33 | crs | 942150-18 | sqli | AEG-ROUTE-001 |
+| a219f87beb95 | crs | 942150-3 | sqli | AEG-ROUTE-001 |
+| 305f484fc08f | crs | 942150-8 | sqli | AEG-ROUTE-001 |
+| a0109f66981e | crs | 942151-23 | sqli | AEG-ROUTE-001 |
+| 84e47b492e7f | crs | 942151-24 | sqli | AEG-ROUTE-001 |
+| 874aa4f264a6 | crs | 942151-25 | sqli | AEG-ROUTE-001 |
+| efb5c2c59309 | crs | 942151-26 | sqli | AEG-ROUTE-001 |
+| 7a15db7d62b2 | crs | 942151-27 | sqli | AEG-ROUTE-001 |
+| c6ed2158e2b9 | crs | 942151-28 | sqli | AEG-ROUTE-001 |
+| ed67a288d136 | crs | 942151-29 | sqli | AEG-ROUTE-001 |
+| 323ead182ac9 | crs | 942151-30 | sqli | AEG-ROUTE-001 |
+| 0f0f185aee10 | crs | 942151-31 | sqli | AEG-ROUTE-001 |
+| 0d9901103470 | crs | 942151-32 | sqli | AEG-ROUTE-001 |
+| 73e76ee66511 | crs | 942151-33 | sqli | AEG-ROUTE-001 |
+| 58fe8febf9e9 | crs | 942151-34 | sqli | AEG-ROUTE-001 |
+| bb82e30d55c3 | crs | 942151-35 | sqli | AEG-ROUTE-001 |
+| e233391b969a | crs | 942151-37 | sqli | AEG-ROUTE-001 |
+| d687656e8db7 | crs | 942151-39 | sqli | AEG-ROUTE-001 |
+| 28ec79681130 | crs | 942151-4 | sqli | AEG-ROUTE-001 |
+| 79969c76c9e4 | crs | 942151-40 | sqli | AEG-ROUTE-001 |
+| 7e22129ab587 | crs | 942151-41 | sqli | AEG-ROUTE-001 |
+| ceb58d849339 | crs | 942151-42 | sqli | AEG-ROUTE-001 |
+| a6b30e854b49 | crs | 942151-43 | sqli | AEG-ROUTE-001 |
+| ba96949a7ea4 | crs | 942151-44 | sqli | AEG-ROUTE-001 |
+| 718508422c8c | crs | 942151-45 | sqli | AEG-ROUTE-001 |
+| b88f610a8f5c | crs | 942151-47 | sqli | AEG-ROUTE-001 |
+| 76af3b2da924 | crs | 942151-48 | sqli | AEG-ROUTE-001 |
+| 1be3a700f8dc | crs | 942151-50 | sqli | AEG-ROUTE-001 |
+| fe750fd5d45a | crs | 942151-51 | sqli | AEG-ROUTE-001 |
+| 3ebe92679cfb | crs | 942151-52 | sqli | AEG-ROUTE-001 |
+| 619a2e7f2d02 | crs | 942151-53 | sqli | AEG-ROUTE-001 |
+| c240fc9b95fa | crs | 942151-54 | sqli | AEG-ROUTE-001 |
+| bcd9ff408e19 | crs | 942151-56 | sqli | AEG-ROUTE-001 |
+| 3958a261f631 | crs | 942151-57 | sqli | AEG-ROUTE-001 |
+| 3b1fe610fc01 | crs | 942151-58 | sqli | AEG-ROUTE-001 |
+| 6d1639b00065 | crs | 942151-59 | sqli | AEG-ROUTE-001 |
+| 0952a05fe0a9 | crs | 942151-60 | sqli | AEG-ROUTE-001 |
+| 5689cb064bbf | crs | 942151-61 | sqli | AEG-ROUTE-001 |
+| d37ddda8ea59 | crs | 942151-62 | sqli | AEG-ROUTE-001 |
+| 0b97e99f00c4 | crs | 942151-63 | sqli | AEG-ROUTE-001 |
+| f4d445db940f | crs | 942151-64 | sqli | AEG-ROUTE-001 |
+| 4606289ab0e6 | crs | 942151-65 | sqli | AEG-ROUTE-001 |
+| 68255ea0a1e5 | crs | 942151-68 | sqli | AEG-ROUTE-001 |
+| 509ec6f063bf | crs | 942151-69 | sqli | AEG-ROUTE-001 |
+| 287434cf0bf7 | crs | 942151-7 | sqli | AEG-ROUTE-001 |
+| 1491ac3bbc7b | crs | 942151-70 | sqli | AEG-ROUTE-001 |
+| 3d073a33ee4a | crs | 942151-71 | sqli | AEG-ROUTE-001 |
+| b9e1499724bb | crs | 942152-1 | sqli | AEG-ROUTE-001 |
+| 9562c3036ede | crs | 942152-3 | sqli | AEG-ROUTE-001 |
+| 594e82dccc4f | crs | 942160-10 | sqli | AEG-ROUTE-001 |
+| 9cf141ebdd55 | crs | 942160-11 | sqli | AEG-ROUTE-001 |
+| 1a7519015e60 | crs | 942160-13 | sqli | AEG-ROUTE-001 |
+| e4cbc15c286c | crs | 942160-15 | sqli | AEG-ROUTE-001 |
+| 62f33c8039ab | crs | 942160-4 | sqli | AEG-ROUTE-001 |
+| 6dee08bc0c67 | crs | 942170-4 | sqli | AEG-ROUTE-001 |
+| 2d4b5ca89c90 | crs | 942180-1 | sqli | AEG-ROUTE-001 |
+| 14e37a89e860 | crs | 942180-2 | sqli | AEG-ROUTE-001 |
+| 1fb709f87f65 | crs | 942180-3 | sqli | AEG-ROUTE-001 |
+| 66c101c217a9 | crs | 942180-5 | sqli | AEG-ROUTE-001 |
+| f809eb239cb7 | crs | 942180-6 | sqli | AEG-ROUTE-001 |
+| 889d4abb7601 | crs | 942180-7 | sqli | AEG-ROUTE-001 |
+| 845bf1125041 | crs | 942180-8 | sqli | AEG-ROUTE-001 |
+| 612347fed086 | crs | 942190-10 | sqli | AEG-ROUTE-001 |
+| 2178069493f6 | crs | 942190-11 | sqli | AEG-ROUTE-001 |
+| 3f172ff1c424 | crs | 942190-13 | sqli | AEG-ROUTE-001 |
+| 08ec07bb7b5d | crs | 942190-17 | sqli | AEG-ROUTE-001 |
+| 9c522489d50a | crs | 942190-19 | sqli | AEG-ROUTE-001 |
+| 599fdc2fceb1 | crs | 942190-22 | sqli | AEG-ROUTE-001 |
+| 5a012f944ea9 | crs | 942190-23 | sqli | AEG-ROUTE-001 |
+| b06f0d1cac4a | crs | 942190-24 | sqli | AEG-ROUTE-001 |
+| 48bdba591af6 | crs | 942190-27 | sqli | AEG-ROUTE-001 |
+| 200ffee2dba1 | crs | 942190-32 | sqli | AEG-ROUTE-001 |
+| 0d50898023bb | crs | 942190-36 | sqli | AEG-ROUTE-001 |
+| 1b8c8c614bab | crs | 942190-37 | sqli | AEG-ROUTE-001 |
+| 3afb1bccbfc0 | crs | 942190-49 | sqli | AEG-ROUTE-001 |
+| edd04f05e227 | crs | 942190-6 | sqli | AEG-ROUTE-001 |
+| 8b05ab96b654 | crs | 942190-7 | sqli | AEG-ROUTE-001 |
+| fc3ba50f9e78 | crs | 942190-8 | sqli | AEG-ROUTE-001 |
+| 35186c04b0fc | crs | 942190-9 | sqli | AEG-ROUTE-001 |
+| e67616759534 | crs | 942200-1 | sqli | AEG-ROUTE-001 |
+| 2e53e79a087a | crs | 942200-2 | sqli | AEG-ROUTE-001 |
+| dd7d3656b910 | crs | 942200-3 | sqli | AEG-ROUTE-001 |
+| 29cf3ecad7f7 | crs | 942200-4 | sqli | AEG-ROUTE-001 |
+| 6bfa6abf211e | crs | 942200-5 | sqli | AEG-ROUTE-001 |
+| 57f68934bbfd | crs | 942210-1 | sqli | AEG-ROUTE-001 |
+| e0f60819142a | crs | 942210-10 | sqli | AEG-ROUTE-001 |
+| 77b6f38b7278 | crs | 942210-11 | sqli | AEG-ROUTE-001 |
+| ab567d6cdbeb | crs | 942210-13 | sqli | AEG-ROUTE-001 |
+| 54f507f2c63a | crs | 942210-14 | sqli | AEG-ROUTE-001 |
+| 829d90ab10ee | crs | 942210-15 | sqli | AEG-ROUTE-001 |
+| ed0372d87585 | crs | 942210-16 | sqli | AEG-ROUTE-001 |
+| 163ffe489b8d | crs | 942210-17 | sqli | AEG-ROUTE-001 |
+| 2e6192c9b306 | crs | 942210-19 | sqli | AEG-ROUTE-001 |
+| 8f374e822720 | crs | 942210-2 | sqli | AEG-ROUTE-001 |
+| cd4643be4d00 | crs | 942210-21 | sqli | AEG-ROUTE-001 |
+| 66f6f93017dc | crs | 942210-22 | sqli | AEG-ROUTE-001 |
+| ad88d1f94f04 | crs | 942210-23 | sqli | AEG-ROUTE-001 |
+| 6457faeae560 | crs | 942210-25 | sqli | AEG-ROUTE-001 |
+| a61a37c5fe2a | crs | 942210-27 | sqli | AEG-ROUTE-001 |
+| 00bd1cb5e8ab | crs | 942210-29 | sqli | AEG-ROUTE-001 |
+| ff22feac3dd6 | crs | 942210-3 | sqli | AEG-ROUTE-001 |
+| 9cdb22a5d46a | crs | 942210-33 | sqli | AEG-ROUTE-001 |
+| 2c404467425e | crs | 942210-34 | sqli | AEG-ROUTE-001 |
+| bbe36d1b162e | crs | 942210-37 | sqli | AEG-ROUTE-001 |
+| d7ea22961b2c | crs | 942210-38 | sqli | AEG-ROUTE-001 |
+| 922d06b5f803 | crs | 942210-39 | sqli | AEG-ROUTE-001 |
+| d7efae8ba7c6 | crs | 942210-4 | sqli | AEG-ROUTE-001 |
+| 0f43fa72e5c0 | crs | 942210-40 | sqli | AEG-ROUTE-001 |
+| 015a7f991c50 | crs | 942210-41 | sqli | AEG-ROUTE-001 |
+| 6032a631879d | crs | 942210-46 | sqli | AEG-ROUTE-001 |
+| 9d155aafced7 | crs | 942210-5 | sqli | AEG-ROUTE-001 |
+| 2b1608a262cd | crs | 942210-52 | sqli | AEG-ROUTE-001 |
+| 711dd820fcd8 | crs | 942210-53 | sqli | AEG-ROUTE-001 |
+| 8fa43a13cbc6 | crs | 942210-54 | sqli | AEG-ROUTE-001 |
+| 21cba44add58 | crs | 942210-59 | sqli | AEG-ROUTE-001 |
+| d3a0c3158ef2 | crs | 942210-6 | sqli | AEG-ROUTE-001 |
+| d949672a8e3c | crs | 942210-60 | sqli | AEG-ROUTE-001 |
+| 767c0f14af2a | crs | 942210-61 | sqli | AEG-ROUTE-001 |
+| 83cea9851fca | crs | 942210-62 | sqli | AEG-ROUTE-001 |
+| b01ea8427693 | crs | 942210-64 | sqli | AEG-ROUTE-001 |
+| 47b183803a4c | crs | 942210-66 | sqli | AEG-ROUTE-001 |
+| 174b4fd6f0a8 | crs | 942210-67 | sqli | AEG-ROUTE-001 |
+| 56401c807e86 | crs | 942210-68 | sqli | AEG-ROUTE-001 |
+| 053be2af14b6 | crs | 942210-70 | sqli | AEG-ROUTE-001 |
+| eaa77b756eec | crs | 942210-75 | sqli | AEG-ROUTE-001 |
+| d6ba057481a6 | crs | 942210-76 | sqli | AEG-ROUTE-001 |
+| 8bdd6067e21e | crs | 942210-78 | sqli | AEG-ROUTE-001 |
+| 216593604489 | crs | 942210-79 | sqli | AEG-ROUTE-001 |
+| b4616e1753eb | crs | 942210-80 | sqli | AEG-ROUTE-001 |
+| d893345a642c | crs | 942220-1 | sqli | AEG-ROUTE-001 |
+| 19daba74104b | crs | 942220-2 | sqli | AEG-ROUTE-001 |
+| 35dcdab01392 | crs | 942230-1 | sqli | AEG-ROUTE-001 |
+| 3467b7b51b91 | crs | 942230-10 | sqli | AEG-ROUTE-001 |
+| cc72f0742a9e | crs | 942230-12 | sqli | AEG-ROUTE-001 |
+| ce78a11c6d9b | crs | 942230-2 | sqli | AEG-ROUTE-001 |
+| 4c555ec60d26 | crs | 942230-6 | sqli | AEG-ROUTE-001 |
+| 76cba4e0d451 | crs | 942230-7 | sqli | AEG-ROUTE-001 |
+| dca06f11d0b2 | crs | 942240-10 | sqli | AEG-ROUTE-001 |
+| 9aa42769354b | crs | 942240-11 | sqli | AEG-ROUTE-001 |
+| ccc1917f9706 | crs | 942251-1 | sqli | AEG-ROUTE-001 |
+| f8aee24afb89 | crs | 942260-1 | sqli | AEG-ROUTE-001 |
+| 60275722c0ec | crs | 942270-1 | sqli | AEG-ROUTE-001 |
+| c99ac5e8a50e | crs | 942290-2 | sqli | AEG-ROUTE-001 |
+| d0e3ae213758 | crs | 942300-1 | sqli | AEG-ROUTE-001 |
+| 8794153c51e5 | crs | 942310-3 | sqli | AEG-ROUTE-001 |
+| 39ed0fb73c9b | crs | 942320-2 | sqli | AEG-ROUTE-001 |
+| d4931d920a2c | crs | 942320-3 | sqli | AEG-ROUTE-001 |
+| 1de227c77967 | crs | 942321-1 | sqli | AEG-ROUTE-001 |
+| 60f983547844 | crs | 942321-2 | sqli | AEG-ROUTE-001 |
+| 3988729b92d8 | crs | 942330-1 | sqli | AEG-ROUTE-001 |
+| 8952d817e67e | crs | 942330-2 | sqli | AEG-ROUTE-001 |
+| ab61713a6d63 | crs | 942330-3 | sqli | AEG-ROUTE-001 |
+| a7ad0b16fcb2 | crs | 942340-1 | sqli | AEG-ROUTE-001 |
+| 5104958428f9 | crs | 942340-3 | sqli | AEG-ROUTE-001 |
+| a5ebda52e4b6 | crs | 942340-6 | sqli | AEG-ROUTE-001 |
+| 68f35c407a38 | crs | 942340-7 | sqli | AEG-ROUTE-001 |
+| c0db0c271bdd | crs | 942350-1 | sqli | AEG-ROUTE-001 |
+| 992c62bdee0a | crs | 942350-4 | sqli | AEG-ROUTE-001 |
+| 37013ed4d097 | crs | 942350-5 | sqli | AEG-ROUTE-001 |
+| ff0ca46aead9 | crs | 942350-6 | sqli | AEG-ROUTE-001 |
+| db093a5e33e0 | crs | 942350-8 | sqli | AEG-ROUTE-001 |
+| 50734ef5d107 | crs | 942360-1 | sqli | AEG-ROUTE-001 |
+| e7ccb7d59688 | crs | 942360-10 | sqli | AEG-ROUTE-001 |
+| 78e11c790c41 | crs | 942360-11 | sqli | AEG-ROUTE-001 |
+| e3de0f735bd3 | crs | 942360-13 | sqli | AEG-ROUTE-001 |
+| cf46efac1748 | crs | 942360-2 | sqli | AEG-ROUTE-001 |
+| 60bf88c1cee0 | crs | 942360-3 | sqli | AEG-ROUTE-001 |
+| 2b6277791436 | crs | 942360-4 | sqli | AEG-ROUTE-001 |
+| ee167dc285c9 | crs | 942360-6 | sqli | AEG-ROUTE-001 |
+| e45cbaea6879 | crs | 942360-8 | sqli | AEG-ROUTE-001 |
+| 7599188c49ee | crs | 942360-9 | sqli | AEG-ROUTE-001 |
+| 388f725cb853 | crs | 942361-1 | sqli | AEG-ROUTE-001 |
+| dc6482cb8964 | crs | 942361-2 | sqli | AEG-ROUTE-001 |
+| a1d9170e129b | crs | 942361-3 | sqli | AEG-ROUTE-001 |
+| cc8edabb03df | crs | 942361-4 | sqli | AEG-ROUTE-001 |
+| b95db452fdf9 | crs | 942361-5 | sqli | AEG-ROUTE-001 |
+| 074d3f9bf9f1 | crs | 942361-7 | sqli | AEG-ROUTE-001 |
+| 13a42a9d1059 | crs | 942362-12 | sqli | AEG-ROUTE-001 |
+| e5bf174ec746 | crs | 942362-14 | sqli | AEG-ROUTE-001 |
+| 64048afb7fbc | crs | 942362-16 | sqli | AEG-ROUTE-001 |
+| 4b5be8b8ab7a | crs | 942362-17 | sqli | AEG-ROUTE-001 |
+| 764a693535ac | crs | 942362-18 | sqli | AEG-ROUTE-001 |
+| eb1a814bcb8b | crs | 942362-19 | sqli | AEG-ROUTE-001 |
+| ae2636272b17 | crs | 942362-20 | sqli | AEG-ROUTE-001 |
+| 212a43caafbc | crs | 942362-22 | sqli | AEG-ROUTE-001 |
+| b2041854e82d | crs | 942362-25 | sqli | AEG-ROUTE-001 |
+| f053a62b68cc | crs | 942362-29 | sqli | AEG-ROUTE-001 |
+| c3a4dedea5a6 | crs | 942362-6 | sqli | AEG-ROUTE-001 |
+| 4b2777e13325 | crs | 942362-8 | sqli | AEG-ROUTE-001 |
+| 9e6aa723ec77 | crs | 942370-2 | sqli | AEG-ROUTE-001 |
+| 7145463a2999 | crs | 942370-6 | sqli | AEG-ROUTE-001 |
+| 31e14338be13 | crs | 942370-8 | sqli | AEG-ROUTE-001 |
+| 8d89ad659a94 | crs | 942370-9 | sqli | AEG-ROUTE-001 |
+| 54bbf51da796 | crs | 942380-15 | sqli | AEG-ROUTE-001 |
+| 6c108c4064ea | crs | 942380-17 | sqli | AEG-ROUTE-001 |
+| d914d8db1a1d | crs | 942380-19 | sqli | AEG-ROUTE-001 |
+| 63f88be85d16 | crs | 942380-2 | sqli | AEG-ROUTE-001 |
+| d2b72dbb5420 | crs | 942380-21 | sqli | AEG-ROUTE-001 |
+| 04e2279bbad7 | crs | 942380-22 | sqli | AEG-ROUTE-001 |
+| 8af893f23b87 | crs | 942380-23 | sqli | AEG-ROUTE-001 |
+| e070936b91b3 | crs | 942380-24 | sqli | AEG-ROUTE-001 |
+| a85eb84d3d75 | crs | 942380-25 | sqli | AEG-ROUTE-001 |
+| d175ed14aa53 | crs | 942380-28 | sqli | AEG-ROUTE-001 |
+| 0937621b1af1 | crs | 942380-29 | sqli | AEG-ROUTE-001 |
+| fe873d81eadf | crs | 942380-3 | sqli | AEG-ROUTE-001 |
+| 6a49862b36af | crs | 942380-30 | sqli | AEG-ROUTE-001 |
+| ac8c1eb35e64 | crs | 942380-33 | sqli | AEG-ROUTE-001 |
+| e0cb8350ea15 | crs | 942380-34 | sqli | AEG-ROUTE-001 |
+| 69513115e489 | crs | 942380-35 | sqli | AEG-ROUTE-001 |
+| 28ad7fb06182 | crs | 942380-37 | sqli | AEG-ROUTE-001 |
+| 533c3dd99491 | crs | 942380-38 | sqli | AEG-ROUTE-001 |
+| 12886f038647 | crs | 942380-39 | sqli | AEG-ROUTE-001 |
+| 0bc51de74299 | crs | 942380-4 | sqli | AEG-ROUTE-001 |
+| c68e5d073ab5 | crs | 942380-40 | sqli | AEG-ROUTE-001 |
+| 10bb4ad8e9d1 | crs | 942380-41 | sqli | AEG-ROUTE-001 |
+| 65b68a3f0399 | crs | 942380-42 | sqli | AEG-ROUTE-001 |
+| 7eeca8a12a6c | crs | 942380-43 | sqli | AEG-ROUTE-001 |
+| 7a9ee4d973f2 | crs | 942380-5 | sqli | AEG-ROUTE-001 |
+| 9bdcb75e2ea4 | crs | 942380-6 | sqli | AEG-ROUTE-001 |
+| 6eabade57d28 | crs | 942390-12 | sqli | AEG-ROUTE-001 |
+| eae6722f1e23 | crs | 942390-13 | sqli | AEG-ROUTE-001 |
+| 1ca12cb77f8b | crs | 942390-15 | sqli | AEG-ROUTE-001 |
+| eab3377970ce | crs | 942390-16 | sqli | AEG-ROUTE-001 |
+| 5c71be09b1e9 | crs | 942390-18 | sqli | AEG-ROUTE-001 |
+| be8a36bd9a27 | crs | 942390-19 | sqli | AEG-ROUTE-001 |
+| 925b47d61eb0 | crs | 942390-2 | sqli | AEG-ROUTE-001 |
+| 504a00e5b7c6 | crs | 942390-20 | sqli | AEG-ROUTE-001 |
+| 8d061f6dfe7a | crs | 942390-26 | sqli | AEG-ROUTE-001 |
+| 4610a5926ed9 | crs | 942390-28 | sqli | AEG-ROUTE-001 |
+| 1afd54ca6911 | crs | 942390-30 | sqli | AEG-ROUTE-001 |
+| aeab1de90034 | crs | 942390-31 | sqli | AEG-ROUTE-001 |
+| 91ad3b5eedc3 | crs | 942390-4 | sqli | AEG-ROUTE-001 |
+| c067457e124c | crs | 942390-7 | sqli | AEG-ROUTE-001 |
+| 3c4ca1488b35 | crs | 942390-8 | sqli | AEG-ROUTE-001 |
+| 082f57896041 | crs | 942390-9 | sqli | AEG-ROUTE-001 |
+| 592dcf8e014a | crs | 942400-1 | sqli | AEG-ROUTE-001 |
+| 03f19d177b07 | crs | 942410-1 | sqli | AEG-ROUTE-001 |
+| 60e16c80b2b1 | crs | 942410-10 | sqli | AEG-ROUTE-001 |
+| 7cc2b993b9d5 | crs | 942410-11 | sqli | AEG-ROUTE-001 |
+| 3b07078ce1f7 | crs | 942410-12 | sqli | AEG-ROUTE-001 |
+| 58b4f3a7d089 | crs | 942410-13 | sqli | AEG-ROUTE-001 |
+| e73b4da8c91a | crs | 942410-14 | sqli | AEG-ROUTE-001 |
+| 2a5193a0cc13 | crs | 942410-15 | sqli | AEG-ROUTE-001 |
+| ea5afca9726f | crs | 942410-18 | sqli | AEG-ROUTE-001 |
+| ac834308c534 | crs | 942410-19 | sqli | AEG-ROUTE-001 |
+| e3540a42e9df | crs | 942410-20 | sqli | AEG-ROUTE-001 |
+| 32b54f8e9d0b | crs | 942410-21 | sqli | AEG-ROUTE-001 |
+| 9f70a17100f1 | crs | 942410-22 | sqli | AEG-ROUTE-001 |
+| 890cd41fd1ab | crs | 942410-23 | sqli | AEG-ROUTE-001 |
+| 6e2e4aec01b5 | crs | 942410-24 | sqli | AEG-ROUTE-001 |
+| a966e6760053 | crs | 942410-25 | sqli | AEG-ROUTE-001 |
+| 3d3a307735be | crs | 942410-26 | sqli | AEG-ROUTE-001 |
+| 006836f247f1 | crs | 942410-27 | sqli | AEG-ROUTE-001 |
+| cb6648651fe8 | crs | 942410-28 | sqli | AEG-ROUTE-001 |
+| d1318bcbd14e | crs | 942410-29 | sqli | AEG-ROUTE-001 |
+| 154fb104d283 | crs | 942410-3 | sqli | AEG-ROUTE-001 |
+| 420bafa893b3 | crs | 942410-30 | sqli | AEG-ROUTE-001 |
+| 64efdaa392aa | crs | 942410-31 | sqli | AEG-ROUTE-001 |
+| 55de459e0ca1 | crs | 942410-32 | sqli | AEG-ROUTE-001 |
+| bf3a3da5de43 | crs | 942410-33 | sqli | AEG-ROUTE-001 |
+| 0c6046b5fb11 | crs | 942410-34 | sqli | AEG-ROUTE-001 |
+| 61067eddd384 | crs | 942410-35 | sqli | AEG-ROUTE-001 |
+| eec8486e1e90 | crs | 942410-36 | sqli | AEG-ROUTE-001 |
+| a295c352d8d1 | crs | 942410-4 | sqli | AEG-ROUTE-001 |
+| 8e4e5b3549b8 | crs | 942410-40 | sqli | AEG-ROUTE-001 |
+| bf5b850f7908 | crs | 942410-41 | sqli | AEG-ROUTE-001 |
+| 3d5cd540cc17 | crs | 942410-43 | sqli | AEG-ROUTE-001 |
+| effeab51ff8b | crs | 942410-44 | sqli | AEG-ROUTE-001 |
+| 90e83176dae8 | crs | 942410-45 | sqli | AEG-ROUTE-001 |
+| b99f60cddbc1 | crs | 942410-47 | sqli | AEG-ROUTE-001 |
+| 48ca98fdc1e7 | crs | 942410-5 | sqli | AEG-ROUTE-001 |
+| 5df4664ea783 | crs | 942410-50 | sqli | AEG-ROUTE-001 |
+| 0e5fc9148286 | crs | 942410-51 | sqli | AEG-ROUTE-001 |
+| 0306d6779c02 | crs | 942410-53 | sqli | AEG-ROUTE-001 |
+| 5feac9c7e27f | crs | 942410-55 | sqli | AEG-ROUTE-001 |
+| 83884a74ad8f | crs | 942410-56 | sqli | AEG-ROUTE-001 |
+| 9b9453173922 | crs | 942410-57 | sqli | AEG-ROUTE-001 |
+| d392c899f317 | crs | 942410-58 | sqli | AEG-ROUTE-001 |
+| e447b4bf515a | crs | 942410-6 | sqli | AEG-ROUTE-001 |
+| ae3e3d89a100 | crs | 942410-60 | sqli | AEG-ROUTE-001 |
+| cc59d2a2c60e | crs | 942410-65 | sqli | AEG-ROUTE-001 |
+| cfe40a4ca0ed | crs | 942410-67 | sqli | AEG-ROUTE-001 |
+| c1ab09fe54cc | crs | 942410-68 | sqli | AEG-ROUTE-001 |
+| bde182737612 | crs | 942410-7 | sqli | AEG-ROUTE-001 |
+| ae16f86aa0f8 | crs | 942410-8 | sqli | AEG-ROUTE-001 |
+| 48738cd787ea | crs | 942410-9 | sqli | AEG-ROUTE-001 |
+| d6f224e248c6 | crs | 942420-11 | sqli | AEG-ROUTE-001 |
+| d9e2bde9b9e9 | crs | 942420-4 | sqli | AEG-ROUTE-001 |
+| ddfa6aa937e8 | crs | 942420-5 | sqli | AEG-ROUTE-001 |
+| df8b24973fe8 | crs | 942421-1 | sqli | AEG-ROUTE-001 |
+| 246aa52ee15b | crs | 942421-2 | sqli | AEG-ROUTE-001 |
+| 72e21766caee | crs | 942430-1 | sqli | AEG-ROUTE-001 |
+| fc027463cae7 | crs | 942430-16 | sqli | AEG-ROUTE-001 |
+| 11b24089c27c | crs | 942430-3 | sqli | AEG-ROUTE-001 |
+| 89c79a28960d | crs | 942430-4 | sqli | AEG-ROUTE-001 |
+| a4f2f4a6bbcf | crs | 942430-5 | sqli | AEG-ROUTE-001 |
+| e9ad3feb7bd6 | crs | 942430-6 | sqli | AEG-ROUTE-001 |
+| 1ab5f808610d | crs | 942431-1 | sqli | AEG-ROUTE-001 |
+| 7162404c231b | crs | 942431-4 | sqli | AEG-ROUTE-001 |
+| 1739e1e23200 | crs | 942431-5 | sqli | AEG-ROUTE-001 |
+| cea35ccb5775 | crs | 942432-3 | sqli | AEG-ROUTE-001 |
+| 410dcbca743a | crs | 942432-4 | sqli | AEG-ROUTE-001 |
+| e13334e2aa28 | crs | 942440-12 | sqli | AEG-ROUTE-001 |
+| d22e2e30a20e | crs | 942440-3 | sqli | AEG-ROUTE-001 |
+| 985595d90985 | crs | 942440-5 | sqli | AEG-ROUTE-001 |
+| 93c0e00d8144 | crs | 942440-6 | sqli | AEG-ROUTE-001 |
+| bdaffdba25aa | crs | 942440-7 | sqli | AEG-ROUTE-001 |
+| 17ca09aa8047 | crs | 942450-1 | sqli | AEG-ROUTE-001 |
+| f569142b4047 | crs | 942450-3 | sqli | AEG-ROUTE-001 |
+| bcd75111e754 | crs | 942450-6 | sqli | AEG-ROUTE-001 |
+| 53d74c076603 | crs | 942450-7 | sqli | AEG-ROUTE-001 |
+| c41b52452882 | crs | 942470-1 | sqli | AEG-ROUTE-001 |
+| 1d4e4330dc9f | crs | 942470-10 | sqli | AEG-ROUTE-001 |
+| 6ad683e80f41 | crs | 942470-3 | sqli | AEG-ROUTE-001 |
+| 517adf6c0fa3 | crs | 942470-4 | sqli | AEG-ROUTE-001 |
+| b37956562e79 | crs | 942470-6 | sqli | AEG-ROUTE-001 |
+| e6f98ba5ecba | crs | 942470-8 | sqli | AEG-ROUTE-001 |
+| 3a8b2fad35eb | crs | 942470-9 | sqli | AEG-ROUTE-001 |
+| 01f9a918b80a | crs | 942480-1 | sqli | AEG-ROUTE-001 |
+| 88c89a93208b | crs | 942480-10 | sqli | AEG-ROUTE-001 |
+| e59f3ee46945 | crs | 942480-11 | sqli | AEG-ROUTE-001 |
+| cb6596c9e77f | crs | 942480-2 | sqli | AEG-ROUTE-001 |
+| 6860c1170c12 | crs | 942490-1 | sqli | AEG-ROUTE-001 |
+| 7e1cb4bfffb3 | crs | 942490-10 | sqli | AEG-ROUTE-001 |
+| 74ff87d09c39 | crs | 942490-11 | sqli | AEG-ROUTE-001 |
+| 9bae8bc5e428 | crs | 942490-12 | sqli | AEG-ROUTE-001 |
+| 4bbffa21431f | crs | 942490-13 | sqli | AEG-ROUTE-001 |
+| b226db36e06d | crs | 942490-14 | sqli | AEG-ROUTE-001 |
+| f0255cb7485d | crs | 942490-15 | sqli | AEG-ROUTE-001 |
+| 49d6486ef2b4 | crs | 942490-16 | sqli | AEG-ROUTE-001 |
+| 98c06f59a2c1 | crs | 942490-17 | sqli | AEG-ROUTE-001 |
+| 93ba7e80dcdb | crs | 942490-19 | sqli | AEG-ROUTE-001 |
+| 41891efe1f32 | crs | 942490-20 | sqli | AEG-ROUTE-001 |
+| 148ded10954e | crs | 942490-6 | sqli | AEG-ROUTE-001 |
+| bb4dc3490c9e | crs | 942490-8 | sqli | AEG-ROUTE-001 |
+| 81b9580dd7d2 | crs | 942490-9 | sqli | AEG-ROUTE-001 |
+| bc89f2398cff | crs | 942500-2 | sqli | AEG-ROUTE-001 |
+| 02ebd6345a56 | crs | 942500-5 | sqli | AEG-ROUTE-001 |
+| 6c4906af07fb | crs | 942520-1 | sqli | AEG-ROUTE-001 |
+| 1ea5401a4170 | crs | 942520-11 | sqli | AEG-ROUTE-001 |
+| 8994506fc781 | crs | 942520-12 | sqli | AEG-ROUTE-001 |
+| 47b2b3b6fc97 | crs | 942520-13 | sqli | AEG-ROUTE-001 |
+| 49a29c13d39a | crs | 942520-16 | sqli | AEG-ROUTE-001 |
+| 41f804491474 | crs | 942520-18 | sqli | AEG-ROUTE-001 |
+| 6cc92f37cf65 | crs | 942520-19 | sqli | AEG-ROUTE-001 |
+| 109110ff639c | crs | 942520-21 | sqli | AEG-ROUTE-001 |
+| 3ada6b7eb422 | crs | 942520-3 | sqli | AEG-ROUTE-001 |
+| 46e8a0102cd8 | crs | 942520-4 | sqli | AEG-ROUTE-001 |
+| a77c3e9f595a | crs | 942520-6 | sqli | AEG-ROUTE-001 |
+| bcfda25c851c | crs | 942520-7 | sqli | AEG-ROUTE-001 |
+| 431621214ef5 | crs | 942520-9 | sqli | AEG-ROUTE-001 |
+| 57d91490904b | crs | 942521-17 | sqli | AEG-ROUTE-001 |
+| b7601d940621 | crs | 942521-18 | sqli | AEG-ROUTE-001 |
+| b69154d7bf98 | crs | 942521-20 | sqli | AEG-ROUTE-001 |
+| 3197c19edc1d | crs | 942521-21 | sqli | AEG-ROUTE-001 |
+| 9b6d2782ff47 | crs | 942521-23 | sqli | AEG-ROUTE-001 |
+| d6c7b05d25a3 | crs | 942521-24 | sqli | AEG-ROUTE-001 |
+| 4d595594dfb0 | crs | 942521-3 | sqli | AEG-ROUTE-001 |
+| a134538dd1ad | crs | 942521-4 | sqli | AEG-ROUTE-001 |
+| e06883c20987 | crs | 942522-1 | sqli | AEG-ROUTE-001 |
+| 78a70736a223 | crs | 942522-3 | sqli | AEG-ROUTE-001 |
+| 91d0a1c5c4fc | crs | 942522-7 | sqli | AEG-ROUTE-001 |
+| d98b908efdd1 | crs | 942530-1 | sqli | AEG-ROUTE-001 |
+| 9b906ec0bbe3 | crs | 942540-1 | sqli | AEG-ROUTE-001 |
+| 1428f436cb78 | crs | 942540-2 | sqli | AEG-ROUTE-001 |
+| 56b0284ca5d5 | crs | 942540-3 | sqli | AEG-ROUTE-001 |
+| ade713d30de1 | crs | 942540-7 | sqli | AEG-ROUTE-001 |
+| e9e80cefacc4 | crs | 942550-1 | sqli | AEG-ROUTE-001 |
+| 474af5fbca74 | crs | 942550-10 | sqli | AEG-ROUTE-001 |
+| 583ed10393af | crs | 942550-11 | sqli | AEG-ROUTE-001 |
+| 91c48570191f | crs | 942550-12 | sqli | AEG-ROUTE-001 |
+| da2eb29dcc04 | crs | 942550-15 | sqli | AEG-ROUTE-001 |
+| 6c21aebb76a1 | crs | 942550-19 | sqli | AEG-ROUTE-001 |
+| fbad8d2cc71a | crs | 942550-2 | sqli | AEG-ROUTE-001 |
+| d29c42c53357 | crs | 942550-23 | sqli | AEG-ROUTE-001 |
+| 97137df79bb9 | crs | 942550-26 | sqli | AEG-ROUTE-001 |
+| d372c87fbead | crs | 942550-27 | sqli | AEG-ROUTE-001 |
+| 2992dbe4e596 | crs | 942550-29 | sqli | AEG-ROUTE-001 |
+| 09b59381b141 | crs | 942550-3 | sqli | AEG-ROUTE-001 |
+| a9600d75cb1c | crs | 942550-30 | sqli | AEG-ROUTE-001 |
+| 4798007b39f8 | crs | 942550-32 | sqli | AEG-ROUTE-001 |
+| 6a18f8bba4fe | crs | 942550-33 | sqli | AEG-ROUTE-001 |
+| 6db0872e1cf5 | crs | 942550-36 | sqli | AEG-ROUTE-001 |
+| 4ad791e3b5cf | crs | 942550-39 | sqli | AEG-ROUTE-001 |
+| c6aa16122dea | crs | 942550-4 | sqli | AEG-ROUTE-001 |
+| 9154d2926a08 | crs | 942550-40 | sqli | AEG-ROUTE-001 |
+| d6d9be621a66 | crs | 942550-46 | sqli | AEG-ROUTE-001 |
+| 39c8a9028db6 | crs | 942550-47 | sqli | AEG-ROUTE-001 |
+| de8878dbc115 | crs | 942550-48 | sqli | AEG-ROUTE-001 |
+| 013c80c5edc5 | crs | 942550-5 | sqli | AEG-ROUTE-001 |
+| d03bbbf1e48e | crs | 942550-50 | sqli | AEG-ROUTE-001 |
+| ab5550aa037a | crs | 942550-51 | sqli | AEG-ROUTE-001 |
+| 5afe37f36f41 | crs | 942550-7 | sqli | AEG-ROUTE-001 |
+| b7cacb401c61 | crs | 942550-9 | sqli | AEG-ROUTE-001 |
+| de4918682252 | crs | 942560-3 | sqli | AEG-ROUTE-001 |
+| b6e95af78331 | crs | 943110-10 | session | AEG-ROUTE-001 |
+| 24309572d810 | crs | 943110-11 | session | AEG-ROUTE-001 |
+| 409a1ef15b4c | crs | 943110-12 | session | AEG-ROUTE-001 |
+| 5839bc2337da | crs | 943110-13 | session | AEG-ROUTE-001 |
+| eb199029b4a4 | crs | 943110-14 | session | AEG-ROUTE-001 |
+| cdf83f4d6777 | crs | 943110-15 | session | AEG-ROUTE-001 |
+| 586029201374 | crs | 943110-17 | session | AEG-ROUTE-001 |
+| 80a63cfded11 | crs | 943110-18 | session | AEG-ROUTE-001 |
+| da1598286fda | crs | 943110-19 | session | AEG-ROUTE-001 |
+| 926230bf1107 | crs | 943110-20 | session | AEG-ROUTE-001 |
+| 422d0cb8e81c | crs | 943110-21 | session | AEG-ROUTE-001 |
+| 1f66f9051a6a | crs | 943110-22 | session | AEG-ROUTE-001 |
+| cc8326fc0352 | crs | 943110-23 | session | AEG-ROUTE-001 |
+| 2842852d0ab8 | crs | 943110-26 | session | AEG-ROUTE-001 |
+| cc417c34a384 | crs | 943110-28 | session | AEG-ROUTE-001 |
+| 93ad415315ee | crs | 943110-29 | session | AEG-ROUTE-001 |
+| 9738bd58a7c0 | crs | 943110-31 | session | AEG-ROUTE-001 |
+| b5c5b8a4b841 | crs | 943110-33 | session | AEG-ROUTE-001 |
+| 49df347f78c8 | crs | 943110-34 | session | AEG-ROUTE-001 |
+| 6efb3bc18a74 | crs | 943110-35 | session | AEG-ROUTE-001 |
+| cd9a120bc011 | crs | 943110-36 | session | AEG-ROUTE-001 |
+| bcbe9168c6fe | crs | 943110-37 | session | AEG-ROUTE-001 |
+| 6f9a22b78e6b | crs | 943110-40 | session | AEG-ROUTE-001 |
+| e78db0e3a4d6 | crs | 943110-42 | session | AEG-ROUTE-001 |
+| 8431e61c29a6 | crs | 943110-5 | session | AEG-ROUTE-001 |
+| 70cac016806c | crs | 943110-7 | session | AEG-ROUTE-001 |
+| 2f1ed73be5f3 | crs | 943110-8 | session | AEG-ROUTE-001 |
+| 8611aff94a81 | crs | 944100-1 | java | AEG-ROUTE-001 |
+| 3df6d9d69673 | crs | 944120-1 | java | AEG-ROUTE-001 |
+| 01cc7aa4a96f | crs | 944120-100 | java | AEG-ROUTE-001 |
+| 9b073d62db2a | crs | 944120-103 | java | AEG-ROUTE-001 |
+| 2d9820439ce1 | crs | 944120-104 | java | AEG-ROUTE-001 |
+| 9a7d439513b5 | crs | 944120-105 | java | AEG-ROUTE-001 |
+| a0625fe3494d | crs | 944120-106 | java | AEG-ROUTE-001 |
+| c50b34ef08f1 | crs | 944120-107 | java | AEG-ROUTE-001 |
+| f5f4c506c0c8 | crs | 944120-114 | java | AEG-ROUTE-001 |
+| 190e4201be65 | crs | 944120-120 | java | AEG-ROUTE-001 |
+| bac1d34ae1e6 | crs | 944120-121 | java | AEG-ROUTE-001 |
+| 34b53e4944e0 | crs | 944120-122 | java | AEG-ROUTE-001 |
+| dcea6ceaba6c | crs | 944120-123 | java | AEG-ROUTE-001 |
+| bb63b4de1cbd | crs | 944120-124 | java | AEG-ROUTE-001 |
+| d9f98d053ad1 | crs | 944120-13 | java | AEG-ROUTE-001 |
+| 0078034640a4 | crs | 944120-131 | java | AEG-ROUTE-001 |
+| 2b15e56743e1 | crs | 944120-133 | java | AEG-ROUTE-001 |
+| c25cd96ecf81 | crs | 944120-18 | java | AEG-ROUTE-001 |
+| da6a0c4cbe72 | crs | 944120-19 | java | AEG-ROUTE-001 |
+| 189e69feb635 | crs | 944120-2 | java | AEG-ROUTE-001 |
+| d1777d5c46ec | crs | 944120-20 | java | AEG-ROUTE-001 |
+| da831e200228 | crs | 944120-21 | java | AEG-ROUTE-001 |
+| 87f37fdb35e9 | crs | 944120-22 | java | AEG-ROUTE-001 |
+| ea1638d11cc9 | crs | 944120-29 | java | AEG-ROUTE-001 |
+| 5ebf1c882362 | crs | 944120-3 | java | AEG-ROUTE-001 |
+| 6e0966ad633f | crs | 944120-30 | java | AEG-ROUTE-001 |
+| 451576c65961 | crs | 944120-31 | java | AEG-ROUTE-001 |
+| e87f5502ee60 | crs | 944120-35 | java | AEG-ROUTE-001 |
+| 9f91916245a4 | crs | 944120-36 | java | AEG-ROUTE-001 |
+| e0e381f868ab | crs | 944120-37 | java | AEG-ROUTE-001 |
+| 102a2ec65b90 | crs | 944120-38 | java | AEG-ROUTE-001 |
+| 2d6babba6b00 | crs | 944120-39 | java | AEG-ROUTE-001 |
+| 23f59ccaa268 | crs | 944120-4 | java | AEG-ROUTE-001 |
+| 2ac9f34c8738 | crs | 944120-46 | java | AEG-ROUTE-001 |
+| f979a2688ce8 | crs | 944120-47 | java | AEG-ROUTE-001 |
+| 4c5128e919dc | crs | 944120-5 | java | AEG-ROUTE-001 |
+| d9cc371d85b0 | crs | 944120-52 | java | AEG-ROUTE-001 |
+| c6bc7748a8ed | crs | 944120-53 | java | AEG-ROUTE-001 |
+| 73a828533183 | crs | 944120-54 | java | AEG-ROUTE-001 |
+| d2a206a6439e | crs | 944120-55 | java | AEG-ROUTE-001 |
+| fb49d9ab99f6 | crs | 944120-56 | java | AEG-ROUTE-001 |
+| 30386e12223b | crs | 944120-63 | java | AEG-ROUTE-001 |
+| d066c34befce | crs | 944120-64 | java | AEG-ROUTE-001 |
+| 26cfd0e4236a | crs | 944120-65 | java | AEG-ROUTE-001 |
+| 213d3ff78d1a | crs | 944120-69 | java | AEG-ROUTE-001 |
+| eabfa6a317a0 | crs | 944120-70 | java | AEG-ROUTE-001 |
+| 7d533c6466c3 | crs | 944120-71 | java | AEG-ROUTE-001 |
+| ddab0fc8e3f8 | crs | 944120-72 | java | AEG-ROUTE-001 |
+| b04836d64f95 | crs | 944120-73 | java | AEG-ROUTE-001 |
+| 6b926d0eb68a | crs | 944120-80 | java | AEG-ROUTE-001 |
+| 525e4a134e23 | crs | 944120-86 | java | AEG-ROUTE-001 |
+| b2e881b118e4 | crs | 944120-87 | java | AEG-ROUTE-001 |
+| d0aa17cca969 | crs | 944120-88 | java | AEG-ROUTE-001 |
+| f26b7e9bf20f | crs | 944120-89 | java | AEG-ROUTE-001 |
+| bbc96d6a721e | crs | 944120-90 | java | AEG-ROUTE-001 |
+| 11fb430ae9d1 | crs | 944130-10 | java | AEG-ROUTE-001 |
+| 4a00c29296fb | crs | 944130-100 | java | AEG-ROUTE-001 |
+| 26d04b9d6fab | crs | 944130-101 | java | AEG-ROUTE-001 |
+| 59f4944a6c42 | crs | 944130-102 | java | AEG-ROUTE-001 |
+| 174136e76abc | crs | 944130-103 | java | AEG-ROUTE-001 |
+| 990355e13f60 | crs | 944130-104 | java | AEG-ROUTE-001 |
+| 571e78d92268 | crs | 944130-109 | java | AEG-ROUTE-001 |
+| 6ba0176c39a0 | crs | 944130-11 | java | AEG-ROUTE-001 |
+| e3c183259def | crs | 944130-110 | java | AEG-ROUTE-001 |
+| e3a12935fbfa | crs | 944130-111 | java | AEG-ROUTE-001 |
+| 40b0ef499e3c | crs | 944130-112 | java | AEG-ROUTE-001 |
+| 4ce50162d4fe | crs | 944130-113 | java | AEG-ROUTE-001 |
+| 6b5228902f5c | crs | 944130-114 | java | AEG-ROUTE-001 |
+| a0a4e267832e | crs | 944130-115 | java | AEG-ROUTE-001 |
+| 1c34bbc8c794 | crs | 944130-12 | java | AEG-ROUTE-001 |
+| 3f8a37d876b8 | crs | 944130-121 | java | AEG-ROUTE-001 |
+| 22803905c414 | crs | 944130-13 | java | AEG-ROUTE-001 |
+| 3ff6e67f7286 | crs | 944130-131 | java | AEG-ROUTE-001 |
+| b9fe8e8770f4 | crs | 944130-132 | java | AEG-ROUTE-001 |
+| 29fa5d275399 | crs | 944130-133 | java | AEG-ROUTE-001 |
+| 9fab0dedb3eb | crs | 944130-134 | java | AEG-ROUTE-001 |
+| fc3d16384b0a | crs | 944130-135 | java | AEG-ROUTE-001 |
+| a136cffcc491 | crs | 944130-136 | java | AEG-ROUTE-001 |
+| f096c66bae70 | crs | 944130-137 | java | AEG-ROUTE-001 |
+| cb1b9b0918d3 | crs | 944130-14 | java | AEG-ROUTE-001 |
+| 25156220bab8 | crs | 944130-144 | java | AEG-ROUTE-001 |
+| bd089c53ad54 | crs | 944130-145 | java | AEG-ROUTE-001 |
+| 34db592d6aef | crs | 944130-146 | java | AEG-ROUTE-001 |
+| 0878b9a8c90c | crs | 944130-147 | java | AEG-ROUTE-001 |
+| c9a8a2df9572 | crs | 944130-148 | java | AEG-ROUTE-001 |
+| b43613f6c993 | crs | 944130-15 | java | AEG-ROUTE-001 |
+| e31dbcb02e34 | crs | 944130-154 | java | AEG-ROUTE-001 |
+| c3e7c34cf731 | crs | 944130-16 | java | AEG-ROUTE-001 |
+| b1ca280c7663 | crs | 944130-166 | java | AEG-ROUTE-001 |
+| 6ea57ac158f8 | crs | 944130-167 | java | AEG-ROUTE-001 |
+| 0384069805b6 | crs | 944130-168 | java | AEG-ROUTE-001 |
+| 6894b98f7d2f | crs | 944130-169 | java | AEG-ROUTE-001 |
+| 3ac7a31190c2 | crs | 944130-170 | java | AEG-ROUTE-001 |
+| 6fc2c017af1c | crs | 944130-176 | java | AEG-ROUTE-001 |
+| 71c7b7b16e3e | crs | 944130-177 | java | AEG-ROUTE-001 |
+| fb4043c104e4 | crs | 944130-178 | java | AEG-ROUTE-001 |
+| 47223a5f5eec | crs | 944130-179 | java | AEG-ROUTE-001 |
+| 74839031ca12 | crs | 944130-180 | java | AEG-ROUTE-001 |
+| c7269e1d54c7 | crs | 944130-181 | java | AEG-ROUTE-001 |
+| 41f318edbb21 | crs | 944130-186 | java | AEG-ROUTE-001 |
+| d60c43ac26b2 | crs | 944130-187 | java | AEG-ROUTE-001 |
+| 155541fcb842 | crs | 944130-188 | java | AEG-ROUTE-001 |
+| 83e69d8e5c78 | crs | 944130-189 | java | AEG-ROUTE-001 |
+| 39a256ad7f74 | crs | 944130-190 | java | AEG-ROUTE-001 |
+| b9dbd51cd993 | crs | 944130-191 | java | AEG-ROUTE-001 |
+| 0f459eeb8034 | crs | 944130-192 | java | AEG-ROUTE-001 |
+| be31d101ba21 | crs | 944130-197 | java | AEG-ROUTE-001 |
+| 6119deaf3926 | crs | 944130-198 | java | AEG-ROUTE-001 |
+| 349abd93567c | crs | 944130-199 | java | AEG-ROUTE-001 |
+| 4cb45463eee6 | crs | 944130-200 | java | AEG-ROUTE-001 |
+| b51fcaa7516e | crs | 944130-201 | java | AEG-ROUTE-001 |
+| 6dc0d7945b29 | crs | 944130-202 | java | AEG-ROUTE-001 |
+| f68de0666a6a | crs | 944130-203 | java | AEG-ROUTE-001 |
+| 1f15224c0812 | crs | 944130-208 | java | AEG-ROUTE-001 |
+| 01af5bca4ee0 | crs | 944130-209 | java | AEG-ROUTE-001 |
+| 60f361934167 | crs | 944130-21 | java | AEG-ROUTE-001 |
+| fffe3d0bb8ff | crs | 944130-219 | java | AEG-ROUTE-001 |
+| 270dfab325de | crs | 944130-22 | java | AEG-ROUTE-001 |
+| e5d991df45d7 | crs | 944130-221 | java | AEG-ROUTE-001 |
+| d83469eb289a | crs | 944130-222 | java | AEG-ROUTE-001 |
+| 169480d12ad3 | crs | 944130-223 | java | AEG-ROUTE-001 |
+| 17dbb71bacad | crs | 944130-224 | java | AEG-ROUTE-001 |
+| 53bd65aef24d | crs | 944130-225 | java | AEG-ROUTE-001 |
+| e9dcc8f3c1f0 | crs | 944130-23 | java | AEG-ROUTE-001 |
+| 11c100567db6 | crs | 944130-232 | java | AEG-ROUTE-001 |
+| 3df358ac6a45 | crs | 944130-233 | java | AEG-ROUTE-001 |
+| 802f9e4d28e0 | crs | 944130-234 | java | AEG-ROUTE-001 |
+| 9138298cc78a | crs | 944130-235 | java | AEG-ROUTE-001 |
+| ce39a5e8352e | crs | 944130-236 | java | AEG-ROUTE-001 |
+| fa137dbcce14 | crs | 944130-24 | java | AEG-ROUTE-001 |
+| 940292e6497b | crs | 944130-242 | java | AEG-ROUTE-001 |
+| 0b1f6e99a211 | crs | 944130-243 | java | AEG-ROUTE-001 |
+| c6454d7d9f83 | crs | 944130-244 | java | AEG-ROUTE-001 |
+| bdafc49c4aee | crs | 944130-245 | java | AEG-ROUTE-001 |
+| 01fedc8364c7 | crs | 944130-246 | java | AEG-ROUTE-001 |
+| 888ed29617a7 | crs | 944130-247 | java | AEG-ROUTE-001 |
+| f206198112d5 | crs | 944130-25 | java | AEG-ROUTE-001 |
+| 134caae50673 | crs | 944130-253 | java | AEG-ROUTE-001 |
+| c708f9d2d58e | crs | 944130-254 | java | AEG-ROUTE-001 |
+| c962a00575e8 | crs | 944130-255 | java | AEG-ROUTE-001 |
+| f5b59fb08312 | crs | 944130-256 | java | AEG-ROUTE-001 |
+| 01ee39a3a5ca | crs | 944130-257 | java | AEG-ROUTE-001 |
+| 6802ae856575 | crs | 944130-258 | java | AEG-ROUTE-001 |
+| 250a1afee087 | crs | 944130-26 | java | AEG-ROUTE-001 |
+| 93fd12f9b799 | crs | 944130-263 | java | AEG-ROUTE-001 |
+| 0213f864e46e | crs | 944130-265 | java | AEG-ROUTE-001 |
+| 5dfdf0956895 | crs | 944130-266 | java | AEG-ROUTE-001 |
+| 39b09398428f | crs | 944130-267 | java | AEG-ROUTE-001 |
+| aca772d3ff27 | crs | 944130-268 | java | AEG-ROUTE-001 |
+| 49718b1e7e46 | crs | 944130-269 | java | AEG-ROUTE-001 |
+| 16b8be8132dc | crs | 944130-27 | java | AEG-ROUTE-001 |
+| c88ceece066c | crs | 944130-274 | java | AEG-ROUTE-001 |
+| bbc2e35f4d98 | crs | 944130-276 | java | AEG-ROUTE-001 |
+| ef738d8a2177 | crs | 944130-277 | java | AEG-ROUTE-001 |
+| 016144deecf6 | crs | 944130-278 | java | AEG-ROUTE-001 |
+| e64d0b2c2c4f | crs | 944130-279 | java | AEG-ROUTE-001 |
+| 04c492cca658 | crs | 944130-280 | java | AEG-ROUTE-001 |
+| e52707370c8a | crs | 944130-285 | java | AEG-ROUTE-001 |
+| 15c7aa55c0ca | crs | 944130-286 | java | AEG-ROUTE-001 |
+| 3ab5acb0d938 | crs | 944130-287 | java | AEG-ROUTE-001 |
+| 0dabd5803bd3 | crs | 944130-288 | java | AEG-ROUTE-001 |
+| 4c25c4c9cd80 | crs | 944130-289 | java | AEG-ROUTE-001 |
+| b81c0bc94ff5 | crs | 944130-290 | java | AEG-ROUTE-001 |
+| 374f7f81ae6a | crs | 944130-291 | java | AEG-ROUTE-001 |
+| fbb59583c77a | crs | 944130-296 | java | AEG-ROUTE-001 |
+| 5cd81de5963b | crs | 944130-297 | java | AEG-ROUTE-001 |
+| b6e76d3eb6c8 | crs | 944130-298 | java | AEG-ROUTE-001 |
+| 1388631e33f3 | crs | 944130-299 | java | AEG-ROUTE-001 |
+| a474fa8f8ab8 | crs | 944130-300 | java | AEG-ROUTE-001 |
+| 4449fe8bb38b | crs | 944130-301 | java | AEG-ROUTE-001 |
+| 21577c71c05f | crs | 944130-302 | java | AEG-ROUTE-001 |
+| eee7e004c1b7 | crs | 944130-307 | java | AEG-ROUTE-001 |
+| 4a11ead765d0 | crs | 944130-308 | java | AEG-ROUTE-001 |
+| 4e1ef7df205d | crs | 944130-309 | java | AEG-ROUTE-001 |
+| d263f1bb9c74 | crs | 944130-310 | java | AEG-ROUTE-001 |
+| b3a8d6f60d92 | crs | 944130-311 | java | AEG-ROUTE-001 |
+| 281fc2426de2 | crs | 944130-312 | java | AEG-ROUTE-001 |
+| b151d304bf85 | crs | 944130-313 | java | AEG-ROUTE-001 |
+| aa0fea6c19ef | crs | 944130-319 | java | AEG-ROUTE-001 |
+| 21e4084d3712 | crs | 944130-32 | java | AEG-ROUTE-001 |
+| a562672757ca | crs | 944130-320 | java | AEG-ROUTE-001 |
+| a30a7aa315a8 | crs | 944130-321 | java | AEG-ROUTE-001 |
+| 95970de72e77 | crs | 944130-322 | java | AEG-ROUTE-001 |
+| 94739aebcab8 | crs | 944130-323 | java | AEG-ROUTE-001 |
+| 30c7f2ee4db2 | crs | 944130-324 | java | AEG-ROUTE-001 |
+| d95ec037f91c | crs | 944130-33 | java | AEG-ROUTE-001 |
+| 6c997c3a36db | crs | 944130-330 | java | AEG-ROUTE-001 |
+| fe36347bfb64 | crs | 944130-34 | java | AEG-ROUTE-001 |
+| 764fca65f105 | crs | 944130-341 | java | AEG-ROUTE-001 |
+| 80f75baf1fb7 | crs | 944130-343 | java | AEG-ROUTE-001 |
+| 54acd2fdc4ba | crs | 944130-344 | java | AEG-ROUTE-001 |
+| 998cd828aec1 | crs | 944130-345 | java | AEG-ROUTE-001 |
+| b7b3556974b6 | crs | 944130-346 | java | AEG-ROUTE-001 |
+| 3cf2e8953e6a | crs | 944130-35 | java | AEG-ROUTE-001 |
+| 6525f8ddf0b4 | crs | 944130-351 | java | AEG-ROUTE-001 |
+| c66d3453c12c | crs | 944130-352 | java | AEG-ROUTE-001 |
+| 7169ae8658e9 | crs | 944130-36 | java | AEG-ROUTE-001 |
+| c8700f3caa22 | crs | 944130-363 | java | AEG-ROUTE-001 |
+| d4289f6d1ae7 | crs | 944130-364 | java | AEG-ROUTE-001 |
+| bdcefb11fccb | crs | 944130-365 | java | AEG-ROUTE-001 |
+| 8b0040d422ed | crs | 944130-366 | java | AEG-ROUTE-001 |
+| 1fba9165b584 | crs | 944130-367 | java | AEG-ROUTE-001 |
+| 28e7e353dbd1 | crs | 944130-368 | java | AEG-ROUTE-001 |
+| 0f689325034e | crs | 944130-37 | java | AEG-ROUTE-001 |
+| fd0e70ce9f40 | crs | 944130-374 | java | AEG-ROUTE-001 |
+| 322bc0a7408d | crs | 944130-375 | java | AEG-ROUTE-001 |
+| f77c3daaa941 | crs | 944130-376 | java | AEG-ROUTE-001 |
+| 19b0143b01bd | crs | 944130-377 | java | AEG-ROUTE-001 |
+| a69acf4b2297 | crs | 944130-378 | java | AEG-ROUTE-001 |
+| b94ac4647c14 | crs | 944130-379 | java | AEG-ROUTE-001 |
+| 2310ae53e0a5 | crs | 944130-38 | java | AEG-ROUTE-001 |
+| 9e3209db6657 | crs | 944130-385 | java | AEG-ROUTE-001 |
+| d56a8ebfbf35 | crs | 944130-395 | java | AEG-ROUTE-001 |
+| 6102e56a184b | crs | 944130-406 | java | AEG-ROUTE-001 |
+| f656f6af221b | crs | 944130-417 | java | AEG-ROUTE-001 |
+| fd5e1dc70a6a | crs | 944130-418 | java | AEG-ROUTE-001 |
+| 4afe27dde740 | crs | 944130-43 | java | AEG-ROUTE-001 |
+| e9c8c215a895 | crs | 944130-45 | java | AEG-ROUTE-001 |
+| 77e944daf79e | crs | 944130-46 | java | AEG-ROUTE-001 |
+| da4026559147 | crs | 944130-47 | java | AEG-ROUTE-001 |
+| a833acce93c3 | crs | 944130-48 | java | AEG-ROUTE-001 |
+| 1772adb8c669 | crs | 944130-49 | java | AEG-ROUTE-001 |
+| f0b4072b5948 | crs | 944130-55 | java | AEG-ROUTE-001 |
+| e61ee29b1bcb | crs | 944130-56 | java | AEG-ROUTE-001 |
+| 425c90f11a75 | crs | 944130-57 | java | AEG-ROUTE-001 |
+| d4f6994ee657 | crs | 944130-58 | java | AEG-ROUTE-001 |
+| 4867e501d526 | crs | 944130-59 | java | AEG-ROUTE-001 |
+| ef5a4339c427 | crs | 944130-60 | java | AEG-ROUTE-001 |
+| 0e2c1a32721d | crs | 944130-66 | java | AEG-ROUTE-001 |
+| 3067193586cb | crs | 944130-67 | java | AEG-ROUTE-001 |
+| f8dafb01bd26 | crs | 944130-68 | java | AEG-ROUTE-001 |
+| 0e924cc9e826 | crs | 944130-69 | java | AEG-ROUTE-001 |
+| bff70862a2b0 | crs | 944130-70 | java | AEG-ROUTE-001 |
+| 1f6684f893a5 | crs | 944130-71 | java | AEG-ROUTE-001 |
+| 1ff412e4ab33 | crs | 944130-77 | java | AEG-ROUTE-001 |
+| 0c7c10f927aa | crs | 944130-78 | java | AEG-ROUTE-001 |
+| 8503a1aa2ec4 | crs | 944130-79 | java | AEG-ROUTE-001 |
+| c08192b828fc | crs | 944130-80 | java | AEG-ROUTE-001 |
+| 2fd44599e3df | crs | 944130-81 | java | AEG-ROUTE-001 |
+| ff4ae9b09a57 | crs | 944130-82 | java | AEG-ROUTE-001 |
+| 9630584eca54 | crs | 944130-87 | java | AEG-ROUTE-001 |
+| 25faabbe0e3d | crs | 944130-88 | java | AEG-ROUTE-001 |
+| 1ff750aead26 | crs | 944130-89 | java | AEG-ROUTE-001 |
+| baeea947d152 | crs | 944130-90 | java | AEG-ROUTE-001 |
+| 6f6614d944ad | crs | 944130-91 | java | AEG-ROUTE-001 |
+| c526a84374fa | crs | 944130-92 | java | AEG-ROUTE-001 |
+| c9a4d7e4810f | crs | 944130-93 | java | AEG-ROUTE-001 |
+| 6b9e23a1a7d5 | crs | 944130-98 | java | AEG-ROUTE-001 |
+| 60bb762a9c1b | crs | 944140-12 | java | AEG-ROUTE-001 |
+| 588d68da7b32 | crs | 944140-17 | java | AEG-ROUTE-001 |
+| 16e413e6fa91 | crs | 944140-2 | java | AEG-ROUTE-001 |
+| 3307d3a2f5c5 | crs | 944140-3 | java | AEG-ROUTE-001 |
+| 17de99e21296 | crs | 944140-5 | java | AEG-ROUTE-001 |
+| 362f760a5e28 | crs | 944140-6 | java | AEG-ROUTE-001 |
+| a6ab739980f9 | crs | 944140-7 | java | AEG-ROUTE-001 |
+| 722b510d0ba8 | crs | 944140-8 | java | AEG-ROUTE-001 |
+| 697970d1eaa4 | crs | 944150-13 | java | AEG-ROUTE-001 |
+| b5b5ebfe9ed2 | crs | 944150-18 | java | AEG-ROUTE-001 |
+| b88269deb012 | crs | 944150-19 | java | AEG-ROUTE-001 |
+| 741ab75d36b1 | crs | 944150-20 | java | AEG-ROUTE-001 |
+| 38d8b8c5cc91 | crs | 944150-24 | java | AEG-ROUTE-001 |
+| 60adddcd1d6c | crs | 944150-8 | java | AEG-ROUTE-001 |
+| bfbe246c2614 | crs | 944210-13 | java | AEG-ROUTE-001 |
+| 41f45f11e62c | crs | 944210-18 | java | AEG-ROUTE-001 |
+| 90eeb271c137 | crs | 944210-19 | java | AEG-ROUTE-001 |
+| 5731e05e3970 | crs | 944210-2 | java | AEG-ROUTE-001 |
+| 50b8728aae31 | crs | 944210-20 | java | AEG-ROUTE-001 |
+| 99c988da645a | crs | 944210-21 | java | AEG-ROUTE-001 |
+| f8d5cd595eff | crs | 944210-29 | java | AEG-ROUTE-001 |
+| 64c5e18e3b02 | crs | 944210-35 | java | AEG-ROUTE-001 |
+| 74b9dce8b9c0 | crs | 944210-36 | java | AEG-ROUTE-001 |
+| e033c7069d5f | crs | 944210-38 | java | AEG-ROUTE-001 |
+| fe6580586087 | crs | 944210-39 | java | AEG-ROUTE-001 |
+| c85e421a84b9 | crs | 944210-4 | java | AEG-ROUTE-001 |
+| 1fad1120216e | crs | 944210-47 | java | AEG-ROUTE-001 |
+| 0a55658b7d78 | crs | 944210-48 | java | AEG-ROUTE-001 |
+| 68e6400e5af8 | crs | 944240-1 | java | AEG-ROUTE-001 |
+| df828c9b64ff | crs | 944240-11 | java | AEG-ROUTE-001 |
+| 346f79c4fdca | crs | 944240-12 | java | AEG-ROUTE-001 |
+| ad705eaf834f | crs | 944240-13 | java | AEG-ROUTE-001 |
+| 954d380a7323 | crs | 944240-14 | java | AEG-ROUTE-001 |
+| 6de0e1d89ecd | crs | 944240-15 | java | AEG-ROUTE-001 |
+| a5a4d9e994db | crs | 944240-16 | java | AEG-ROUTE-001 |
+| 3b54794e01f1 | crs | 944240-2 | java | AEG-ROUTE-001 |
+| c85e48a82ccb | crs | 944240-22 | java | AEG-ROUTE-001 |
+| 3177a542c7d6 | crs | 944240-3 | java | AEG-ROUTE-001 |
+| 1159ce6db76c | crs | 944240-34 | java | AEG-ROUTE-001 |
+| 748beda44a7d | crs | 944240-35 | java | AEG-ROUTE-001 |
+| 7c7cf7bd019a | crs | 944240-36 | java | AEG-ROUTE-001 |
+| f55e22966158 | crs | 944240-37 | java | AEG-ROUTE-001 |
+| c23ed9d98905 | crs | 944240-38 | java | AEG-ROUTE-001 |
+| 854614682db6 | crs | 944240-4 | java | AEG-ROUTE-001 |
+| 681ef100982f | crs | 944240-44 | java | AEG-ROUTE-001 |
+| 68d3df7ae529 | crs | 944240-45 | java | AEG-ROUTE-001 |
+| 800bf0971d49 | crs | 944240-46 | java | AEG-ROUTE-001 |
+| 82b033a07746 | crs | 944240-47 | java | AEG-ROUTE-001 |
+| 1f4e5d2e7a89 | crs | 944240-48 | java | AEG-ROUTE-001 |
+| 7c25103e291c | crs | 944240-49 | java | AEG-ROUTE-001 |
+| eb4a6d7327f9 | crs | 944240-5 | java | AEG-ROUTE-001 |
+| bab79749809b | crs | 944240-54 | java | AEG-ROUTE-001 |
+| 25da4236ea2f | crs | 944240-55 | java | AEG-ROUTE-001 |
+| 04b27b2f8d4f | crs | 944240-56 | java | AEG-ROUTE-001 |
+| 2d4d55091377 | crs | 944240-57 | java | AEG-ROUTE-001 |
+| 23557bfb3026 | crs | 944240-58 | java | AEG-ROUTE-001 |
+| 5586ddb53505 | crs | 944240-59 | java | AEG-ROUTE-001 |
+| 74abe84566a0 | crs | 944240-60 | java | AEG-ROUTE-001 |
+| 7024e20d5f3c | crs | 944240-65 | java | AEG-ROUTE-001 |
+| ecae1fa10d4e | crs | 944240-66 | java | AEG-ROUTE-001 |
+| dc00600b6923 | crs | 944240-67 | java | AEG-ROUTE-001 |
+| e4031e251d10 | crs | 944240-68 | java | AEG-ROUTE-001 |
+| baf65f9ea896 | crs | 944240-69 | java | AEG-ROUTE-001 |
+| 65535a9f3f4f | crs | 944240-70 | java | AEG-ROUTE-001 |
+| b402bbabe028 | crs | 944240-71 | java | AEG-ROUTE-001 |
+| aa299bc22916 | crs | 944240-78 | java | AEG-ROUTE-001 |
+| 60a9dac26b71 | crs | 944240-79 | java | AEG-ROUTE-001 |
+| c21f93670af5 | crs | 944240-80 | java | AEG-ROUTE-001 |
+| 24a110ffbb7f | crs | 944240-81 | java | AEG-ROUTE-001 |
+| 2e182a088e5b | crs | 944240-82 | java | AEG-ROUTE-001 |
+| c8bb1b0220bd | crs | 944240-87 | java | AEG-ROUTE-001 |
+| c4b98d0f999d | crs | 944240-88 | java | AEG-ROUTE-001 |
+| 17de2c1745f4 | crs | 944250-1 | java | AEG-ROUTE-001 |
+| 8c1835ed75d1 | crs | 944250-11 | java | AEG-ROUTE-001 |
+| 245b1c8accc8 | crs | 944250-2 | java | AEG-ROUTE-001 |
+| 20e570930363 | crs | 944250-21 | java | AEG-ROUTE-001 |
+| 649e01f16951 | crs | 944250-22 | java | AEG-ROUTE-001 |
+| 01a276160dcc | crs | 944250-3 | java | AEG-ROUTE-001 |
+| 06c7dfb8cf7c | crs | 944250-4 | java | AEG-ROUTE-001 |
+| 89297ed60f29 | crs | 944250-5 | java | AEG-ROUTE-001 |
+| eb4a4c37b1d6 | crs | 944300-1 | java | AEG-ROUTE-001 |
+| 800c74009b8d | crs | 944300-100 | java | AEG-ROUTE-001 |
+| 1c261ceb8a23 | crs | 944300-101 | java | AEG-ROUTE-001 |
+| ecc4fe9eae2a | crs | 944300-102 | java | AEG-ROUTE-001 |
+| 8170e2205d1a | crs | 944300-103 | java | AEG-ROUTE-001 |
+| 30df893bd9b2 | crs | 944300-104 | java | AEG-ROUTE-001 |
+| d0383b06c961 | crs | 944300-109 | java | AEG-ROUTE-001 |
+| 24da4b8f6252 | crs | 944300-11 | java | AEG-ROUTE-001 |
+| 31e05213aa52 | crs | 944300-111 | java | AEG-ROUTE-001 |
+| 443c600546d1 | crs | 944300-112 | java | AEG-ROUTE-001 |
+| 82ec3ae78ac5 | crs | 944300-113 | java | AEG-ROUTE-001 |
+| c0ea488befe3 | crs | 944300-114 | java | AEG-ROUTE-001 |
+| 330033ac056a | crs | 944300-115 | java | AEG-ROUTE-001 |
+| c6287171bb87 | crs | 944300-12 | java | AEG-ROUTE-001 |
+| 6cab7d07a9ce | crs | 944300-121 | java | AEG-ROUTE-001 |
+| a9926b0c0dad | crs | 944300-122 | java | AEG-ROUTE-001 |
+| c9241f301b1c | crs | 944300-124 | java | AEG-ROUTE-001 |
+| 390fdcdda9f2 | crs | 944300-125 | java | AEG-ROUTE-001 |
+| 8eb4aac1976b | crs | 944300-126 | java | AEG-ROUTE-001 |
+| cc38a983bba3 | crs | 944300-13 | java | AEG-ROUTE-001 |
+| 5f581857f3bd | crs | 944300-134 | java | AEG-ROUTE-001 |
+| a699c7f22ee5 | crs | 944300-142 | java | AEG-ROUTE-001 |
+| 1916408239bf | crs | 944300-144 | java | AEG-ROUTE-001 |
+| 0b5d4557d7c1 | crs | 944300-146 | java | AEG-ROUTE-001 |
+| d662b435fc10 | crs | 944300-148 | java | AEG-ROUTE-001 |
+| 0487d527ed10 | crs | 944300-15 | java | AEG-ROUTE-001 |
+| f58944d0c17c | crs | 944300-153 | java | AEG-ROUTE-001 |
+| 9ae022e3850d | crs | 944300-155 | java | AEG-ROUTE-001 |
+| 24e3802b2d7e | crs | 944300-156 | java | AEG-ROUTE-001 |
+| aef94e3fe723 | crs | 944300-157 | java | AEG-ROUTE-001 |
+| 14dbbdcafc83 | crs | 944300-158 | java | AEG-ROUTE-001 |
+| 29d1e835217e | crs | 944300-159 | java | AEG-ROUTE-001 |
+| 5bacdee0dc1e | crs | 944300-16 | java | AEG-ROUTE-001 |
+| dc5f2c51ac0f | crs | 944300-164 | java | AEG-ROUTE-001 |
+| 84c5eae78c79 | crs | 944300-165 | java | AEG-ROUTE-001 |
+| 5bc5352bc5ca | crs | 944300-166 | java | AEG-ROUTE-001 |
+| 5fd61677770b | crs | 944300-168 | java | AEG-ROUTE-001 |
+| 9dbd1de1c4cb | crs | 944300-169 | java | AEG-ROUTE-001 |
+| c76115472b74 | crs | 944300-170 | java | AEG-ROUTE-001 |
+| acc2fca92289 | crs | 944300-175 | java | AEG-ROUTE-001 |
+| 815f095f1c3c | crs | 944300-176 | java | AEG-ROUTE-001 |
+| 8fe05a8c3851 | crs | 944300-177 | java | AEG-ROUTE-001 |
+| 490671786b81 | crs | 944300-178 | java | AEG-ROUTE-001 |
+| fce486c241d0 | crs | 944300-179 | java | AEG-ROUTE-001 |
+| 6ba17c3bd440 | crs | 944300-180 | java | AEG-ROUTE-001 |
+| 62fabdecccaa | crs | 944300-181 | java | AEG-ROUTE-001 |
+| 0662cc8782be | crs | 944300-188 | java | AEG-ROUTE-001 |
+| b3bcf7d27a2a | crs | 944300-190 | java | AEG-ROUTE-001 |
+| 561e009e0459 | crs | 944300-192 | java | AEG-ROUTE-001 |
+| 11621cc60e12 | crs | 944300-197 | java | AEG-ROUTE-001 |
+| 4bab83ea95a6 | crs | 944300-198 | java | AEG-ROUTE-001 |
+| d93263b324a9 | crs | 944300-2 | java | AEG-ROUTE-001 |
+| d1204d6e6c09 | crs | 944300-208 | java | AEG-ROUTE-001 |
+| be946db523d0 | crs | 944300-209 | java | AEG-ROUTE-001 |
+| 099f647bf1d0 | crs | 944300-21 | java | AEG-ROUTE-001 |
+| 0d9b2f246cdf | crs | 944300-210 | java | AEG-ROUTE-001 |
+| 4dadf3b80382 | crs | 944300-212 | java | AEG-ROUTE-001 |
+| f9d5055d6312 | crs | 944300-213 | java | AEG-ROUTE-001 |
+| c8328c245225 | crs | 944300-214 | java | AEG-ROUTE-001 |
+| 930a376208df | crs | 944300-22 | java | AEG-ROUTE-001 |
+| 515c5a80a768 | crs | 944300-220 | java | AEG-ROUTE-001 |
+| 9da1a5e27352 | crs | 944300-221 | java | AEG-ROUTE-001 |
+| e025b29b4942 | crs | 944300-222 | java | AEG-ROUTE-001 |
+| 9f3db3ccdf13 | crs | 944300-223 | java | AEG-ROUTE-001 |
+| ac5e26188c91 | crs | 944300-224 | java | AEG-ROUTE-001 |
+| dcb0fdd63c75 | crs | 944300-225 | java | AEG-ROUTE-001 |
+| 4d638b605c1f | crs | 944300-231 | java | AEG-ROUTE-001 |
+| 19cdfde59746 | crs | 944300-232 | java | AEG-ROUTE-001 |
+| 8eaf5ade5e66 | crs | 944300-233 | java | AEG-ROUTE-001 |
+| 250fd81fd342 | crs | 944300-234 | java | AEG-ROUTE-001 |
+| e4d77daccf84 | crs | 944300-236 | java | AEG-ROUTE-001 |
+| a0e8d826faa6 | crs | 944300-24 | java | AEG-ROUTE-001 |
+| ed5a0b740e4a | crs | 944300-242 | java | AEG-ROUTE-001 |
+| 7dbf139ed65f | crs | 944300-243 | java | AEG-ROUTE-001 |
+| 2f524b630054 | crs | 944300-244 | java | AEG-ROUTE-001 |
+| 85f96deb5b7e | crs | 944300-245 | java | AEG-ROUTE-001 |
+| 201f7d883036 | crs | 944300-247 | java | AEG-ROUTE-001 |
+| f9b2f9786f1b | crs | 944300-25 | java | AEG-ROUTE-001 |
+| 55e85cdc7f53 | crs | 944300-252 | java | AEG-ROUTE-001 |
+| 5365dd95b5fa | crs | 944300-253 | java | AEG-ROUTE-001 |
+| 5c572891d83d | crs | 944300-255 | java | AEG-ROUTE-001 |
+| c7c3030b6b38 | crs | 944300-26 | java | AEG-ROUTE-001 |
+| 19dcec4fe0b7 | crs | 944300-263 | java | AEG-ROUTE-001 |
+| a30727db1934 | crs | 944300-264 | java | AEG-ROUTE-001 |
+| 4b94c3c83b73 | crs | 944300-265 | java | AEG-ROUTE-001 |
+| 29c0f4bd4e9a | crs | 944300-267 | java | AEG-ROUTE-001 |
+| 255b74dfd477 | crs | 944300-268 | java | AEG-ROUTE-001 |
+| fb36c23dd92f | crs | 944300-269 | java | AEG-ROUTE-001 |
+| 9bbd8ba4472e | crs | 944300-27 | java | AEG-ROUTE-001 |
+| ea527c159fc2 | crs | 944300-274 | java | AEG-ROUTE-001 |
+| 96fb2a4dbd7e | crs | 944300-275 | java | AEG-ROUTE-001 |
+| d306fc09ef21 | crs | 944300-276 | java | AEG-ROUTE-001 |
+| 9cdcbeee4d78 | crs | 944300-277 | java | AEG-ROUTE-001 |
+| f9c5d14378fd | crs | 944300-278 | java | AEG-ROUTE-001 |
+| 5e896411c29c | crs | 944300-279 | java | AEG-ROUTE-001 |
+| 180bfbccb947 | crs | 944300-280 | java | AEG-ROUTE-001 |
+| 739b4bc9e722 | crs | 944300-285 | java | AEG-ROUTE-001 |
+| 08c3e5464088 | crs | 944300-286 | java | AEG-ROUTE-001 |
+| f2654523c672 | crs | 944300-287 | java | AEG-ROUTE-001 |
+| a7cdc177fdd0 | crs | 944300-288 | java | AEG-ROUTE-001 |
+| c3db9733f8e7 | crs | 944300-289 | java | AEG-ROUTE-001 |
+| 7f3f20eadce5 | crs | 944300-291 | java | AEG-ROUTE-001 |
+| cb946ae7c79d | crs | 944300-296 | java | AEG-ROUTE-001 |
+| 18e8d029fb3a | crs | 944300-297 | java | AEG-ROUTE-001 |
+| d96de5b7ec6b | crs | 944300-298 | java | AEG-ROUTE-001 |
+| eb80fe951dce | crs | 944300-299 | java | AEG-ROUTE-001 |
+| c67e6e937111 | crs | 944300-300 | java | AEG-ROUTE-001 |
+| 5381192bb8b5 | crs | 944300-302 | java | AEG-ROUTE-001 |
+| ddc51b9bc7b1 | crs | 944300-307 | java | AEG-ROUTE-001 |
+| 0eec8650ad90 | crs | 944300-308 | java | AEG-ROUTE-001 |
+| 04e47b37ff8b | crs | 944300-309 | java | AEG-ROUTE-001 |
+| 3afc3f55720d | crs | 944300-310 | java | AEG-ROUTE-001 |
+| 4e197dc2af0e | crs | 944300-311 | java | AEG-ROUTE-001 |
+| 408139b19d81 | crs | 944300-312 | java | AEG-ROUTE-001 |
+| ff8347ba3d1a | crs | 944300-313 | java | AEG-ROUTE-001 |
+| 31f9b78fb229 | crs | 944300-318 | java | AEG-ROUTE-001 |
+| dc65af3b67c5 | crs | 944300-32 | java | AEG-ROUTE-001 |
+| 55a58415c5dd | crs | 944300-320 | java | AEG-ROUTE-001 |
+| 63e0f3df7d99 | crs | 944300-321 | java | AEG-ROUTE-001 |
+| 3d3b8c2f5eef | crs | 944300-322 | java | AEG-ROUTE-001 |
+| d56581f6617b | crs | 944300-323 | java | AEG-ROUTE-001 |
+| e6fd798649d0 | crs | 944300-324 | java | AEG-ROUTE-001 |
+| 96feb7bcafd6 | crs | 944300-329 | java | AEG-ROUTE-001 |
+| 2835a906dc3c | crs | 944300-33 | java | AEG-ROUTE-001 |
+| 133f53e46034 | crs | 944300-330 | java | AEG-ROUTE-001 |
+| 8b7d3eba1489 | crs | 944300-34 | java | AEG-ROUTE-001 |
+| 9dfb9e484dd3 | crs | 944300-35 | java | AEG-ROUTE-001 |
+| cb0d35025633 | crs | 944300-36 | java | AEG-ROUTE-001 |
+| 6509f2b50ff7 | crs | 944300-37 | java | AEG-ROUTE-001 |
+| 9239f6d2906e | crs | 944300-38 | java | AEG-ROUTE-001 |
+| 7c9a362a7b17 | crs | 944300-4 | java | AEG-ROUTE-001 |
+| 98de40da7b10 | crs | 944300-44 | java | AEG-ROUTE-001 |
+| 4a361d33aebf | crs | 944300-45 | java | AEG-ROUTE-001 |
+| 98b7b681a578 | crs | 944300-47 | java | AEG-ROUTE-001 |
+| 8c190923f12c | crs | 944300-48 | java | AEG-ROUTE-001 |
+| 845bbe3efcbd | crs | 944300-49 | java | AEG-ROUTE-001 |
+| f058e25743bd | crs | 944300-54 | java | AEG-ROUTE-001 |
+| 89d607001170 | crs | 944300-55 | java | AEG-ROUTE-001 |
+| af49be4c0ce9 | crs | 944300-57 | java | AEG-ROUTE-001 |
+| f7f929591268 | crs | 944300-59 | java | AEG-ROUTE-001 |
+| c80ec50f4bd3 | crs | 944300-66 | java | AEG-ROUTE-001 |
+| da3fbf19916f | crs | 944300-67 | java | AEG-ROUTE-001 |
+| f4b32a5353f6 | crs | 944300-68 | java | AEG-ROUTE-001 |
+| 156866b3cbdd | crs | 944300-69 | java | AEG-ROUTE-001 |
+| 51a63131b7dc | crs | 944300-70 | java | AEG-ROUTE-001 |
+| eeb1f14ac179 | crs | 944300-71 | java | AEG-ROUTE-001 |
+| c70f78234daf | crs | 944300-76 | java | AEG-ROUTE-001 |
+| 0294ca97298e | crs | 944300-78 | java | AEG-ROUTE-001 |
+| 7333ed378752 | crs | 944300-79 | java | AEG-ROUTE-001 |
+| 5527f0377e00 | crs | 944300-80 | java | AEG-ROUTE-001 |
+| 1a1c943211bd | crs | 944300-81 | java | AEG-ROUTE-001 |
+| c229810535f1 | crs | 944300-82 | java | AEG-ROUTE-001 |
+| 4c9d333cf985 | crs | 944300-87 | java | AEG-ROUTE-001 |
+| 7e305c710c75 | crs | 944300-89 | java | AEG-ROUTE-001 |
+| 292c64f6580c | crs | 944300-90 | java | AEG-ROUTE-001 |
+| c5f325a89d86 | crs | 944300-91 | java | AEG-ROUTE-001 |
+| d3f830d03af4 | crs | 944300-92 | java | AEG-ROUTE-001 |
+| 88228999c140 | crs | 944300-93 | java | AEG-ROUTE-001 |
+| d0525feb17f0 | crs | 944300-99 | java | AEG-ROUTE-001 |
+| 57c0f123df96 | gotestwaf | community/community-lfi-multipart/1/Plain/RawRequest | lfi | AEG-ROUTE-001 |
+| 6c73e6e0d223 | gotestwaf | community/community-lfi-multipart/2/Plain/RawRequest | lfi | AEG-ROUTE-001 |
+| 27ba90e00fec | gotestwaf | community/community-lfi/1/URL/HTMLForm | lfi | AEG-ROUTE-001 |
+| 2ca6cfede404 | gotestwaf | community/community-lfi/1/URL/HTMLMultipartForm | lfi | AEG-ROUTE-001 |
+| 58f4ee625c94 | gotestwaf | community/community-lfi/1/URL/JSONRequest | lfi | AEG-ROUTE-001 |
+| f1aa93c3c86d | gotestwaf | community/community-lfi/1/URL/URLParam | lfi | AEG-ROUTE-001 |
+| 2ed583599458 | gotestwaf | community/community-user-agent/1/Plain/UserAgent | community-user-agent | AEG-ROUTE-001 |
+| 04a101909dd0 | gotestwaf | community/community-user-agent/3/Plain/UserAgent | community-user-agent | AEG-ROUTE-001 |
+| b478a416c65a | gotestwaf | community/community-user-agent/5/Plain/UserAgent | community-user-agent | AEG-ROUTE-001 |
+| 43a4cae2a88c | gotestwaf | community/community-xss/1/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 6f1c04da1e6d | gotestwaf | community/community-xss/1/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 0dc3167c0c2d | gotestwaf | community/community-xss/1/URL/JSONRequest | xss | AEG-ROUTE-001 |
+| 6d24357dd797 | gotestwaf | community/community-xss/1/URL/URLParam | xss | AEG-ROUTE-001 |
+| dcfa9a51de63 | gotestwaf | community/community-xss/12/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 103b0041a7e4 | gotestwaf | community/community-xss/12/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 0042a1cb3c98 | gotestwaf | community/community-xss/12/URL/JSONRequest | xss | AEG-ROUTE-001 |
+| 4c23ba7c677e | gotestwaf | community/community-xss/12/URL/URLParam | xss | AEG-ROUTE-001 |
+| 4398d903791b | gotestwaf | community/community-xss/15/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 539154769cd5 | gotestwaf | community/community-xss/15/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| bef05e2f7d44 | gotestwaf | community/community-xss/15/URL/JSONRequest | xss | AEG-ROUTE-001 |
+| e05c32585b7a | gotestwaf | community/community-xss/15/URL/URLParam | xss | AEG-ROUTE-001 |
+| d743849c90ef | gotestwaf | community/community-xss/19/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 5ffbd975027e | gotestwaf | community/community-xss/19/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 019bd27a95e6 | gotestwaf | community/community-xss/19/URL/JSONRequest | xss | AEG-ROUTE-001 |
+| ba3e1677b501 | gotestwaf | community/community-xss/19/URL/URLParam | xss | AEG-ROUTE-001 |
+| 59ccf80d743a | gotestwaf | community/community-xss/20/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| ad6dd910720a | gotestwaf | community/community-xss/20/URL/JSONRequest | xss | AEG-ROUTE-001 |
+| f5d5ca79850f | gotestwaf | community/community-xss/3/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| c001a1d44862 | gotestwaf | community/community-xss/3/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 028b785d7ee2 | gotestwaf | community/community-xss/3/URL/JSONRequest | xss | AEG-ROUTE-001 |
+| 601b0fbb722a | gotestwaf | community/community-xss/3/URL/URLParam | xss | AEG-ROUTE-001 |
+| a632c78b7fd9 | gotestwaf | owasp-api/rest/5/Plain/JSONRequest | rest | AEG-ROUTE-001 |
+| e824a015bd60 | gotestwaf | owasp-api/rest/7/Plain/JSONRequest | rest | AEG-ROUTE-001 |
+| d24c11adbd91 | gotestwaf | owasp/crlf/7/Plain/URLPath | crlf | AEG-ROUTE-001 |
+| 9ca8e6b9936a | gotestwaf | owasp/ldap-injection/2/Base64Flat/HTMLForm | ldap-injection | AEG-ROUTE-001 |
+| 4efa5e70c0a9 | gotestwaf | owasp/ldap-injection/2/Base64Flat/HTMLMultipartForm | ldap-injection | AEG-ROUTE-001 |
+| f02b241027a5 | gotestwaf | owasp/ldap-injection/2/Base64Flat/JSONRequest | ldap-injection | AEG-ROUTE-001 |
+| c3b4bc87c35a | gotestwaf | owasp/ldap-injection/2/Base64Flat/URLParam | ldap-injection | AEG-ROUTE-001 |
+| f0b3a6e5a366 | gotestwaf | owasp/ldap-injection/2/URL/HTMLForm | ldap-injection | AEG-ROUTE-001 |
+| 5630009b80c2 | gotestwaf | owasp/ldap-injection/2/URL/HTMLMultipartForm | ldap-injection | AEG-ROUTE-001 |
+| 2f4891b60d6f | gotestwaf | owasp/ldap-injection/2/URL/JSONRequest | ldap-injection | AEG-ROUTE-001 |
+| 7916fb8429c9 | gotestwaf | owasp/ldap-injection/2/URL/URLParam | ldap-injection | AEG-ROUTE-001 |
+| 5cebd4be695f | gotestwaf | owasp/ldap-injection/3/Base64Flat/HTMLForm | ldap-injection | AEG-ROUTE-001 |
+| f96d8448773f | gotestwaf | owasp/ldap-injection/3/Base64Flat/HTMLMultipartForm | ldap-injection | AEG-ROUTE-001 |
+| 449a8776dba4 | gotestwaf | owasp/ldap-injection/3/Base64Flat/JSONRequest | ldap-injection | AEG-ROUTE-001 |
+| c3ea413dab9c | gotestwaf | owasp/ldap-injection/3/Base64Flat/URLParam | ldap-injection | AEG-ROUTE-001 |
+| 5dcdac0d794e | gotestwaf | owasp/ldap-injection/3/URL/HTMLForm | ldap-injection | AEG-ROUTE-001 |
+| b76f230c6f23 | gotestwaf | owasp/ldap-injection/3/URL/HTMLMultipartForm | ldap-injection | AEG-ROUTE-001 |
+| fa5240a9461d | gotestwaf | owasp/ldap-injection/3/URL/JSONRequest | ldap-injection | AEG-ROUTE-001 |
+| 4f21a78920a7 | gotestwaf | owasp/ldap-injection/3/URL/URLParam | ldap-injection | AEG-ROUTE-001 |
+| dfa32d59d4f5 | gotestwaf | owasp/mail-injection/2/Base64Flat/HTMLForm | mail-injection | AEG-ROUTE-001 |
+| f841ab9b6081 | gotestwaf | owasp/mail-injection/2/Base64Flat/HTMLMultipartForm | mail-injection | AEG-ROUTE-001 |
+| edaec59fe29e | gotestwaf | owasp/mail-injection/2/Base64Flat/URLParam | mail-injection | AEG-ROUTE-001 |
+| 1cb5aaeda9cf | gotestwaf | owasp/mail-injection/2/Base64Flat/URLPath | mail-injection | AEG-ROUTE-001 |
+| ecb5aae36d54 | gotestwaf | owasp/mail-injection/2/URL/HTMLForm | mail-injection | AEG-ROUTE-001 |
+| dc066ec40b68 | gotestwaf | owasp/mail-injection/2/URL/HTMLMultipartForm | mail-injection | AEG-ROUTE-001 |
+| 2b21c0364a18 | gotestwaf | owasp/mail-injection/2/URL/URLParam | mail-injection | AEG-ROUTE-001 |
+| da8819a99c02 | gotestwaf | owasp/mail-injection/3/Base64Flat/HTMLForm | mail-injection | AEG-ROUTE-001 |
+| 45b7c4bb7dc5 | gotestwaf | owasp/mail-injection/3/Base64Flat/HTMLMultipartForm | mail-injection | AEG-ROUTE-001 |
+| a30c3b73ccfd | gotestwaf | owasp/mail-injection/3/Base64Flat/URLParam | mail-injection | AEG-ROUTE-001 |
+| 0f37f8fe216d | gotestwaf | owasp/mail-injection/3/Base64Flat/URLPath | mail-injection | AEG-ROUTE-001 |
+| cf5e05289ea8 | gotestwaf | owasp/mail-injection/3/URL/HTMLForm | mail-injection | AEG-ROUTE-001 |
+| 3b3973fcee13 | gotestwaf | owasp/mail-injection/3/URL/HTMLMultipartForm | mail-injection | AEG-ROUTE-001 |
+| 0993a17dbdbf | gotestwaf | owasp/mail-injection/3/URL/URLParam | mail-injection | AEG-ROUTE-001 |
+| fa19d03e34f7 | gotestwaf | owasp/nosql-injection/1/Base64Flat/HTMLForm | nosqli | AEG-ROUTE-001 |
+| 22ac8d67c4b0 | gotestwaf | owasp/nosql-injection/1/Base64Flat/HTMLMultipartForm | nosqli | AEG-ROUTE-001 |
+| 2bb3d41ccd6d | gotestwaf | owasp/nosql-injection/1/Base64Flat/JSONRequest | nosqli | AEG-ROUTE-001 |
+| 5fdc4333cbc1 | gotestwaf | owasp/nosql-injection/1/Base64Flat/URLParam | nosqli | AEG-ROUTE-001 |
+| a445b6d58273 | gotestwaf | owasp/nosql-injection/1/Base64Flat/URLPath | nosqli | AEG-ROUTE-001 |
+| 18166cfaa213 | gotestwaf | owasp/nosql-injection/1/URL/HTMLForm | nosqli | AEG-ROUTE-001 |
+| b18680c752d1 | gotestwaf | owasp/nosql-injection/1/URL/HTMLMultipartForm | nosqli | AEG-ROUTE-001 |
+| 11f4c3727984 | gotestwaf | owasp/nosql-injection/1/URL/JSONRequest | nosqli | AEG-ROUTE-001 |
+| 15861cd6a4eb | gotestwaf | owasp/nosql-injection/1/URL/URLParam | nosqli | AEG-ROUTE-001 |
+| 235da42ca647 | gotestwaf | owasp/nosql-injection/1/URL/URLPath | nosqli | AEG-ROUTE-001 |
+| 2bf34e55794b | gotestwaf | owasp/nosql-injection/4/Base64Flat/HTMLForm | nosqli | AEG-ROUTE-001 |
+| 68669c4cbb43 | gotestwaf | owasp/nosql-injection/4/Base64Flat/HTMLMultipartForm | nosqli | AEG-ROUTE-001 |
+| b712bacd8155 | gotestwaf | owasp/nosql-injection/4/Base64Flat/JSONRequest | nosqli | AEG-ROUTE-001 |
+| 7913e1e16e01 | gotestwaf | owasp/nosql-injection/4/Base64Flat/URLParam | nosqli | AEG-ROUTE-001 |
+| 2c3ac12a80f7 | gotestwaf | owasp/nosql-injection/4/Base64Flat/URLPath | nosqli | AEG-ROUTE-001 |
+| f32cb5844252 | gotestwaf | owasp/nosql-injection/4/URL/HTMLForm | nosqli | AEG-ROUTE-001 |
+| fbea429c0da1 | gotestwaf | owasp/nosql-injection/4/URL/HTMLMultipartForm | nosqli | AEG-ROUTE-001 |
+| bf6794408bcf | gotestwaf | owasp/nosql-injection/4/URL/JSONRequest | nosqli | AEG-ROUTE-001 |
+| dfbc16bbc334 | gotestwaf | owasp/nosql-injection/4/URL/URLParam | nosqli | AEG-ROUTE-001 |
+| 5fb3bff23f73 | gotestwaf | owasp/nosql-injection/4/URL/URLPath | nosqli | AEG-ROUTE-001 |
+| 8e84b6d9d5bb | gotestwaf | owasp/nosql-injection/5/Base64Flat/HTMLForm | nosqli | AEG-ROUTE-001 |
+| b75b3afe93e6 | gotestwaf | owasp/nosql-injection/5/Base64Flat/HTMLMultipartForm | nosqli | AEG-ROUTE-001 |
+| 698e480b3ca1 | gotestwaf | owasp/nosql-injection/5/Base64Flat/JSONRequest | nosqli | AEG-ROUTE-001 |
+| 99aa1ee3b782 | gotestwaf | owasp/nosql-injection/5/Base64Flat/URLParam | nosqli | AEG-ROUTE-001 |
+| 14687c366772 | gotestwaf | owasp/nosql-injection/5/Base64Flat/URLPath | nosqli | AEG-ROUTE-001 |
+| 5ce22d9856f5 | gotestwaf | owasp/nosql-injection/5/URL/HTMLForm | nosqli | AEG-ROUTE-001 |
+| 941248192eca | gotestwaf | owasp/nosql-injection/5/URL/HTMLMultipartForm | nosqli | AEG-ROUTE-001 |
+| f68da9dbeada | gotestwaf | owasp/nosql-injection/5/URL/JSONRequest | nosqli | AEG-ROUTE-001 |
+| f846f6e92ecb | gotestwaf | owasp/nosql-injection/5/URL/URLParam | nosqli | AEG-ROUTE-001 |
+| b2f2e41b0bd2 | gotestwaf | owasp/nosql-injection/5/URL/URLPath | nosqli | AEG-ROUTE-001 |
+| 149aa63e0344 | gotestwaf | owasp/path-traversal/1/Base64Flat/HTMLForm | lfi | AEG-ROUTE-001 |
+| 55fbdb090369 | gotestwaf | owasp/path-traversal/1/Base64Flat/HTMLMultipartForm | lfi | AEG-ROUTE-001 |
+| 0fb9adefcc70 | gotestwaf | owasp/path-traversal/1/Base64Flat/JSONRequest | lfi | AEG-ROUTE-001 |
+| e03316ca5efd | gotestwaf | owasp/path-traversal/1/Base64Flat/URLParam | lfi | AEG-ROUTE-001 |
+| 26f8cadafba4 | gotestwaf | owasp/path-traversal/1/Base64Flat/URLPath | lfi | AEG-ROUTE-001 |
+| 100bae8e312c | gotestwaf | owasp/path-traversal/2/Base64Flat/HTMLForm | lfi | AEG-ROUTE-001 |
+| c48ed202aae6 | gotestwaf | owasp/path-traversal/2/Base64Flat/HTMLMultipartForm | lfi | AEG-ROUTE-001 |
+| 8d75d601b7c6 | gotestwaf | owasp/path-traversal/2/Base64Flat/JSONRequest | lfi | AEG-ROUTE-001 |
+| 61167de53bfb | gotestwaf | owasp/path-traversal/2/Base64Flat/URLParam | lfi | AEG-ROUTE-001 |
+| 9cb620629101 | gotestwaf | owasp/path-traversal/2/Base64Flat/URLPath | lfi | AEG-ROUTE-001 |
+| 7e829cdaf6db | gotestwaf | owasp/path-traversal/2/URL/HTMLForm | lfi | AEG-ROUTE-001 |
+| d0c4d90baa38 | gotestwaf | owasp/path-traversal/2/URL/HTMLMultipartForm | lfi | AEG-ROUTE-001 |
+| df62d58e6007 | gotestwaf | owasp/path-traversal/2/URL/JSONRequest | lfi | AEG-ROUTE-001 |
+| 189f38bf365b | gotestwaf | owasp/path-traversal/2/URL/URLParam | lfi | AEG-ROUTE-001 |
+| 289d42a52037 | gotestwaf | owasp/path-traversal/2/URL/URLPath | lfi | AEG-ROUTE-001 |
+| 5150aae48ce9 | gotestwaf | owasp/rce-urlparam/1/URL/HTMLForm | rce | AEG-ROUTE-001 |
+| 7a0d1eb5a9b3 | gotestwaf | owasp/rce-urlparam/1/URL/HTMLMultipartForm | rce | AEG-ROUTE-001 |
+| 0a8696299f4a | gotestwaf | owasp/rce-urlparam/1/URL/URLParam | rce | AEG-ROUTE-001 |
+| abcfaa50a985 | gotestwaf | owasp/rce-urlparam/2/URL/HTMLForm | rce | AEG-ROUTE-001 |
+| 6b2dd1812214 | gotestwaf | owasp/rce-urlparam/2/URL/HTMLMultipartForm | rce | AEG-ROUTE-001 |
+| 2a78c383b683 | gotestwaf | owasp/rce-urlparam/2/URL/URLParam | rce | AEG-ROUTE-001 |
+| f3d05218ee01 | gotestwaf | owasp/rce/2/Plain/Header | rce | AEG-ROUTE-001 |
+| 6f5ebc64d280 | gotestwaf | owasp/rce/3/Plain/Header | rce | AEG-ROUTE-001 |
+| 3099c7624f56 | gotestwaf | owasp/shell-injection/1/Base64Flat/HTMLForm | cmdi | AEG-ROUTE-001 |
+| d6caf9606991 | gotestwaf | owasp/shell-injection/1/Base64Flat/HTMLMultipartForm | cmdi | AEG-ROUTE-001 |
+| a7e903ca3d42 | gotestwaf | owasp/shell-injection/1/Base64Flat/JSONRequest | cmdi | AEG-ROUTE-001 |
+| 4dca46284782 | gotestwaf | owasp/shell-injection/1/Base64Flat/URLParam | cmdi | AEG-ROUTE-001 |
+| 661bbaf52b39 | gotestwaf | owasp/sql-injection/1/Base64Flat/HTMLForm | sqli | AEG-ROUTE-001 |
+| 0583301fed13 | gotestwaf | owasp/sql-injection/1/Base64Flat/HTMLMultipartForm | sqli | AEG-ROUTE-001 |
+| db6f80ad17c6 | gotestwaf | owasp/sql-injection/1/Base64Flat/Header | sqli | AEG-ROUTE-001 |
+| cabc2c303179 | gotestwaf | owasp/sql-injection/1/Base64Flat/JSONRequest | sqli | AEG-ROUTE-001 |
+| 7f683d125904 | gotestwaf | owasp/sql-injection/1/Base64Flat/URLParam | sqli | AEG-ROUTE-001 |
+| dbd5710e3163 | gotestwaf | owasp/sql-injection/1/Base64Flat/URLPath | sqli | AEG-ROUTE-001 |
+| 928120f9029a | gotestwaf | owasp/sql-injection/1/URL/Header | sqli | AEG-ROUTE-001 |
+| a01aaa0d5647 | gotestwaf | owasp/sql-injection/2/Base64Flat/HTMLForm | sqli | AEG-ROUTE-001 |
+| 2b2162ab26f8 | gotestwaf | owasp/sql-injection/2/Base64Flat/HTMLMultipartForm | sqli | AEG-ROUTE-001 |
+| e685c858bd30 | gotestwaf | owasp/sql-injection/2/Base64Flat/Header | sqli | AEG-ROUTE-001 |
+| d93f875d01a1 | gotestwaf | owasp/sql-injection/2/Base64Flat/JSONRequest | sqli | AEG-ROUTE-001 |
+| f4128395ac97 | gotestwaf | owasp/sql-injection/2/Base64Flat/URLParam | sqli | AEG-ROUTE-001 |
+| 5fee6f203875 | gotestwaf | owasp/sql-injection/2/Base64Flat/URLPath | sqli | AEG-ROUTE-001 |
+| 1e3407db4817 | gotestwaf | owasp/sql-injection/2/URL/Header | sqli | AEG-ROUTE-001 |
+| 016e5b740d9d | gotestwaf | owasp/sql-injection/3/Base64Flat/HTMLForm | sqli | AEG-ROUTE-001 |
+| 0b28fc44d420 | gotestwaf | owasp/sql-injection/3/Base64Flat/HTMLMultipartForm | sqli | AEG-ROUTE-001 |
+| 43cd95dfd5c8 | gotestwaf | owasp/sql-injection/3/Base64Flat/Header | sqli | AEG-ROUTE-001 |
+| 749e37e8a636 | gotestwaf | owasp/sql-injection/3/Base64Flat/JSONRequest | sqli | AEG-ROUTE-001 |
+| ba202e6e7a5a | gotestwaf | owasp/sql-injection/3/Base64Flat/URLParam | sqli | AEG-ROUTE-001 |
+| ed6df62778fb | gotestwaf | owasp/sql-injection/3/Base64Flat/URLPath | sqli | AEG-ROUTE-001 |
+| ecc19c6c6220 | gotestwaf | owasp/sql-injection/3/URL/HTMLForm | sqli | AEG-ROUTE-001 |
+| c5a41de57396 | gotestwaf | owasp/sql-injection/3/URL/HTMLMultipartForm | sqli | AEG-ROUTE-001 |
+| cf85d322f8a4 | gotestwaf | owasp/sql-injection/3/URL/Header | sqli | AEG-ROUTE-001 |
+| 0d44d5569e47 | gotestwaf | owasp/sql-injection/3/URL/JSONRequest | sqli | AEG-ROUTE-001 |
+| 7e58301d5344 | gotestwaf | owasp/sql-injection/3/URL/URLParam | sqli | AEG-ROUTE-001 |
+| 7c07fe836aaf | gotestwaf | owasp/sql-injection/3/URL/URLPath | sqli | AEG-ROUTE-001 |
+| 473cbedc2aaa | gotestwaf | owasp/ss-include/2/Base64Flat/HTMLForm | ss-include | AEG-ROUTE-001 |
+| 020b5afb7385 | gotestwaf | owasp/ss-include/2/Base64Flat/HTMLMultipartForm | ss-include | AEG-ROUTE-001 |
+| 406716fe1e7f | gotestwaf | owasp/ss-include/2/Base64Flat/URLParam | ss-include | AEG-ROUTE-001 |
+| b66e40ce40e2 | gotestwaf | owasp/ss-include/2/Base64Flat/URLPath | ss-include | AEG-ROUTE-001 |
+| 47c545f526dc | gotestwaf | owasp/ss-include/3/Base64Flat/HTMLForm | ss-include | AEG-ROUTE-001 |
+| dbcadf374759 | gotestwaf | owasp/ss-include/3/Base64Flat/HTMLMultipartForm | ss-include | AEG-ROUTE-001 |
+| 24d74b3137b6 | gotestwaf | owasp/ss-include/3/Base64Flat/URLParam | ss-include | AEG-ROUTE-001 |
+| e3376c636938 | gotestwaf | owasp/ss-include/3/Base64Flat/URLPath | ss-include | AEG-ROUTE-001 |
+| 8bbea1329efb | gotestwaf | owasp/sst-injection/1/Base64Flat/HTMLForm | ssti | AEG-ROUTE-001 |
+| 6f9043a0e4a0 | gotestwaf | owasp/sst-injection/1/Base64Flat/HTMLMultipartForm | ssti | AEG-ROUTE-001 |
+| d1ae9f8b7845 | gotestwaf | owasp/sst-injection/1/Base64Flat/URLParam | ssti | AEG-ROUTE-001 |
+| 1c9495adf6e2 | gotestwaf | owasp/sst-injection/1/Base64Flat/URLPath | ssti | AEG-ROUTE-001 |
+| c23ba06d8085 | gotestwaf | owasp/sst-injection/2/Base64Flat/HTMLForm | ssti | AEG-ROUTE-001 |
+| 5131a2d933a1 | gotestwaf | owasp/sst-injection/2/Base64Flat/HTMLMultipartForm | ssti | AEG-ROUTE-001 |
+| 9eb192ab31a8 | gotestwaf | owasp/sst-injection/2/Base64Flat/URLParam | ssti | AEG-ROUTE-001 |
+| b64b2249574e | gotestwaf | owasp/sst-injection/2/Base64Flat/URLPath | ssti | AEG-ROUTE-001 |
+| 719155e8369c | gotestwaf | owasp/sst-injection/3/Base64Flat/HTMLForm | ssti | AEG-ROUTE-001 |
+| 2cf7cb62a9bd | gotestwaf | owasp/sst-injection/3/Base64Flat/HTMLMultipartForm | ssti | AEG-ROUTE-001 |
+| 6d198fc31e6e | gotestwaf | owasp/sst-injection/3/Base64Flat/URLParam | ssti | AEG-ROUTE-001 |
+| a6f543f75785 | gotestwaf | owasp/sst-injection/3/Base64Flat/URLPath | ssti | AEG-ROUTE-001 |
+| 2a0cb9f6ba7e | gotestwaf | owasp/xss-scripting/11/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 80d87c56bfe6 | gotestwaf | owasp/xss-scripting/11/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| ffeef1050612 | gotestwaf | owasp/xss-scripting/11/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| b934861bc457 | gotestwaf | owasp/xss-scripting/11/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| cfc57e737fb4 | gotestwaf | owasp/xss-scripting/11/URL/URLPath | xss | AEG-ROUTE-001 |
+| d9a05a577c3e | gotestwaf | owasp/xss-scripting/12/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 10bb68b0f3c6 | gotestwaf | owasp/xss-scripting/12/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 046b6167fcfd | gotestwaf | owasp/xss-scripting/12/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 761c3f826cbd | gotestwaf | owasp/xss-scripting/12/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 2cfab367826a | gotestwaf | owasp/xss-scripting/12/URL/URLPath | xss | AEG-ROUTE-001 |
+| 3f04439368f3 | gotestwaf | owasp/xss-scripting/13/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| f9981d50977f | gotestwaf | owasp/xss-scripting/13/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| c0a9d20449b4 | gotestwaf | owasp/xss-scripting/13/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 00d1db48fd29 | gotestwaf | owasp/xss-scripting/13/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| a7edb016df37 | gotestwaf | owasp/xss-scripting/13/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| d9cca3542836 | gotestwaf | owasp/xss-scripting/13/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 40c5eba2ac97 | gotestwaf | owasp/xss-scripting/13/URL/URLParam | xss | AEG-ROUTE-001 |
+| 68d3722a9b10 | gotestwaf | owasp/xss-scripting/13/URL/URLPath | xss | AEG-ROUTE-001 |
+| 5b63c9225b7c | gotestwaf | owasp/xss-scripting/14/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 0796260fa784 | gotestwaf | owasp/xss-scripting/14/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| e48624395dd4 | gotestwaf | owasp/xss-scripting/14/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| cb5421aedd3d | gotestwaf | owasp/xss-scripting/14/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 4485f4d1237d | gotestwaf | owasp/xss-scripting/14/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 7adb8af32f78 | gotestwaf | owasp/xss-scripting/14/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 95bd7fe0508a | gotestwaf | owasp/xss-scripting/14/URL/URLParam | xss | AEG-ROUTE-001 |
+| 5c274e658d10 | gotestwaf | owasp/xss-scripting/14/URL/URLPath | xss | AEG-ROUTE-001 |
+| 11fe77297bbc | gotestwaf | owasp/xss-scripting/15/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 0d76eff9caff | gotestwaf | owasp/xss-scripting/15/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| d0c216a88f9e | gotestwaf | owasp/xss-scripting/15/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| b8c88c667849 | gotestwaf | owasp/xss-scripting/15/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 77faa8579797 | gotestwaf | owasp/xss-scripting/17/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| a5d8624efb7a | gotestwaf | owasp/xss-scripting/17/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 90a17710b111 | gotestwaf | owasp/xss-scripting/17/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 53530d5307ef | gotestwaf | owasp/xss-scripting/17/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 250fcf494277 | gotestwaf | owasp/xss-scripting/18/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| e6070f0e01f3 | gotestwaf | owasp/xss-scripting/18/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 9c802ddf40d8 | gotestwaf | owasp/xss-scripting/18/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 49472fe3fa24 | gotestwaf | owasp/xss-scripting/18/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| aa93d97b418b | gotestwaf | owasp/xss-scripting/19/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 552a17f36e5d | gotestwaf | owasp/xss-scripting/19/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| d2807132fd36 | gotestwaf | owasp/xss-scripting/19/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 154cea6629a1 | gotestwaf | owasp/xss-scripting/19/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| b4f37bde29d7 | gotestwaf | owasp/xss-scripting/20/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 82267c4bcd19 | gotestwaf | owasp/xss-scripting/20/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| c58a3a31b597 | gotestwaf | owasp/xss-scripting/20/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 280f04c74727 | gotestwaf | owasp/xss-scripting/20/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 8c71f46e80f1 | gotestwaf | owasp/xss-scripting/21/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 0b640cc36532 | gotestwaf | owasp/xss-scripting/21/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| c3ee6b7ea582 | gotestwaf | owasp/xss-scripting/21/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| dd4b54bf98ea | gotestwaf | owasp/xss-scripting/21/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| c555f6bad07d | gotestwaf | owasp/xss-scripting/21/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 66d86ebd9c41 | gotestwaf | owasp/xss-scripting/21/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 9bc9363fcb4f | gotestwaf | owasp/xss-scripting/21/URL/URLParam | xss | AEG-ROUTE-001 |
+| eec9da56cb4a | gotestwaf | owasp/xss-scripting/21/URL/URLPath | xss | AEG-ROUTE-001 |
+| 401fb5b25556 | gotestwaf | owasp/xss-scripting/22/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| e2400c8d2ba2 | gotestwaf | owasp/xss-scripting/22/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 33cf7dd90849 | gotestwaf | owasp/xss-scripting/22/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| efb4d5e9e784 | gotestwaf | owasp/xss-scripting/22/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 865b41921434 | gotestwaf | owasp/xss-scripting/22/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 35b38da51bf6 | gotestwaf | owasp/xss-scripting/22/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 9f6830dced7d | gotestwaf | owasp/xss-scripting/22/URL/URLParam | xss | AEG-ROUTE-001 |
+| 7ef29b87fd0f | gotestwaf | owasp/xss-scripting/22/URL/URLPath | xss | AEG-ROUTE-001 |
+| 1f87a8ec8819 | gotestwaf | owasp/xss-scripting/23/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 1bbd76135d96 | gotestwaf | owasp/xss-scripting/23/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| e235338706a9 | gotestwaf | owasp/xss-scripting/23/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| a88e37cde88f | gotestwaf | owasp/xss-scripting/23/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| f4e23df0c2a5 | gotestwaf | owasp/xss-scripting/23/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| a9c9529f9491 | gotestwaf | owasp/xss-scripting/23/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 70b87db9c8c3 | gotestwaf | owasp/xss-scripting/23/URL/URLParam | xss | AEG-ROUTE-001 |
+| e27eb329e072 | gotestwaf | owasp/xss-scripting/23/URL/URLPath | xss | AEG-ROUTE-001 |
+| 83d352c914f4 | gotestwaf | owasp/xss-scripting/24/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 2691df8a468c | gotestwaf | owasp/xss-scripting/24/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 2dc2f70f779c | gotestwaf | owasp/xss-scripting/24/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 1f840b22c880 | gotestwaf | owasp/xss-scripting/24/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 2f7d06ef183d | gotestwaf | owasp/xss-scripting/24/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 9c69a1cf78e2 | gotestwaf | owasp/xss-scripting/24/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| d3a546830660 | gotestwaf | owasp/xss-scripting/24/URL/URLParam | xss | AEG-ROUTE-001 |
+| 98739eb3d51e | gotestwaf | owasp/xss-scripting/24/URL/URLPath | xss | AEG-ROUTE-001 |
+| ed6e5aadce45 | gotestwaf | owasp/xss-scripting/25/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| d7f81004c0eb | gotestwaf | owasp/xss-scripting/25/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 5589239c23f1 | gotestwaf | owasp/xss-scripting/25/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| ef1b799df779 | gotestwaf | owasp/xss-scripting/25/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| f975b4800319 | gotestwaf | owasp/xss-scripting/27/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 0fed7bdab0a5 | gotestwaf | owasp/xss-scripting/27/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 1e4bbee191cc | gotestwaf | owasp/xss-scripting/27/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 881d083d2da8 | gotestwaf | owasp/xss-scripting/27/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 49473e0f138a | gotestwaf | owasp/xss-scripting/28/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 04dd94cfaa25 | gotestwaf | owasp/xss-scripting/28/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 994aafd49853 | gotestwaf | owasp/xss-scripting/28/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 837e2fa9eef2 | gotestwaf | owasp/xss-scripting/28/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| d95abca0579b | gotestwaf | owasp/xss-scripting/3/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| a3c152d671bb | gotestwaf | owasp/xss-scripting/3/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 26861289a0d4 | gotestwaf | owasp/xss-scripting/3/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 839b195bd929 | gotestwaf | owasp/xss-scripting/3/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 38eba1e96cb4 | gotestwaf | owasp/xss-scripting/4/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 797584e352bd | gotestwaf | owasp/xss-scripting/4/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 6265be29ea8e | gotestwaf | owasp/xss-scripting/4/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 8c5e75b6082d | gotestwaf | owasp/xss-scripting/4/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| e123869bf0e1 | gotestwaf | owasp/xss-scripting/4/URL/HTMLForm | xss | AEG-ROUTE-001 |
+| 98a43ab81457 | gotestwaf | owasp/xss-scripting/4/URL/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| a555b117ab20 | gotestwaf | owasp/xss-scripting/4/URL/URLParam | xss | AEG-ROUTE-001 |
+| a32bd8d5d282 | gotestwaf | owasp/xss-scripting/4/URL/URLPath | xss | AEG-ROUTE-001 |
+| 6a9b8349993a | gotestwaf | owasp/xss-scripting/7/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 6ebcf9b196e1 | gotestwaf | owasp/xss-scripting/7/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| 908f2a065841 | gotestwaf | owasp/xss-scripting/7/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| b11aea77f8cc | gotestwaf | owasp/xss-scripting/7/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| 0f842e7d921e | gotestwaf | owasp/xss-scripting/9/Base64Flat/HTMLForm | xss | AEG-ROUTE-001 |
+| 63446ae7163d | gotestwaf | owasp/xss-scripting/9/Base64Flat/HTMLMultipartForm | xss | AEG-ROUTE-001 |
+| b87e899b4bb7 | gotestwaf | owasp/xss-scripting/9/Base64Flat/URLParam | xss | AEG-ROUTE-001 |
+| 4aa8e625db91 | gotestwaf | owasp/xss-scripting/9/Base64Flat/URLPath | xss | AEG-ROUTE-001 |
+| e3773409bbae | gotestwaf | owasp/xss-scripting/9/URL/URLPath | xss | AEG-ROUTE-001 |
+
+### Flagged legitimate requests (development and baseline)
+
+| Case | Source | Source case | Category | Rules |
+|---|---|---|---|---|
+| 2e1c8d512583 | generated-legit | pasted-code/035d70e9daa8012d | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| bbf800e0f82b | generated-legit | pasted-code/089b9e7ce886bc21 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 9021d3347fcb | generated-legit | pasted-code/0c4cc1a3baf1a338 | pasted-code | AEG-ROUTE-001, AEG-SSTI-001 |
+| aa5af48b16ac | generated-legit | pasted-code/0d11e5d6b2b192fe | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| a6b765d2947b | generated-legit | pasted-code/110a63fb59134434 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 79bd355420fd | generated-legit | pasted-code/11fa8bbd3f0708bf | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| edebb7d417b8 | generated-legit | pasted-code/15733934a5cec503 | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| 324627bdd084 | generated-legit | pasted-code/16408e87bd3f9b38 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 4b40a227d214 | generated-legit | pasted-code/16ef6a516e8a93d5 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 1c79f932e320 | generated-legit | pasted-code/17d1a212a26b0c1c | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| de7255708963 | generated-legit | pasted-code/250037355977079b | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| dead0cd80748 | generated-legit | pasted-code/2a6634273daaa68d | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| a1feae251948 | generated-legit | pasted-code/31fd351c4fb1b333 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 4fddfa33e72d | generated-legit | pasted-code/337b8b94605acfcb | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 9a68051d8f39 | generated-legit | pasted-code/33cb9c5f3b541d9b | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| e3da62f5da9d | generated-legit | pasted-code/3738d70eb0a8ed04 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 17b3f55b36a2 | generated-legit | pasted-code/38785e0bb4eff0f7 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 5315f87fbdea | generated-legit | pasted-code/3c71a822bee8f61b | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 06c764da8750 | generated-legit | pasted-code/3d10d8bd515dfdb7 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| c382bf48b0a6 | generated-legit | pasted-code/42ec88562513bfcd | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 1e199cf7b435 | generated-legit | pasted-code/45fcc4b9693279c2 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 03cede77cd9c | generated-legit | pasted-code/465c5d53243437e9 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| a9f75c01fe67 | generated-legit | pasted-code/4ad05589ec7609a2 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| c2d38673a67d | generated-legit | pasted-code/4ccc50d3f672e983 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 101de2e651a2 | generated-legit | pasted-code/55c7ff332df378fe | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 6568db98c5be | generated-legit | pasted-code/5e553e7db38e3a93 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| e2e9f2bda198 | generated-legit | pasted-code/5ebe94af05acd386 | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| a8ed9a3e409a | generated-legit | pasted-code/6140f7174a4d0a28 | pasted-code | AEG-ROUTE-001, AEG-SSRF-002 |
+| 2799efeed0b6 | generated-legit | pasted-code/6e233a18ac18c225 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 048d0697c18e | generated-legit | pasted-code/6e27bd4977c85eac | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 9ee6fbd85792 | generated-legit | pasted-code/6f56e39437359f35 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 8d385f05dea0 | generated-legit | pasted-code/7bd564358310e9f6 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| f3fa4985d09e | generated-legit | pasted-code/82ceb741ecea49e1 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 3226219b5784 | generated-legit | pasted-code/842b1764b63bea11 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 31b224ed0966 | generated-legit | pasted-code/86e040ecd5c184cc | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| a0b34bbcdb42 | generated-legit | pasted-code/8bd487ff7edfdfbb | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 01f21cb035f0 | generated-legit | pasted-code/8e66bb69fd97194e | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| 401d16fb0738 | generated-legit | pasted-code/91495f5582d910f2 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 8f2da104ae4f | generated-legit | pasted-code/9eb79f4586fc78a6 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 9a1132cae784 | generated-legit | pasted-code/a0c811aa4602345c | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 0879b2a454e2 | generated-legit | pasted-code/a5ed5417bfd18418 | pasted-code | AEG-LFI-002, AEG-ROUTE-001 |
+| e1ae4b0b0d1b | generated-legit | pasted-code/aca5d480ea2d90ec | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 0edf25469407 | generated-legit | pasted-code/adcea670048d38a4 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 45e42793c3b1 | generated-legit | pasted-code/af75122b50e34bed | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 2de8661e9330 | generated-legit | pasted-code/bcf417c7472b70cb | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| b1d772e006ae | generated-legit | pasted-code/bd68b7f9f0bee30c | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 31d35b5345fc | generated-legit | pasted-code/c206b432c5282f6c | pasted-code | AEG-ROUTE-001, AEG-SSRF-002 |
+| fbeacbcf1ff2 | generated-legit | pasted-code/c6f84c9b83ca5ae1 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 8879cc24f400 | generated-legit | pasted-code/c95f5f04333ea20f | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| d7278caad4b5 | generated-legit | pasted-code/ca156e91e51ae813 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 838946a57200 | generated-legit | pasted-code/caf6a3a0a4ba853b | pasted-code | AEG-ROUTE-001, AEG-SSTI-001 |
+| 5a0e372a6cfe | generated-legit | pasted-code/ceaa2e82d43bcd78 | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| caf5b16e4801 | generated-legit | pasted-code/ceaea25e3791faf9 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 84fe0fd71cfe | generated-legit | pasted-code/cec493fc774ceb01 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| d926cc620d92 | generated-legit | pasted-code/d4fbc5e6e1f05302 | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| f9f92da3b9c6 | generated-legit | pasted-code/d64aa5700572a993 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 1767a595823a | generated-legit | pasted-code/d88805611380cf3b | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 2e0ab0bef0b2 | generated-legit | pasted-code/d97b1271ed174580 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 45ea83f31dec | generated-legit | pasted-code/da1e7acc26038ebf | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| f2ddc094ba79 | generated-legit | pasted-code/db1755cb19c0819b | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 3418635ae7c8 | generated-legit | pasted-code/db211ccf1f6fc5c3 | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| 3d287e3a9b34 | generated-legit | pasted-code/dc5dc3ca1dca94ac | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 17bdecab116e | generated-legit | pasted-code/dd2b226e14f4debf | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| 2c680ddf8eea | generated-legit | pasted-code/df75a28eb7e9ee90 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 24708b4d5797 | generated-legit | pasted-code/e4a36b6e4abd465d | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 33344c9dce1c | generated-legit | pasted-code/e5a73e9d4b1e94fb | pasted-code | AEG-CMDI-001, AEG-ROUTE-001 |
+| 2a2a7f19f5a4 | generated-legit | pasted-code/e8fd88e6c19e45e6 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| e8f36ca781c8 | generated-legit | pasted-code/ea54895517768c73 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 02473bfbc1d3 | generated-legit | pasted-code/ec1e16a2456890e4 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| 71d4497bcca1 | generated-legit | pasted-code/ed7a692ab5a8130c | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| 64177559f271 | generated-legit | pasted-code/f40a215bcaae3dfb | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 554236bed941 | generated-legit | pasted-code/fcb2593a77fc5cbe | pasted-code | AEG-LFI-001, AEG-ROUTE-001 |
+| b9f0180468e8 | generated-legit | pasted-code/fcfd4c490439c4cc | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 310a4a882dfd | generated-legit | pasted-code/fdb9f27bbba76717 | pasted-code | AEG-ROUTE-001, AEG-XSS-001 |
+| 8def9169a17a | generated-legit | pasted-code/fe3eff2c09d0f706 | pasted-code | AEG-ROUTE-001, AEG-SQLI-001 |
+| bf4bfac6b372 | generated-legit | prices-and-quantities/0a2cf469b57795d9 | prices-and-quantities | AEG-ROUTE-001, AEG-SQLI-001 |
+| 7d586f7a31ea | generated-legit | prices-and-quantities/1af91bfd78347da4 | prices-and-quantities | AEG-SCHEMA-002 |
+| f81429d201fa | generated-legit | prices-and-quantities/1d1e723cd5dae65a | prices-and-quantities | AEG-SCHEMA-002 |
+| 107c65b17d54 | generated-legit | prices-and-quantities/1d6980faf885862b | prices-and-quantities | AEG-SCHEMA-002 |
+| a2c53f9ebbc2 | generated-legit | prices-and-quantities/1d71755283171d30 | prices-and-quantities | AEG-SCHEMA-002 |
+| 87f9fdbaebcc | generated-legit | prices-and-quantities/214c703dd5a94ac5 | prices-and-quantities | AEG-SCHEMA-002 |
+| 20efda8adf79 | generated-legit | prices-and-quantities/27d2baf1fbeb8232 | prices-and-quantities | AEG-SCHEMA-002 |
+| 446c48308f57 | generated-legit | prices-and-quantities/28b6dee550e963a6 | prices-and-quantities | AEG-SCHEMA-002 |
+| f7b91108b25d | generated-legit | prices-and-quantities/342696df4b3f0965 | prices-and-quantities | AEG-SCHEMA-002 |
+| 1f98bb5185b1 | generated-legit | prices-and-quantities/39b54599c99d632b | prices-and-quantities | AEG-SCHEMA-002 |
+| 22d05245596d | generated-legit | prices-and-quantities/3d612e11c8f729d2 | prices-and-quantities | AEG-SCHEMA-002 |
+| ae12dff7229b | generated-legit | prices-and-quantities/4511d47342c20100 | prices-and-quantities | AEG-SCHEMA-002 |
+| 78591332179e | generated-legit | prices-and-quantities/46402b822923c372 | prices-and-quantities | AEG-SCHEMA-002 |
+| bb1a2028ea4e | generated-legit | prices-and-quantities/4aeca0cc023a91b8 | prices-and-quantities | AEG-SCHEMA-002 |
+| fd8cbd10e2e5 | generated-legit | prices-and-quantities/4c7aae559379250c | prices-and-quantities | AEG-SCHEMA-002 |
+| 5498f8e909b2 | generated-legit | prices-and-quantities/4dc314f649b95b15 | prices-and-quantities | AEG-SCHEMA-002 |
+| 5aa90781248b | generated-legit | prices-and-quantities/503d0f1b009d7a18 | prices-and-quantities | AEG-ROUTE-001, AEG-SQLI-001 |
+| e0a7ed75366d | generated-legit | prices-and-quantities/571da3008b0009e0 | prices-and-quantities | AEG-SCHEMA-002 |
+| f0c5f7f0012d | generated-legit | prices-and-quantities/6a1cc3d2d6102a7e | prices-and-quantities | AEG-SCHEMA-002 |
+| b7cd9b001578 | generated-legit | prices-and-quantities/6c1e62507b6cbf30 | prices-and-quantities | AEG-SCHEMA-002 |
+| 9930dd29b0e5 | generated-legit | prices-and-quantities/7f0744286175c6c7 | prices-and-quantities | AEG-SCHEMA-002 |
+| 72efd57a9d1c | generated-legit | prices-and-quantities/91857b1c90bb294c | prices-and-quantities | AEG-SCHEMA-002 |
+| 8f4df2707935 | generated-legit | prices-and-quantities/95c5f00f40444564 | prices-and-quantities | AEG-SCHEMA-002 |
+| b4e3fcc58ff2 | generated-legit | prices-and-quantities/a1380a2ea3e20b66 | prices-and-quantities | AEG-SCHEMA-002 |
+| 6958d976c1b6 | generated-legit | prices-and-quantities/a577196aa6436216 | prices-and-quantities | AEG-SCHEMA-002 |
+| 4692a64f565d | generated-legit | prices-and-quantities/afa419f2d347078d | prices-and-quantities | AEG-SCHEMA-002 |
+| 90a44c12439d | generated-legit | prices-and-quantities/b0b9ac53d4b1a813 | prices-and-quantities | AEG-SCHEMA-002 |
+| c00da0042257 | generated-legit | prices-and-quantities/b1b2ee1df059c1f9 | prices-and-quantities | AEG-SCHEMA-002 |
+| c1fdd6a71eb2 | generated-legit | prices-and-quantities/b35ae0dd103ecc62 | prices-and-quantities | AEG-SCHEMA-002 |
+| cef480da808a | generated-legit | prices-and-quantities/b7a95de22dce4a42 | prices-and-quantities | AEG-SCHEMA-002 |
+| 01e08c6f81e7 | generated-legit | prices-and-quantities/bce40a00ce9fab45 | prices-and-quantities | AEG-ROUTE-001, AEG-SQLI-001 |
+| 5ccfb9563fe3 | generated-legit | prices-and-quantities/bf80b072949e8ba4 | prices-and-quantities | AEG-SCHEMA-002 |
+| efb5cfd73f22 | generated-legit | prices-and-quantities/c79d3f7af7fcbc39 | prices-and-quantities | AEG-SCHEMA-002 |
+| 5fe64352120f | generated-legit | prices-and-quantities/c847447d6b8d81aa | prices-and-quantities | AEG-SCHEMA-002 |
+| 601c82c0f7ce | generated-legit | prices-and-quantities/cde208227f7968e2 | prices-and-quantities | AEG-SCHEMA-002 |
+| e4dcf445c0a8 | generated-legit | prices-and-quantities/d3c073f886a90aa2 | prices-and-quantities | AEG-SCHEMA-002 |
+| 4c0a075e98f9 | generated-legit | prices-and-quantities/d4bd3632baac33f5 | prices-and-quantities | AEG-SCHEMA-002 |
+| 7c547bb350e5 | generated-legit | prices-and-quantities/d5797e6ecf9d35b8 | prices-and-quantities | AEG-ROUTE-001, AEG-SQLI-001 |
+| 3561e9415444 | generated-legit | prices-and-quantities/d8ad0566eb68d5a3 | prices-and-quantities | AEG-SCHEMA-002 |
+| abbc177087e3 | generated-legit | prices-and-quantities/dd678f1b9fab4610 | prices-and-quantities | AEG-SCHEMA-002 |
+| f31757e9b63f | generated-legit | prices-and-quantities/df30dcc1074ee4ac | prices-and-quantities | AEG-SCHEMA-002 |
+| 3ff375e5b5bb | generated-legit | prices-and-quantities/f3800286d0ef5f31 | prices-and-quantities | AEG-SCHEMA-002 |
+| 88b954904347 | generated-legit | prices-and-quantities/f63cac9bdcc9511e | prices-and-quantities | AEG-SCHEMA-002 |
+| fc69520a12e2 | generated-legit | prices-and-quantities/fecba036b7f1d071 | prices-and-quantities | AEG-SCHEMA-002 |
+| 17e687c29eb0 | generated-legit | punctuation-prose/a48c02aef41202fd | punctuation-prose | AEG-ROUTE-001, AEG-SQLI-001 |
+| 22a0e9282d57 | generated-legit | urls-in-text/02768d283efac72a | urls-in-text | AEG-LFI-001, AEG-ROUTE-001 |
+| a3292cd30a93 | generated-legit | urls-in-text/0eb0b207780587f2 | urls-in-text | AEG-LFI-001, AEG-ROUTE-001 |
+| 02139d3f456a | generated-legit | urls-in-text/4b59cc9212fd47d5 | urls-in-text | AEG-LFI-001, AEG-ROUTE-001 |
+| d9416bb8990d | generated-legit | urls-in-text/4ef0a2702a5e3d21 | urls-in-text | AEG-ROUTE-001, AEG-SSRF-002 |
+| 2b9064b4d4f0 | generated-legit | urls-in-text/5ac4ca169c438ad2 | urls-in-text | AEG-ROUTE-001, AEG-SSRF-002 |
+| 331df8868ef6 | generated-legit | urls-in-text/66473cc7c989f6fa | urls-in-text | AEG-LFI-001, AEG-ROUTE-001 |
+| 936a86dc6f2b | generated-legit | urls-in-text/84806cecd6a20941 | urls-in-text | AEG-ROUTE-001, AEG-SSRF-002 |
+| daf0a8ff601c | generated-legit | urls-in-text/9a07d377c3033856 | urls-in-text | AEG-LFI-001, AEG-ROUTE-001 |
+| f7c55025bb7b | generated-legit | urls-in-text/9bbe87f93a126e19 | urls-in-text | AEG-ROUTE-001, AEG-SSRF-002 |
+| 4dc19f74d217 | generated-legit | urls-in-text/a16cf7d8ae68a30e | urls-in-text | AEG-LFI-001, AEG-ROUTE-001 |
+| 6e627be2d2e7 | generated-legit | urls-in-text/bfde091d43fe5c63 | urls-in-text | AEG-ROUTE-001, AEG-SSRF-002 |

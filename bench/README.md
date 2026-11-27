@@ -2,7 +2,7 @@
 
 The bench sends sets of requests over HTTP to a server wrapped in Aegolith and counts what the firewall did with each. It also measures that server under load, and can send a filtered subset of the requests to a deployment you own. It is a Go module of its own (`bench/`, command `aegobench`), builds against the library in the parent directory and is part of no release.
 
-Published reports are in [`docs/bench/`](../docs/bench). The [design](../docs/superpowers/specs/2026-11-26-waf-bench-design.md) is in the repository.
+The [first report](../docs/bench/2026-11-first-report.md) is in `docs/bench/`. The [design](../docs/superpowers/specs/2026-11-26-waf-bench-design.md) is in the repository.
 
 ## One command
 
