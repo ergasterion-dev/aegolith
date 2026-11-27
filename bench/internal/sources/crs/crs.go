@@ -245,7 +245,8 @@ func (im *importer) file(rel string, content []byte) {
 		return
 	}
 	if more {
-		im.skip(rel, "file holds more than one YAML document; only the first is read")
+		// What is skipped is the later documents; the first is imported.
+		im.skip(rel+" (documents after the first)", "YAML documents after the first of a file: they are not read")
 	}
 
 	group, _, inGroup := strings.Cut(rel, "/")

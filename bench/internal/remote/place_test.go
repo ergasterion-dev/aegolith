@@ -39,7 +39,7 @@ func originLine(t *testing.T, id, placement string, expected cases.Expected, pay
 		Query:   [][]string{{"orig", "x"}},
 		Headers: map[string]string{"Cookie": "session=orig", "X-Orig": "1"}, Body: "orig body",
 		Source: "src", SourceCaseID: id, Expected: expected, Payload: payload,
-		Placement: placement, Encoder: "plain",
+		Placement: placement, Encoder: "URL",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,8 @@ func placeTarget() Target {
 	t.Allow = []Entry{
 		{Method: "GET", Path: "/search", Placements: []string{"query:q", "query:term"}, BenignStatus: []int{200}},
 		{Method: "GET", Path: "/list", Placements: []string{"query:s", "header:X-Note"}, BenignStatus: []int{200}},
-		{Method: "POST", Path: "/api/notes", Placements: []string{"json:note", "header:X-Other"}, BenignStatus: []int{200}},
+		{Method: "POST", Path: "/api/notes", Placements: []string{"json:note", "header:X-Other"}, BenignStatus: []int{200},
+			MayWriteData: true},
 	}
 	return t
 }
@@ -87,9 +88,13 @@ func TestPlaceEachPayloadEachSlot(t *testing.T) {
 		if strings.ContainsAny(value, "'<> ") {
 			t.Errorf("query %q is not percent-encoded", p.RawQuery)
 		}
-		if p.Category != c.Category || p.Expected != c.Expected || p.Encoder != c.Encoder || p.Placement != "query" ||
+		if p.Category != c.Category || p.Expected != c.Expected || p.Placement != "query" ||
 			!slices.Equal(p.Sources, c.Sources) {
 			t.Errorf("placed case lost a field of the original: %+v", p)
+		}
+		// The decoded payload is sent, not the original's encoding of it.
+		if p.Encoder != PlacedEncoder {
+			t.Errorf("placed case has encoder %q, want %q", p.Encoder, PlacedEncoder)
 		}
 		again, err := cases.FromLine(cases.Lines(p)[0])
 		if err != nil || again.ID != p.ID {
@@ -188,6 +193,15 @@ func TestPlaceRefuses(t *testing.T) {
 		{"line break in a header", origin(t, "r-13", "header", cases.Attack, "a\r\nX-Injected: 1"), target, ReasonHeaderValue},
 		{"blank around a header", origin(t, "r-14", "header", cases.Attack, " a"), target, ReasonHeaderValue},
 		{"nul in a header", origin(t, "r-15", "header", cases.Attack, "a\x00b"), target, ReasonHeaderValue},
+		{"metadata address", origin(t, "r-20", "query", cases.Attack, "http://169.254.169.254/latest/meta-data/"), target, ReasonInternalHost},
+		{"short link-local", origin(t, "r-21", "query", cases.Attack, "curl http://169.16689662/"), target, ReasonInternalHost},
+		{"numeric link-local", origin(t, "r-22", "header", cases.Attack, "http://2852039166/"), target, ReasonInternalHost},
+		{"quote-split link-local", origin(t, "r-23", "json", cases.Attack, "curl 169.254.'169'.254"), target, ReasonInternalHost},
+		{"link-local ipv6", origin(t, "r-24", "query", cases.Attack, "http://[fe80::1]/"), target, ReasonInternalHost},
+		{"aws ipv6 metadata", origin(t, "r-25", "query", cases.Attack, "http://[fd00:ec2::254]/"), target, ReasonInternalHost},
+		{"gcp metadata name", origin(t, "r-26", "query", cases.Attack, "http://metadata.google.internal/computeMetadata/v1/"), target, ReasonInternalHost},
+		{"azure wireserver", origin(t, "r-27", "json", cases.Attack, "ping 168.63.129.16"), target, ReasonInternalHost},
+		{"alibaba metadata", origin(t, "r-28", "query", cases.Attack, "http://100.100.100.200/latest/meta-data/"), target, ReasonInternalHost},
 	}
 	for _, tc := range tests {
 		placed, refused := Place(tc.c, tc.target)
@@ -204,6 +218,14 @@ func TestPlaceRefuses(t *testing.T) {
 	placed, refused := Place(binary, target)
 	if len(placed) != 0 || len(refused) != 1 || refused[0].Reason != ReasonNotUTF8 {
 		t.Errorf("invalid UTF-8 in JSON: %d placed, refused %+v", len(placed), refused)
+	}
+	// Loopback and private addresses are sent: a route with a request
+	// forgery bug would fetch them, which the README states.
+	for i, payload := range []string{"http://127.0.0.1/admin", "http://10.0.0.5:8080/", "ping 192.168.1.1", "http://[::1]/"} {
+		placed, refused := Place(origin(t, fmt.Sprintf("r-3%d", i), "query", cases.Attack, payload), target)
+		if len(placed) == 0 || len(refused) != 0 {
+			t.Errorf("%q: %d placed, refused %+v, want it placed", payload, len(placed), refused)
+		}
 	}
 	// One payload refused, the other placed.
 	mixed := origin(t, "r-17", "query", cases.Attack, "ok payload", "ping 8.8.8.8")
@@ -297,6 +319,22 @@ func TestPrepare(t *testing.T) {
 			t.Fatal(err)
 		}
 		back = append(back, c)
+	}
+	// The case file says how each line was sent: placed requests (the
+	// conflicting ones included) decoded, cases not placed as the source
+	// wrote them.
+	sendIDs := map[string]bool{}
+	for _, c := range slices.Concat(plan.Send, plan.Conflicts) {
+		sendIDs[c.ID] = true
+	}
+	for i, c := range back {
+		want := "URL"
+		if sendIDs[c.ID] {
+			want = PlacedEncoder
+		}
+		if read[i].Encoder != want {
+			t.Errorf("line %d (placed %t) has encoder %q, want %q", i+1, sendIDs[c.ID], read[i].Encoder, want)
+		}
 	}
 	merged, conflicts := cases.Merge(back)
 	if len(merged) != len(plan.Send)+len(plan.NotSent) || len(conflicts) != len(plan.Conflicts) {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ergasterion-dev/aegolith/bench/internal/cases"
+	"github.com/ergasterion-dev/aegolith/bench/internal/remote"
 	"github.com/ergasterion-dev/aegolith/bench/internal/report"
 	runner "github.com/ergasterion-dev/aegolith/bench/internal/run"
 	"github.com/ergasterion-dev/aegolith/bench/internal/sources/legit"
@@ -146,7 +147,7 @@ func runReport(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	current := report.Report{Meta: meta}
+	current := report.Report{Format: report.Format, Meta: meta}
 	if o.load != "" {
 		if current.Load, err = readLoadResult(o.load); err != nil {
 			return fmt.Errorf("reading the load result %s: %w", o.load, err)
@@ -161,7 +162,9 @@ func runReport(args []string, stdout, stderr io.Writer) error {
 		if n := len(cs) - len(results); n > 0 {
 			missing = append(missing, fmt.Sprintf("%s: %d cases have no result and count as not sent\n", file.name, n))
 		}
-		current.Configs = append(current.Configs, report.BuildConfig(file.name, cs, results))
+		// BuildConfig merges the case lines itself and needs them unmerged: a
+		// merged case keeps the encoder and placement of one line alone.
+		current.Configs = append(current.Configs, report.BuildConfig(file.name, all, results))
 	}
 
 	encoded, err := json.MarshalIndent(current, "", "  ")
@@ -270,8 +273,11 @@ func readResultsFile(path string, cs []cases.Case) (out []runner.Result, err err
 		known[c.ID] = true
 	}
 	seen := make(map[string]bool, len(results))
-	var repeated, foreign int
+	var repeated, foreign, notJoined int
 	for _, r := range results {
+		if r.Outcome == runner.Unknown && r.Reason == remote.ReasonNotJoined {
+			notJoined++
+		}
 		switch {
 		case !known[r.CaseID]:
 			foreign++
@@ -282,6 +288,11 @@ func readResultsFile(path string, cs []cases.Case) (out []runner.Result, err err
 	}
 	if repeated > 0 || foreign > 0 {
 		return nil, fmt.Errorf("%d results are of no case in the case files and %d repeat a case", foreign, repeated)
+	}
+	// They would count as unknown and leave every rate empty.
+	if notJoined > 0 {
+		return nil, fmt.Errorf("%d results are of a remote run not yet joined with the target's logs: "+
+			"run aegobench join on them first", notJoined)
 	}
 	return results, nil
 }
@@ -332,6 +343,10 @@ func readReport(path string) (*report.Report, error) {
 	}
 	if len(r.Configs) == 0 {
 		return nil, errors.New("it holds no configuration, so it is not a report")
+	}
+	if r.Format != report.Format {
+		return nil, fmt.Errorf("it has format version %d and this program compares with version %d: "+
+			"make that report again with this program", r.Format, report.Format)
 	}
 	return &r, nil
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ergasterion-dev/aegolith/bench/internal/cases"
+	"github.com/ergasterion-dev/aegolith/bench/internal/remote"
 	"github.com/ergasterion-dev/aegolith/bench/internal/report"
 )
 
@@ -74,6 +75,9 @@ func TestReportFromDetect(t *testing.T) {
 	if got := r.Configs[0].Missed; len(got) != 1 || got[0].SourceCaseID != "missed-case" {
 		t.Errorf("missed = %+v, want the missed baseline attack", got)
 	}
+	if r.Format != report.Format {
+		t.Errorf("format %d, want %d", r.Format, report.Format)
+	}
 	if r.Meta.Commit == "" || r.Meta.Created.IsZero() {
 		t.Errorf("meta = %+v, want a commit and a time", r.Meta)
 	}
@@ -132,6 +136,10 @@ func TestFailedReportLeavesOutputAlone(t *testing.T) {
 	writeText(t, path("none.jsonl"), "")
 	writeText(t, path("broken.jsonl"), "{")
 	writeText(t, path("not-a-report.json"), "{}")
+	writeText(t, path("unversioned.json"), `{"Meta":{},"Configs":[{"Name":"none"}]}`)
+	writeText(t, path("other-version.json"), `{"Format":999,"Meta":{},"Configs":[{"Name":"none"}]}`)
+	writeText(t, path("not-joined.jsonl"), `{"case_id":"`+merged[0].ID+`","request_id":"rt-0a1b2c3d-`+merged[0].ID+
+		`","status":200,"outcome":"unknown","reason":"`+remote.ReasonNotJoined+`"}`+"\n")
 	writeText(t, path("invalid.jsonl"),
 		`{"name":"hidden-case","source":"test","source_case_id":"hidden-case"}`+"\n")
 	out := path("out")
@@ -147,16 +155,19 @@ func TestFailedReportLeavesOutputAlone(t *testing.T) {
 	}
 	results := path("results.jsonl")
 	tests := map[string][]string{
-		"missing case file":    args(path("absent"), results),
-		"invalid case":         args(path("invalid.jsonl"), results),
-		"missing results":      args(good, path("absent")),
-		"empty results":        args(good, path("none.jsonl")),
-		"broken results":       args(good, path("broken.jsonl")),
-		"repeated result":      args(good, path("repeated.jsonl")),
-		"result of other case": args(good, path("foreign.jsonl")),
-		"missing previous":     args(good, results, "--previous", path("absent")),
-		"broken previous":      args(good, results, "--previous", path("broken.jsonl")),
-		"previous no report":   args(good, results, "--previous", path("not-a-report.json")),
+		"missing case file":         args(path("absent"), results),
+		"invalid case":              args(path("invalid.jsonl"), results),
+		"missing results":           args(good, path("absent")),
+		"empty results":             args(good, path("none.jsonl")),
+		"broken results":            args(good, path("broken.jsonl")),
+		"repeated result":           args(good, path("repeated.jsonl")),
+		"result of other case":      args(good, path("foreign.jsonl")),
+		"missing previous":          args(good, results, "--previous", path("absent")),
+		"broken previous":           args(good, results, "--previous", path("broken.jsonl")),
+		"previous no report":        args(good, results, "--previous", path("not-a-report.json")),
+		"previous unversioned":      args(good, results, "--previous", path("unversioned.json")),
+		"previous of other version": args(good, results, "--previous", path("other-version.json")),
+		"results not joined":        args(good, path("not-joined.jsonl")),
 	}
 	for name, args := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -164,6 +175,11 @@ func TestFailedReportLeavesOutputAlone(t *testing.T) {
 			err := runReport(args, &stdout, &stderr)
 			if err == nil || errors.Is(err, errUsage) {
 				t.Fatalf("err = %v, want a failure", err)
+			}
+			hints := map[string]string{"results not joined": "aegobench join", "previous unversioned": "format version",
+				"previous of other version": "format version"}
+			if hint := hints[name]; hint != "" && !strings.Contains(err.Error(), hint) {
+				t.Errorf("err = %q does not say %q", err, hint)
 			}
 			// An error must not single out a case, which may be held out.
 			if msg := err.Error(); strings.Contains(msg, "hidden-case") || strings.Contains(msg, merged[0].ID) {
@@ -238,6 +254,53 @@ func TestCommitFromBuildSettings(t *testing.T) {
 	for name, tt := range tests {
 		if got := commitFrom(tt.settings); got != tt.want {
 			t.Errorf("%s: commit = %q, want %q", name, got, tt.want)
+		}
+	}
+}
+
+// TestReportCountsEachEncoderOfARequest gives one request under two encoders
+// of one source: the per-encoder and per-placement rows count it under each,
+// as the report says, while every other count sees one case.
+func TestReportCountsEachEncoderOfARequest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	plain := detectLine("one-plain", "q=1%27%20OR%20%271%27%3D%271", cases.Attack)
+	plain.Encoder, plain.Placement, plain.Payload = "Plain", "query", "1' OR '1'='1"
+	url := plain
+	url.Name, url.SourceCaseID, url.Encoder, url.Placement = "one-url", "one-url", "URL", "header"
+	caseFile := filepath.Join(dir, "cases.jsonl")
+	writeCases(t, caseFile, plain, url)
+	merged, _, err := readCases([]string{caseFile})
+	if err != nil || len(merged) != 1 {
+		t.Fatalf("fixture: %d merged cases, %v", len(merged), err)
+	}
+	results := filepath.Join(dir, "results.jsonl")
+	writeText(t, results, `{"case_id":"`+merged[0].ID+`","status":403,"outcome":"blocked","rules":["AEG-SQLI-001"]}`+"\n")
+	out := filepath.Join(dir, "out")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"report", "--cases", caseFile, "--results", "none=" + results, "--out", out}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var r report.Report
+	if err := json.Unmarshal([]byte(readText(t, filepath.Join(out, "report.json"))), &r); err != nil {
+		t.Fatal(err)
+	}
+	values := func(vs []report.Variant) map[string]int {
+		m := map[string]int{}
+		for _, v := range vs {
+			m[v.Value] += v.Counts.Blocked
+		}
+		return m
+	}
+	if got := values(r.Configs[0].Encoders); got["Plain"] != 1 || got["URL"] != 1 || len(got) != 2 {
+		t.Errorf("encoder rows count %v, want the request blocked under Plain and under URL", got)
+	}
+	if got := values(r.Configs[0].Placements); got["query"] != 1 || got["header"] != 1 || len(got) != 2 {
+		t.Errorf("placement rows count %v, want the request blocked under query and under header", got)
+	}
+	for _, row := range r.Configs[0].Rows {
+		if row.Source == report.TotalSource && row.Counts.Blocked != 1 {
+			t.Errorf("total row %+v, want the request once", row)
 		}
 	}
 }

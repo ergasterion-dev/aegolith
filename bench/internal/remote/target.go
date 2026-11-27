@@ -51,6 +51,10 @@ type Entry struct {
 	Path         string   `json:"path"`
 	Placements   []string `json:"placements"` // "query:q", "header:X-Note", "json:note"
 	BenignStatus []int    `json:"benign_status"`
+	// MayWriteData must be true for a method other than GET or HEAD. By
+	// setting it the operator accepts that every request to the entry, attack
+	// payloads included, may be stored or change state on the target.
+	MayWriteData bool `json:"may_write_data"`
 }
 
 // Target is the target file: the one deployment a remote run may send to and
@@ -69,13 +73,30 @@ type Target struct {
 }
 
 // forbiddenHeaders are header names neither the target file nor a placement
-// may set: framing, routing and method overrides, and the request ID.
+// may set: framing, hop-by-hop and routing headers, method overrides, the
+// client address a proxy passes on, and the request ID. Every name that
+// starts with one of forbiddenPrefixes is refused too.
 var forbiddenHeaders = []string{
 	"Host", "Content-Length", "Transfer-Encoding", "Connection", "Upgrade", "Trailer", "TE", "Expect",
-	"X-Request-Id", "X-Forwarded-Host", "Forwarded", "X-Original-URL", "X-Rewrite-URL",
+	"Keep-Alive", "Proxy-Connection", "Proxy-Authorization", "Via", "Max-Forwards",
+	"X-Request-Id", "Forwarded", "X-Forwarded", "X-Host", "X-Rewrite-URL", "X-Override-URL",
+	"X-Real-IP", "X-Client-IP", "Client-IP", "True-Client-IP", "X-Cluster-Client-IP", "CF-Connecting-IP",
+	"Fastly-Client-IP", "X-ProxyUser-IP", "X-Remote-IP", "X-Remote-Addr", "X-Envoy-Original-Path",
 	"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override",
 	// A JSON placement sets it.
 	"Content-Type",
+}
+
+// forbiddenPrefixes start header names that proxies and frameworks read as
+// the original host, path, scheme, port or client of a request (X-Forwarded-
+// Host, X-Original-URI and so on), in lower case.
+var forbiddenPrefixes = []string{"x-forwarded-", "x-original-"}
+
+// methodOverrides are query and JSON field names that some frameworks read as
+// the request's method, compared in lower case without "-" and "_".
+var methodOverrides = []string{
+	"method", "methodoverride", "httpmethod", "httpmethodoverride", "xhttpmethod", "xhttpmethodoverride",
+	"xmethodoverride",
 }
 
 // LoadTarget reads a target file: one JSON object with no unknown or repeated
@@ -264,6 +285,8 @@ func parsePlacement(s string) (placement, error) {
 		}
 	case !utf8.ValidString(name) || hasControl(name):
 		return placement{}, errors.New("a placement name is not valid UTF-8 or holds a control character")
+	case isMethodOverride(name):
+		return placement{}, errors.New("a query or JSON placement name is one that frameworks read as a method override, such as _method")
 	}
 	return placement{kind, name}, nil
 }
@@ -286,6 +309,9 @@ func (e Entry) validate(targetHeaders map[string]bool) error {
 		return errors.New("method is not a valid token")
 	case strings.EqualFold(e.Method, "CONNECT"):
 		return errors.New("method CONNECT has no path")
+	case e.Method != "GET" && e.Method != "HEAD" && !e.MayWriteData:
+		return errors.New("a method other than GET or HEAD may change data: set may_write_data to true only if " +
+			"every request to the route, attack payloads included, may be stored or change state")
 	}
 	if err := normalPath(e.Path); err != nil {
 		return fmt.Errorf("path: %w", err)
@@ -294,8 +320,8 @@ func (e Entry) validate(targetHeaders map[string]bool) error {
 		return errors.New("benign_status is empty")
 	}
 	for _, s := range e.BenignStatus {
-		if !isStatus(s) || s == 403 || s >= 500 {
-			return errors.New("benign_status must hold HTTP statuses below 500 other than 403")
+		if !(s >= 200 && s <= 299 || s >= 400 && s <= 499) || s == 403 {
+			return errors.New("benign_status must hold 2xx and 4xx statuses other than 403")
 		}
 	}
 	if len(e.Placements) == 0 {
@@ -341,8 +367,8 @@ func normalPath(p string) error {
 	return nil
 }
 
-// checkHeaderName refuses a name that is not a token or that framing,
-// routing or the request ID depend on.
+// checkHeaderName refuses a name that is not a token, one of
+// forbiddenHeaders or a name starting with one of forbiddenPrefixes.
 func checkHeaderName(name string) error {
 	if !isToken(name) {
 		return errors.New("a header name is not a valid token")
@@ -352,7 +378,24 @@ func checkHeaderName(name string) error {
 			return fmt.Errorf("header %s must not be set", f)
 		}
 	}
+	for _, prefix := range forbiddenPrefixes {
+		if len(name) >= len(prefix) && strings.EqualFold(name[:len(prefix)], prefix) {
+			return fmt.Errorf("a header name starting %s must not be set", prefix)
+		}
+	}
 	return nil
+}
+
+// isMethodOverride reports whether name, a query or JSON field, is one of
+// methodOverrides.
+func isMethodOverride(name string) bool {
+	folded := strings.Map(func(r rune) rune {
+		if r == '-' || r == '_' {
+			return -1
+		}
+		return r
+	}, strings.ToLower(name))
+	return slices.Contains(methodOverrides, folded)
 }
 
 func isStatus(s int) bool { return s >= 100 && s <= 599 }

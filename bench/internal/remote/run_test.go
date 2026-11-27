@@ -40,6 +40,10 @@ func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) error {
 	return ctx.Err()
 }
 
+// testClientTimeout bounds one request of a test: far above what a loopback
+// answer takes on a loaded machine.
+const testClientTimeout = 30 * time.Second
+
 // hit is one request the test server received.
 type hit struct {
 	kind    string // "health", "control" or "case"
@@ -160,7 +164,8 @@ func remoteTarget(s *remoteServer) Target {
 		Headers:         map[string]string{"Authorization": "Bearer t"},
 		Allow: []Entry{
 			{Method: "GET", Path: "/search", Placements: []string{"query:q"}, BenignStatus: []int{200}},
-			{Method: "POST", Path: "/notes", Placements: []string{"json:note", "header:X-Note"}, BenignStatus: []int{200}},
+			{Method: "POST", Path: "/notes", Placements: []string{"json:note", "header:X-Note"}, BenignStatus: []int{200},
+				MayWriteData: true},
 		},
 	}
 }
@@ -182,7 +187,7 @@ func planFor(t *testing.T, target Target, kind string, n int) []cases.Case {
 func options(s *remoteServer, target Target, cs []cases.Case) Options {
 	return Options{
 		Target: target, ConfirmHost: s.url.Host, RPS: 10, Cases: cs, Limit: 1000,
-		Clock: newFakeClock(), Client: NewClient(5 * time.Second),
+		Clock: newFakeClock(), Client: NewClient(testClientTimeout),
 	}
 }
 
@@ -671,7 +676,7 @@ func TestRunSendsOnlyToTheTargetHost(t *testing.T) {
 	target := remoteTarget(s)
 	var dialled []string
 	var mu sync.Mutex
-	client := NewClient(5 * time.Second)
+	client := NewClient(testClientTimeout)
 	tr := client.Transport.(*http.Transport)
 	dial := tr.DialContext
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {

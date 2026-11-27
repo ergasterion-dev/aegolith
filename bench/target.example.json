@@ -14,10 +14,10 @@
       "benign_status": [200]
     },
     {
-      "method": "POST",
+      "method": "GET",
       "path": "/api/v1/notes",
-      "placements": ["json:note", "header:X-Note"],
-      "benign_status": [200, 201]
+      "placements": ["query:tag", "header:X-Note"],
+      "benign_status": [200]
     }
   ]
 }

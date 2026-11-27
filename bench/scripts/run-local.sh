@@ -25,8 +25,9 @@
 #
 # The script stops only the processes it started, by process ID, also when it
 # fails or is interrupted. It needs the network only to fetch the pinned
-# sources (crs, gotestwaf). A report is written without the host name, the user
-# name or a local path.
+# sources (crs, gotestwaf), and Go needs it to download the modules the bench
+# builds with if they are not in its module cache. A report is written without
+# the host name, the user name or a local path.
 set -euo pipefail
 
 die() {

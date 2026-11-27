@@ -202,6 +202,91 @@ func TestNamesPublicHost(t *testing.T) {
 	}
 }
 
+func TestNamesInternalHost(t *testing.T) {
+	t.Parallel()
+	internal := []string{
+		// Link-local IPv4, in every notation the public-host check reads.
+		"169.254.169.254",
+		"curl http://169.254.169.254/latest/meta-data/",
+		"http://169.254.169.254:80/",
+		"ping 169.254.0.1",
+		"ping 169.254.255.255",
+		"169.254.43518",       // three parts
+		"169.16689662",        // two parts
+		"2852039166",          // one decimal number
+		"0xA9FEA9FE",          // one hexadecimal number
+		"0xa9.0xfe.0xa9.0xfe", // hexadecimal parts
+		"0251.0376.0251.0376", // octal parts
+		"0169.0254.0169.0254", // leading zeros read as decimal
+		"http://0251.0376.0251.0376/",
+		// Split by quotes and shell syntax, or encoded.
+		"ping 169.254''.169.254",
+		"ping 169.254.1''.1",
+		`curl 169.254."169".254`,
+		"curl 169.254.'169'.254",
+		`curl 169\.254.169.254`,
+		"curl 169.254${x}.169.254",
+		"169%2e254%2e169%2e254",
+		"http://%31%36%39.254.169.254/",
+		"&#49;&#54;&#57;.254.169.254",
+		"１６９．２５４．１６９．２５４",
+		// Link-local IPv6, bracketed or bare, and mapped IPv4.
+		"[fe80::1]",
+		"http://[fe80::a9fe:a9fe]/",
+		"fe80::1%eth0",
+		"ping6 febf::1",
+		"[::ffff:169.254.169.254]",
+		"http://[::ffff:a9fe:a9fe]/",
+		"fe''80::1",
+		// Known cloud metadata addresses and names.
+		"fd00:ec2::254",
+		"http://[fd00:ec2::254]/latest/meta-data/",
+		"168.63.129.16",
+		"100.100.100.200",
+		"http://100.100.100.200/latest/meta-data/",
+		"192.0.0.192",
+		"metadata.google.internal",
+		"METADATA.Google.Internal.",
+		"curl -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/",
+		"metadata.goog",
+		"meta''data.google.internal",
+		"http://instance-data/latest/",
+		"instance-data.ec2.internal",
+		"metadata.tencentyun.com",
+	}
+	for _, s := range internal {
+		if !NamesInternalHost(s) {
+			t.Errorf("NamesInternalHost(%q) = false, want true", s)
+		}
+	}
+	other := []string{
+		"",
+		"1' OR '1'='1",
+		"http://127.0.0.1/admin",
+		"ping 127.0.0.1",
+		"ping 10.0.0.1",
+		"http://192.168.1.1/",
+		"[::1]",
+		"[fc00::1]",
+		"fec0::1",
+		"ping 169.253.255.255",
+		"ping 169.255.0.0",
+		"ping 8.8.8.8",
+		"http://localhost/",
+		"metadata",
+		"google.internal",
+		"the instance data",
+		"version 1.2.3",
+		"price 2.25",
+		"fd00:ec2::253",
+	}
+	for _, s := range other {
+		if NamesInternalHost(s) {
+			t.Errorf("NamesInternalHost(%q) = true, want false", s)
+		}
+	}
+}
+
 func TestNamesPublicHostTruncatedShellSyntax(t *testing.T) {
 	t.Parallel()
 	for _, s := range []string{"$", "\\", "${", "${a", "${a:", "${a:-", "${a-b", "${}", "$(", "a$", "a\\", "${a}}", "${a:-}"} {

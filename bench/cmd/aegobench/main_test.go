@@ -305,7 +305,7 @@ func TestTargetServesAndRecords(t *testing.T) {
 		t.Fatalf("start line %q does not give both addresses", announced)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
 	status := func(url, id string) int {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {

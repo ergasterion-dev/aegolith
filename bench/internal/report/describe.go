@@ -99,7 +99,8 @@ func (in Input) markdown(b *strings.Builder) {
 	fmt.Fprintf(b, `A case line is one request, as import or remote wrote it. %d case lines were read.
 %d distinct requests are counted, identical requests being merged. %d lines (%d requests) are left out because the lines that send the
 same request disagree on what to expect. A skipped case is a file, test, stage or
-combination of a source that the importer did not turn into a case line.
+combination of a source, or the YAML documents after the first of a file, that the
+importer did not turn into a case line.
 
 `, in.Lines, in.Distinct, conflictLines, conflictRequests)
 	header(b, "Source", "Case lines", "Attack", "Legit", "Near-miss", "Without a payload",

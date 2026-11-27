@@ -25,31 +25,38 @@ const (
 	maxNameBytes = 255
 )
 
-// RewriteCallbacks returns s with every public callback host replaced by
-// callback.invalid, so that nothing sent later can make a server contact a
-// public host. It looks at the host of a scheme://host URL, of a
-// protocol-relative //host.tld and of a JNDI lookup, with slashes or
-// backslashes, also when they are percent encoded (more than once), written
-// as \/, \u, \x or HTML character references, in full-width characters, split
-// by tabs or line breaks, or built from Log4j lower, upper, date and default
-// value lookups. Only the bytes that spell the host change.
+// RewriteCallbacks returns s with the public callback hosts it finds replaced
+// by callback.invalid, so that a request sent later is less likely to make a
+// server contact a public host. It is best effort: a reader of URLs in the
+// forms listed here, not a URL parser of every library, a shell or a language
+// emulator, so a host it does not read stays.
 //
-// A host stays only if it is provably local: a loopback, private, link-local
-// or unspecified address, localhost, or a name ending .invalid, .test or
-// .local. Every reading of an IPv4 address with leading zeros (octal and
-// decimal) must be local. Anything else after a scheme, including a single
+// It looks at the host of a scheme://host URL, of a protocol-relative
+// //host.tld and of a JNDI lookup, for example with slashes or backslashes,
+// also when they are percent encoded (more than once), written as \/, \u, \x
+// or HTML character references, in full-width characters, split by tabs or
+// line breaks, or built from Log4j lower, upper, date and default value
+// lookups. Only the bytes that spell the host change.
+//
+// A host it reads stays only if it is provably local: a loopback, private,
+// link-local or unspecified address, localhost, or a name ending .invalid,
+// .test or .local. Every reading of an IPv4 address with leading zeros (octal
+// and decimal) must be local. Anything else after a scheme, including a single
 // label and a name only a lookup can supply, is replaced.
 //
-// Left unchanged, by design or as known limits: a host outside a URL (a bare
-// name or address in a command or header, a mail address); after // without
-// a scheme, in file: URLs and with fewer than two slashes, a single label, an
-// address shorter than four parts and a name ending like a file (.php, .js,
-// .conf and so on); the authority of php:, data:, phar:, javascript: and
-// similar URLs that open no connection; an IPv6 address without brackets;
-// anything inside base64, more than ten layers of encoding or an encoding not
-// listed above, including overlong UTF-8; and a host after user info that
-// holds ?, or that holds a space, double quote, angle bracket or backtick and
-// either runs past 255 bytes or follows fewer than two slashes.
+// Among what it leaves unchanged, by design or as known limits (examples, not
+// a complete list): a host outside a URL (a bare name or address in a command
+// or header, a mail address); after // without a scheme, in file: URLs and
+// with fewer than two slashes, a single label, an address shorter than four
+// parts and a name ending like a file (.php, .js, .conf and so on); the
+// authority of php:, data:, phar:, javascript: and similar URLs that open no
+// connection; an IPv6 address without brackets; anything inside base64, more
+// than ten layers of encoding or an encoding not listed above, including
+// overlong UTF-8; and some hosts after user info, such as user info that
+// holds ?. What still protects a run is that the bench sends only to loopback
+// or, in remote mode, to the operator's allow-list, and whatever the operator
+// controls on the target side, such as the egress the target's network
+// allows.
 func RewriteCallbacks(s string) string {
 	for range maxRewritePasses {
 		out := rewritePass(s)
@@ -770,19 +777,31 @@ const (
 //
 // It refuses much that is not a host, such as document.cookie, table.column,
 // a price or version like 2.25, or a large number, which reads as an IPv4
-// address. Known limits, by design: a host assembled when the payload runs
-// other than by what shellJoin reads, namely command substitution with a
-// command in it other than in backticks ($(echo evil).com), variables that
-// hold a value, arithmetic expansion, brace expansion ({evil,}.com), globs,
-// printf and echo -e escapes outside $'...', cmd.exe substrings longer than
-// 64 bytes, and string concatenation or character codes of other languages;
-// a host inside base64 or another encoding RewriteCallbacks does not read; a
-// host split by spaces or line breaks; and a name with a top-level domain of
-// one letter or one that looks like a file extension.
+// address. It is best effort, not a shell or language emulator: a payload can
+// assemble a host in ways it does not read. Examples of such known limits,
+// not a complete list: command substitution with a command in it other than
+// in backticks ($(echo evil).com), variables that hold a value, arithmetic
+// expansion, brace expansion ({evil,}.com), globs, printf and echo -e escapes
+// outside $'...', cmd.exe substrings longer than 64 bytes, string
+// concatenation or character codes of other languages, shell forms that
+// shellJoin does not read, a host inside base64 or another encoding
+// RewriteCallbacks does not read, a host split by spaces or line breaks, and
+// a name with a top-level domain of one letter or one that looks like a file
+// extension. What still protects a remote run is the operator's allow-list,
+// which bounds where requests go, and whatever the operator controls on the
+// target side, such as the egress the target's network allows.
 func NamesPublicHost(s string) bool {
 	if RewriteCallbacks(s) != s {
 		return true
 	}
+	found, exceeded := anyView(s, bareHost)
+	return found || exceeded
+}
+
+// anyView reports whether found holds for one of the views NamesPublicHost
+// reads of s, and whether it stopped at maxShellViews views or maxScanBytes
+// bytes before it had read them all.
+func anyView(s string, found func(text string) bool) (hit, exceeded bool) {
 	seen := map[string]bool{s: true}
 	queue := []string{s}
 	scanned := 0
@@ -792,10 +811,10 @@ func NamesPublicHost(s string) bool {
 		v := view{text: text, src: make([]span, len(text))}
 		for layer := 0; ; layer++ {
 			if scanned += len(v.text); scanned > maxScanBytes || len(seen) > maxShellViews {
-				return true
+				return false, true
 			}
-			if bareHost(v.text) {
-				return true
+			if found(v.text) {
+				return true, false
 			}
 			joined := []string{htmlSyntax.Replace(v.text)}
 			for _, sep := range []string{"", " "} {
@@ -817,7 +836,79 @@ func NamesPublicHost(s string) bool {
 			v = next
 		}
 	}
+	return false, false
+}
+
+// metadataNames are host names of cloud instance metadata services, in lower
+// case without a final dot.
+var metadataNames = []string{
+	"metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal",
+	"metadata.tencentyun.com",
+}
+
+// metadataAddrs are addresses of cloud instance metadata and platform
+// services outside the link-local ranges.
+var metadataAddrs = []netip.Addr{
+	netip.MustParseAddr("fd00:ec2::254"),   // AWS instance metadata over IPv6
+	netip.MustParseAddr("168.63.129.16"),   // Azure platform services
+	netip.MustParseAddr("100.100.100.200"), // Alibaba Cloud instance metadata
+	netip.MustParseAddr("192.0.0.192"),     // Oracle Cloud instance metadata, older address
+}
+
+// NamesInternalHost reports whether s could name a link-local address
+// (169.254.0.0/16, fe80::/10) or a known cloud metadata address or name, such
+// as 169.254.169.254, fd00:ec2::254 or metadata.google.internal: addresses a
+// server fetches from inside its own network, where a request forgery bug
+// would read credentials. It reads the views NamesPublicHost reads, and
+// addresses in the notations it reads them in: IPv4 in any form inet_aton
+// takes (also of one, two and three parts, decimal, octal or hexadecimal,
+// each reading counting), IPv6 bracketed or bare, with IPv4 mapped into it.
+// Like NamesPublicHost it is best effort, not a shell or language emulator;
+// unlike it, it does not refuse past its bounds, where NamesPublicHost does.
+func NamesInternalHost(s string) bool {
+	found, _ := anyView(s, internalHost)
+	return found
+}
+
+// internalHost reports whether text holds, as bareHost reads names and
+// addresses, one that internalAddr or metadataNames holds.
+func internalHost(text string) bool {
+	sc := scanner{view: view{text: text}}
+	for i := 0; i < len(text); {
+		if text[i] == '[' {
+			if k := strings.IndexByte(text[i:min(len(text), i+maxNameBytes)], ']'); k > 0 {
+				inner, _, _ := strings.Cut(text[i+1:i+k], "%")
+				if addr, err := netip.ParseAddr(inner); err == nil && internalAddr(addr) {
+					return true
+				}
+			}
+		}
+		if end := addressToken(text, i); end > i {
+			if addr, err := netip.ParseAddr(strings.TrimRight(text[i:end], ":.")); err == nil && internalAddr(addr) {
+				return true
+			}
+		}
+		end := sc.name(i, len(text))
+		if end == i {
+			i++
+			continue
+		}
+		name := normalise(strings.TrimLeft(text[i:end], "."))
+		if slices.Contains(metadataNames, name) {
+			return true
+		}
+		if readings, _ := parseIPv4(name); slices.ContainsFunc(readings, internalAddr) {
+			return true
+		}
+		i = end
+	}
 	return false
+}
+
+// internalAddr reports whether a is link-local or one of metadataAddrs.
+func internalAddr(a netip.Addr) bool {
+	a = a.Unmap().WithZone("")
+	return a.IsLinkLocalUnicast() || slices.Contains(metadataAddrs, a)
 }
 
 // htmlSyntax decodes the named HTML character references of shell syntax

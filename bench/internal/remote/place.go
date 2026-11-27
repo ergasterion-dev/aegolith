@@ -16,14 +16,22 @@ import (
 
 // Why a payload or case is not sent. None repeats a value.
 const (
-	ReasonNoPayload   = "the case has no payload to place"
-	ReasonPlacement   = "the case's placement is not query, header or json"
-	ReasonNoEntry     = "no allow entry has a placement of the case's kind"
-	ReasonPublicHost  = "the payload could name a public host"
-	ReasonHeaderValue = "the payload cannot be sent as a header value"
-	ReasonNotUTF8     = "the payload is not valid UTF-8, which a JSON string needs"
-	ReasonConflict    = "every placement of the payload is a request another case expects otherwise"
+	ReasonNoPayload  = "the case has no payload to place"
+	ReasonPlacement  = "the case's placement is not query, header or json"
+	ReasonNoEntry    = "no allow entry has a placement of the case's kind"
+	ReasonPublicHost = "the payload could name a public host"
+	// ReasonInternalHost has no override: a target that fetches what a
+	// payload names would read its own metadata service or link-local hosts.
+	ReasonInternalHost = "the payload could name a link-local or cloud metadata address"
+	ReasonHeaderValue  = "the payload cannot be sent as a header value"
+	ReasonNotUTF8      = "the payload is not valid UTF-8, which a JSON string needs"
+	ReasonConflict     = "every placement of the payload is a request another case expects otherwise"
 )
+
+// PlacedEncoder is the encoder of a placed case: the decoded payload is sent
+// as it is, whatever encoding the source gave it. It is the name GoTestWAF
+// gives the same thing, so a report counts both in one row.
+const PlacedEncoder = "Plain"
 
 // Refusal is a payload of a case that is not placed, and why. Payload is nil
 // for a case without one.
@@ -41,10 +49,12 @@ type Refusal struct {
 // with Content-Type application/json.
 //
 // Each placed request is a case of its own, with the usual ID and c's source
-// references, category, expectation, placement and encoder, and the one
-// payload. The payloads that are not placed are returned with the reason;
+// references, category, expectation and placement, the one payload and the
+// encoder PlacedEncoder, as the payload is sent decoded. The payloads that are not placed are returned with the reason;
 // a case without a payload is refused as a whole. A payload that could name
-// a public host (see cases.NamesPublicHost) is never placed.
+// a link-local or cloud metadata address (see cases.NamesInternalHost) or a
+// public host (see cases.NamesPublicHost) is never placed. Loopback and
+// private addresses are placed.
 //
 // t must be valid.
 func Place(c cases.Case, t Target) (placed []cases.Case, refused []Refusal) {
@@ -101,6 +111,9 @@ func Place(c cases.Case, t Target) (placed []cases.Case, refused []Refusal) {
 // payloadRefusal says why payload cannot be placed as kind, or "".
 func payloadRefusal(kind string, payload []byte) string {
 	switch {
+	// First, so that these payloads are counted under their own reason.
+	case cases.NamesInternalHost(string(payload)):
+		return ReasonInternalHost
 	case cases.NamesPublicHost(string(payload)):
 		return ReasonPublicHost
 	case kind == PlaceHeader && !validHeaderValue(string(payload)):
@@ -117,7 +130,7 @@ func request(c cases.Case, e Entry, p placement, payload []byte) (cases.Case, er
 	l := cases.Line{
 		Name: "placed", Category: c.Category, Method: e.Method, Path: e.Path,
 		Headers: map[string]string{}, Source: "placed", SourceCaseID: "placed",
-		Expected: c.Expected, Placement: c.Placement, Encoder: c.Encoder,
+		Expected: c.Expected, Placement: c.Placement, Encoder: PlacedEncoder,
 	}
 	values := map[placement]string{p: string(payload)}
 	if err := fill(&l, values); err != nil {

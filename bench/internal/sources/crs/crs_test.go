@@ -732,11 +732,11 @@ func TestBadTestsDoNotStopTheImport(t *testing.T) {
 		group + "941400.yaml":   "mapping",
 		group + "941600.yaml":   "tests",
 		group + "941800.yaml":   "link is not followed",
-		group + "941900.yaml":   "document",
-		group + "942000.yaml":   "twice",
-		group + "942100.yaml#1": "twice",
-		group + "942100.yaml#2": "twice",
-		group + "942200.yaml":   "document",
+		group + "941900.yaml (documents after the first)": "after the first",
+		group + "942000.yaml":                             "twice",
+		group + "942100.yaml#1":                           "twice",
+		group + "942100.yaml#2":                           "twice",
+		group + "942200.yaml (documents after the first)": "after the first",
 	}
 	got := map[string]string{}
 	for _, s := range skipped {

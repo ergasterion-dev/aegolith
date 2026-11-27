@@ -417,6 +417,29 @@ func TestDiffShowsRateChange(t *testing.T) {
 	contains(t, Diff(prev, moved), warning)
 }
 
+// TestDiffWarnsOfChangedInput compares reports whose sources give other
+// numbers of case lines at the same pinned versions: the case set changed.
+func TestDiffWarnsOfChangedInput(t *testing.T) {
+	t.Parallel()
+	cs := inSplit(t, cases.SplitDev, "a", cases.Attack, 3)
+	withInput := func(cs []cases.Case) Report {
+		in := CountInput(cs)
+		return Report{Meta: Meta{Input: &in}, Configs: []Config{BuildConfig("none", cs, answered(cs, run.Passed))}}
+	}
+	const warning = "The case lines differ"
+	same := Diff(withInput(cs), withInput(cs))
+	if strings.Contains(same, warning) {
+		t.Errorf("the same input is reported as changed:\n%s", same)
+	}
+	fewer := Diff(withInput(cs), withInput(cs[:2]))
+	contains(t, fewer, warning, "| third | 3 | 2 | 3 | 2 | 0 | 0 | 0 | 0 |")
+	other := []cases.Case{cs[0]}
+	other[0].Sources = []cases.SourceRef{{Source: "added", CaseID: "x"}}
+	contains(t, Diff(withInput(cs[1:]), withInput(slices.Concat(cs[1:], other))), warning, "| added | 0 | 1 | 0 | 1 |")
+	// A report without input counts cannot be compared.
+	contains(t, Diff(Report{Configs: withInput(cs).Configs}, withInput(cs)), "does not count its case lines")
+}
+
 func TestMarkdownEscapesNames(t *testing.T) {
 	t.Parallel()
 	c := newCase(t, cases.SourceBaseline, "a|b\n# <script>`x`", cases.Attack, "q=1", "")

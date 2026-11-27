@@ -21,7 +21,7 @@
     "commit": "",
     "license": "",
     "included": false,
-    "note": "Candidate for legitimate traffic: the HTTP DATASET CSIC 2010 of the Spanish National Research Council (normal and anomalous requests to one shop application). Left out: its terms of use were not verified (no network access when the legitimate set was built), it is not a git repository and no version is pinned. Legitimate traffic is generated instead (aegobench import --source generated-legit)."
+    "note": "Candidate for legitimate traffic: the HTTP DATASET CSIC 2010. Unverified: the description that follows was written without network access and was not checked against the data set (said to be from the Spanish National Research Council, with normal and anomalous requests to one shop application). Left out: its terms of use were not verified (no network access when the legitimate set was built), it is not a git repository and no version is pinned. Legitimate traffic is generated instead (aegobench import --source generated-legit)."
   },
   {
     "name": "openappsec-waf-comparison",
@@ -29,6 +29,6 @@
     "commit": "",
     "license": "",
     "included": false,
-    "note": "Candidate for legitimate traffic: the legitimate request set of the open-appsec WAF comparison project, which that project downloads separately from its repository. Left out: neither the licence of the repository nor the terms of the data set were verified (no network access when the legitimate set was built), and no commit is pinned."
+    "note": "Candidate for legitimate traffic: the legitimate request set of the open-appsec WAF comparison project. Unverified: the repository path above and this description were written without network access and were not checked (the set is said to be downloaded separately from the repository). Left out: neither the licence of the repository nor the terms of the data set were verified (no network access when the legitimate set was built), and no commit is pinned."
   }
 ]

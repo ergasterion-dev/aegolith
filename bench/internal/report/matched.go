@@ -14,8 +14,8 @@ import (
 // protocol rules (method, content type, body size, control characters, path
 // traversal in the raw path, transfer encoding, double encoding, the limits of
 // an inspection and a body that cannot be parsed), the route rules, the schema
-// rules (a declared field's type, an undeclared field) and the scanner rules (a
-// scanner's User-Agent, a probe or backup path).
+// rules (a declared field that fails its declaration, an undeclared field) and
+// the scanner rules (a scanner's User-Agent, a probe or backup path).
 const (
 	familyProtocol = "PROTO"
 	familyRoute    = "ROUTE"
@@ -129,15 +129,18 @@ which look for an attack in what a request says. The other four parts hold the
 cases without a content rule, route rules aside. Protocol only (AEG-PROTO-\*):
 checks of the method, content type, body size, control characters, raw path and
 transfer encoding, the limits of an inspection and a body that cannot be parsed.
-Schema only (AEG-SCHEMA-\*): a declared field of the wrong type, or a field that
-is not declared. Scanner only (AEG-SCANNER-\*): a scanner's User-Agent, or a probe
+Schema only (AEG-SCHEMA-\*): a declared field that fails its declaration (its
+type, length, range, enum values or pattern), or a field that is not declared.
+Scanner only (AEG-SCANNER-\*): a scanner's User-Agent, or a probe
 or backup path. Anything else: more than one of these three, a block by a route
 rule alone, or a block without a rule.
 
-In enforce mode the first blocking match ends the inspection, and the checks of
-the method, content type, body size and path come before any value is read. So a
-detection by protocol rules only does not say that no content rule would have
-matched it, and the content rule figures say what the content rules did in this
-configuration, not what they would do if those refusals were switched off.
+In enforce mode the first blocking match ends the inspection. The protocol checks
+(the method, content type, body size and path among them) come first, then the
+scanner checks of the User-Agent and of probe and backup paths, and only then are
+the values of the request read. So a detection by protocol rules only or by
+scanner rules only does not say that no content rule would have matched it, and
+the content rule figures say what the content rules did in this configuration,
+not what they would do if those refusals were switched off.
 `, strings.Join(contentFamilies[:last], ", "), contentFamilies[last])
 }

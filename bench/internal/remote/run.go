@@ -268,7 +268,7 @@ type sender struct {
 // control sends the benign control of entry e.
 func (s *sender) control(e int) {
 	s.controls[e]++
-	id := fmt.Sprintf("%scontrol-%d-%d", s.idPrefix, e+1, s.controls[e])
+	id := fmt.Sprintf("%s%s%d-%d", s.idPrefix, controlInfix, e+1, s.controls[e])
 	s.send(controlRequest(s.target.Allow[e]), id, e, kindControl)
 }
 
@@ -297,7 +297,7 @@ func (s *sender) send(req cases.Case, id string, e int, kind int) (r run.Result,
 	if kind != kindHealth && s.guard.HealthDue(s.clock.Now()) {
 		s.health++
 		health := cases.Case{Method: http.MethodGet, Path: s.target.HealthPath}
-		s.send(health, s.idPrefix+"health-"+strconv.Itoa(s.health), e, kindHealth)
+		s.send(health, s.idPrefix+healthInfix+strconv.Itoa(s.health), e, kindHealth)
 		if s.stop != "" {
 			return r, false
 		}

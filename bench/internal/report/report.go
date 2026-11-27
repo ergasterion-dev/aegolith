@@ -89,8 +89,14 @@ type Listed struct {
 	Rules                                  []string
 }
 
+// Format is the format version of report.json. A report of another version
+// has other fields: read as this one, those it lacks would compare as zero.
+const Format = 2
+
 // Report is what is written as report.json and rendered as report.md.
 type Report struct {
+	// Format is the format version, Format when written by this program.
+	Format  int
 	Meta    Meta
 	Configs []Config
 	// Load is the result of a load run, if one was made. It enters no count

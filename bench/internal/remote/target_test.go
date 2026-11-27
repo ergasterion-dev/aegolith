@@ -25,7 +25,8 @@ func validTarget() Target {
 		Headers:         map[string]string{"Authorization": secretToken},
 		Allow: []Entry{
 			{Method: "GET", Path: "/search", Placements: []string{"query:q"}, BenignStatus: []int{200}},
-			{Method: "POST", Path: "/api/notes", Placements: []string{"json:note", "header:X-Note"}, BenignStatus: []int{200, 201}},
+			{Method: "POST", Path: "/api/notes", Placements: []string{"json:note", "header:X-Note"}, BenignStatus: []int{200, 201},
+				MayWriteData: true},
 		},
 	}
 }
@@ -49,6 +50,24 @@ func TestValidTargetPasses(t *testing.T) {
 	root.Allow[0].Path = "/"
 	if err := root.Validate(exampleHost, 1); err != nil {
 		t.Errorf("path /: %v", err)
+	}
+	// GET and HEAD read; they need no flag.
+	read := validTarget()
+	read.Allow[1].Method, read.Allow[1].MayWriteData = "HEAD", false
+	if err := read.Validate(exampleHost, 1); err != nil {
+		t.Errorf("HEAD without may_write_data: %v", err)
+	}
+	// 2xx and 4xx other than 403 are benign answers.
+	benign := validTarget()
+	benign.Allow[0].BenignStatus = []int{200, 204, 299, 400, 404, 422, 499}
+	if err := benign.Validate(exampleHost, 1); err != nil {
+		t.Errorf("2xx and 4xx benign statuses: %v", err)
+	}
+	// Names that merely contain a refused name are allowed.
+	names := validTarget()
+	names.Allow[0].Placements = []string{"query:method_name", "query:payment_method", "header:X-Forwardedness", "header:X-Originally"}
+	if err := names.Validate(exampleHost, 1); err != nil {
+		t.Errorf("names near refused ones: %v", err)
 	}
 }
 
@@ -95,6 +114,12 @@ func TestValidateRefuses(t *testing.T) {
 		{name: "benign 403", edit: entry(func(e *Entry) { e.BenignStatus = []int{200, 403} }), want: "benign_status"},
 		{name: "benign 5xx", edit: entry(func(e *Entry) { e.BenignStatus = []int{503} }), want: "benign_status"},
 		{name: "benign not a status", edit: entry(func(e *Entry) { e.BenignStatus = []int{99} }), want: "benign_status"},
+		{name: "benign 100", edit: entry(func(e *Entry) { e.BenignStatus = []int{100} }), want: "benign_status"},
+		{name: "benign 101", edit: entry(func(e *Entry) { e.BenignStatus = []int{200, 101} }), want: "benign_status"},
+		{name: "benign 199", edit: entry(func(e *Entry) { e.BenignStatus = []int{199} }), want: "benign_status"},
+		{name: "benign 301", edit: entry(func(e *Entry) { e.BenignStatus = []int{301} }), want: "benign_status"},
+		{name: "benign 304", edit: entry(func(e *Entry) { e.BenignStatus = []int{200, 304} }), want: "benign_status"},
+		{name: "benign 399", edit: entry(func(e *Entry) { e.BenignStatus = []int{399} }), want: "benign_status"},
 		{name: "stop 403 in enforce", edit: func(t *Target) { t.StopStatuses = []int{403} }, want: "stop_statuses"},
 		{name: "stop not a status", edit: func(t *Target) { t.StopStatuses = []int{600} }, want: "stop_statuses"},
 		{name: "method not a token", edit: entry(func(e *Entry) { e.Method = "PO ST" }), want: "method"},
@@ -113,6 +138,30 @@ func TestValidateRefuses(t *testing.T) {
 		{name: "target header not a token", edit: func(t *Target) { t.Headers["X Y"] = "v" }, want: "header"},
 		{name: "target header value with a control byte", edit: func(t *Target) { t.Headers["X-Secret"] = "s3cr3t\r\nX: y" }, want: "header"},
 		{name: "target headers differ by case", edit: func(t *Target) { t.Headers["AUTHORIZATION"] = "x" }, want: "case"},
+	}
+	// A method other than GET or HEAD may change data: it needs the entry's
+	// may_write_data, by which the operator accepts that.
+	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "PROPFIND", "get", "Head", "PURGE"} {
+		tests = append(tests, change{name: "method " + method + " without may_write_data",
+			edit: entry(func(e *Entry) { e.Method, e.MayWriteData = method, false }), want: "may_write_data"})
+	}
+	// Routing and hop-by-hop names, and every X-Forwarded- and X-Original- name.
+	for _, name := range []string{"X-Forwarded-Host", "X-Original-URL", "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Prefix", "X-Forwarded-Port",
+		"X-Forwarded-Server", "x-forwarded-anything", "X-Forwarded", "X-Original-URI", "X-Original-Host",
+		"X-ORIGINAL-METHOD", "x-original-whatever", "X-Host", "Proxy-Connection", "Keep-Alive", "Via",
+		"Max-Forwards", "X-Real-IP", "True-Client-IP", "X-Client-IP", "Proxy-Authorization", "X-Override-URL",
+		"X-Envoy-Original-Path"} {
+		tests = append(tests,
+			change{name: "routing target header " + name, edit: func(t *Target) { t.Headers[name] = "v" }, want: "header"},
+			change{name: "routing placement " + name, edit: entry(func(e *Entry) { e.Placements = []string{"header:" + name} }), want: "header"})
+	}
+	// Method overrides some frameworks read from a query or a body.
+	for _, name := range []string{"_method", "_METHOD", "__method", "_Method", "method", "_HttpMethod", "_http_method",
+		"httpMethod", "X-HTTP-Method-Override", "x_http_method_override", "X-HTTP-Method", "X-Method-Override", "_methodoverride"} {
+		for _, kind := range []string{"query", "json"} {
+			tests = append(tests, change{name: kind + " placement " + name,
+				edit: entry(func(e *Entry) { e.Placements = []string{kind + ":" + name} }), want: "method override"})
+		}
 	}
 	for _, name := range forbiddenHeaders {
 		for _, spelling := range []string{name, strings.ToUpper(name), strings.ToLower(name)} {
@@ -182,6 +231,10 @@ func TestLoadTarget(t *testing.T) {
 	if err := target.Validate(exampleHost, 3); err != nil {
 		t.Errorf("Validate: %v", err)
 	}
+	write2 := strings.Replace(good, `"method": "GET"`, `"method": "POST", "may_write_data": true`, 1)
+	if w, err := LoadTarget(write("write.json", write2)); err != nil || !w.Allow[0].MayWriteData || w.Validate(exampleHost, 3) != nil {
+		t.Errorf("may_write_data is not read: %+v, %v", w.Allow, err)
+	}
 	for name, text := range map[string]string{
 		"unknown key":         strings.Replace(good, `"mode"`, `"insecure": true, "mode"`, 1),
 		"unknown entry key":   strings.Replace(good, `"method"`, `"methods": [], "method"`, 1),
@@ -212,5 +265,12 @@ func TestExampleTargetFileIsValid(t *testing.T) {
 	}
 	if err := target.Validate(exampleHost, 1); err != nil {
 		t.Fatal(err)
+	}
+	// The example a reader copies must not write: GET routes only, answered 200.
+	for i, e := range target.Allow {
+		if e.Method != "GET" || e.MayWriteData || len(e.BenignStatus) != 1 || e.BenignStatus[0] != 200 {
+			t.Errorf("allow entry %d is %s with may_write_data %t and benign_status %v, want GET, false and [200]",
+				i+1, e.Method, e.MayWriteData, e.BenignStatus)
+		}
 	}
 }

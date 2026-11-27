@@ -37,7 +37,8 @@ func writeTargetFile(t *testing.T, path, base string, edit func(*remote.Target))
 		MaxRPS: 50, StopStatuses: []int{429}, Headers: map[string]string{},
 		Allow: []remote.Entry{
 			{Method: "GET", Path: "/api/v1/products/search", Placements: []string{"query:q"}, BenignStatus: []int{200}},
-			{Method: "POST", Path: "/api/v1/notes", Placements: []string{"json:note"}, BenignStatus: []int{200}},
+			{Method: "POST", Path: "/api/v1/notes", Placements: []string{"json:note"}, BenignStatus: []int{200},
+				MayWriteData: true},
 		},
 	}
 	if edit != nil {
@@ -84,8 +85,11 @@ func TestRemoteThenJoinThenReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("join: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "unreadable log lines: 0 access, 0 decision") {
-		t.Errorf("join summary %q", stdout.String())
+	for _, want := range []string{"unreadable log lines: 0 access, 0 decision",
+		"2 sent requests: 2 with an access record, 1 with a decision record"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("join summary %q does not say %q", stdout.String(), want)
+		}
 	}
 	rs := readResults(t, joined)
 	count := map[runner.Outcome]int{}
@@ -94,6 +98,17 @@ func TestRemoteThenJoinThenReport(t *testing.T) {
 	}
 	if len(rs) != 5 || count[runner.Blocked] != 1 || count[runner.Passed] != 1 || count[runner.NotSent] != 3 {
 		t.Errorf("joined outcomes %v", count)
+	}
+
+	// The case file says that the placed requests were sent decoded.
+	lines, err := cases.ReadLines(strings.NewReader(readText(t, placed)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range lines {
+		if sentLine := l.Source == "test" && (l.Path == "/api/v1/products/search" || l.Path == "/api/v1/notes"); sentLine != (l.Encoder == remote.PlacedEncoder) {
+			t.Errorf("line %s %s has encoder %q", l.Method, l.Path, l.Encoder)
+		}
 	}
 
 	out := filepath.Join(dir, "report")
@@ -129,6 +144,8 @@ func TestRemoteRefusesBeforeSending(t *testing.T) {
 	host := writeTargetFile(t, good, base, nil)
 	noAllow := filepath.Join(dir, "no-allow.json")
 	writeTargetFile(t, noAllow, base, func(t *remote.Target) { t.Allow = nil })
+	unflagged := filepath.Join(dir, "unflagged.json")
+	writeTargetFile(t, unflagged, base, func(t *remote.Target) { t.Allow[1].MayWriteData = false })
 	public := filepath.Join(dir, "public.json")
 	writeTargetFile(t, public, base, func(t *remote.Target) { t.BaseURL = "http://waf.example.test" })
 	out, outCases := filepath.Join(dir, "out.jsonl"), filepath.Join(dir, "placed.jsonl")
@@ -165,6 +182,7 @@ func TestRemoteRefusesBeforeSending(t *testing.T) {
 		"wrong host":            args("--confirm-host", "localhost"),
 		"host without port":     args("--confirm-host", "127.0.0.1"),
 		"empty allow-list":      args("--target", noAllow),
+		"write without flag":    args("--target", unflagged),
 		"http to a public host": args("--target", public, "--confirm-host", "waf.example.test"),
 		"out is out-cases":      args("--out", outCases),
 		"out is a case file":    args("--out", caseFile),
@@ -233,12 +251,85 @@ func TestJoinRejectsBadUsage(t *testing.T) {
 		}
 	}
 	// A result with no access record is never passed.
+	writeText(t, access, `{"id":"rt-control-1-1","method":"GET","path":"/x","time":"2026-01-02T03:04:05Z"}`+"\n")
 	out := filepath.Join(dir, "out.jsonl")
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"join", "--results", results, "--access", access, "--decisions", decisions, "--out", out}, &stdout, &stderr); err != nil {
+	if err := run([]string{"join", "--results", results, "--access", access, "--decisions", decisions,
+		"--allow-no-decisions", "--out", out}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if rs := readResults(t, out); len(rs) != 1 || rs[0].Outcome != runner.Unknown {
 		t.Errorf("joined %+v", rs)
+	}
+}
+
+// TestJoinRefusesLogsOfNoRun joins a real remote run with logs that do not
+// belong to it: nothing is written, and the error says why.
+func TestJoinRefusesLogsOfNoRun(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	caseFile := filepath.Join(dir, "cases.jsonl")
+	writeCases(t, caseFile, remoteLine("sqli", "query", "1' OR '1'='1", cases.Attack),
+		remoteLine("fine", "query", "apples and pears", cases.Legit))
+	access, decisions := filepath.Join(dir, "a.jsonl"), filepath.Join(dir, "d.jsonl")
+	base := startTarget(t, access, decisions)
+	targetFile := filepath.Join(dir, "target.json")
+	host := writeTargetFile(t, targetFile, base, nil)
+	sent, placed := filepath.Join(dir, "sent.jsonl"), filepath.Join(dir, "placed.jsonl")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"remote", "--target", targetFile, "--confirm-host", host, "--rps", "50",
+		"--cases", caseFile, "--out", sent, "--out-cases", placed}, &stdout, &stderr); err != nil {
+		t.Fatalf("remote: %v", err)
+	}
+	empty := filepath.Join(dir, "empty.jsonl")
+	writeText(t, empty, "")
+	// The case records of the access log alone, as if controls were not logged.
+	casesOnly := filepath.Join(dir, "cases-only.jsonl")
+	var kept []string
+	for _, line := range strings.Split(strings.TrimSpace(readText(t, access)), "\n") {
+		if !strings.Contains(line, "-control-") && !strings.Contains(line, "-health-") {
+			kept = append(kept, line)
+		}
+	}
+	writeText(t, casesOnly, strings.Join(kept, "\n")+"\n")
+	// The decision log of another run: the same records under another tag.
+	other := filepath.Join(dir, "other.jsonl")
+	rs := readResults(t, sent)
+	tag := strings.TrimSuffix(rs[0].RequestID, rs[0].CaseID)
+	writeText(t, other, strings.ReplaceAll(readText(t, decisions), tag, "rt-ffffffff-"))
+	if readText(t, other) == readText(t, decisions) {
+		t.Fatal("fixture: the other decision log is the same")
+	}
+
+	out := filepath.Join(dir, "joined.jsonl")
+	join := func(access, decisions string, more ...string) error {
+		stdout.Reset()
+		return run(append([]string{"join", "--results", sent, "--access", access, "--decisions", decisions, "--out", out}, more...),
+			&stdout, &stderr)
+	}
+	for name, tc := range map[string]struct {
+		access, decisions, want string
+		more                    []string
+	}{
+		"empty decision log":          {access, empty, "--allow-no-decisions", nil},
+		"decision log of other run":   {access, other, "--allow-no-decisions", nil},
+		"empty access log":            {empty, decisions, "access log", nil},
+		"empty access log, flag":      {empty, decisions, "access log", []string{"--allow-no-decisions"}},
+		"access log without controls": {casesOnly, decisions, "control", nil},
+	} {
+		err := join(tc.access, tc.decisions, tc.more...)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err %v, want one mentioning %q", name, err, tc.want)
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Errorf("%s: a refused join wrote its output", name)
+		}
+	}
+	// A genuine zero is accepted when the operator says so.
+	if err := join(access, empty, "--allow-no-decisions"); err != nil {
+		t.Fatalf("join with --allow-no-decisions: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "2 sent requests: 2 with an access record, 0 with a decision record") {
+		t.Errorf("join summary %q", stdout.String())
 	}
 }

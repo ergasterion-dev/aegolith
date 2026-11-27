@@ -473,6 +473,7 @@ func Diff(prev, cur Report) string {
 	if !slices.Equal(sourceVersions(prev), sourceVersions(cur)) {
 		b.WriteString("The sources differ between the two reports, so the rates are not over the same cases.\n")
 	}
+	diffInput(&b, prev.Meta.Input, cur.Meta.Input)
 	for _, c := range cur.Configs {
 		fmt.Fprintf(&b, "\n### Configuration: %s\n\n", cell(c.Name))
 		i := indexOf(prev.Configs, c.Name)
@@ -488,6 +489,51 @@ func Diff(prev, cur Report) string {
 		}
 	}
 	return b.String()
+}
+
+// diffInput warns when the two reports were made from other numbers of case
+// lines of a source: the case set changed, even at the same source versions.
+func diffInput(b *strings.Builder, prev, cur *Input) {
+	if prev == nil || cur == nil {
+		b.WriteString("\nOne of the reports does not count its case lines, so whether the case set changed is not known.\n")
+		return
+	}
+	of := func(in *Input) map[string]SourceInput {
+		m := make(map[string]SourceInput, len(in.Sources))
+		for _, s := range in.Sources {
+			m[s.Source] = s
+		}
+		return m
+	}
+	before, after := of(prev), of(cur)
+	var names []string
+	for name := range maps.Keys(before) {
+		names = append(names, name)
+	}
+	for name := range maps.Keys(after) {
+		if _, ok := before[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	var changed []string
+	for _, name := range names {
+		p, c := before[name], after[name]
+		if p.Lines != c.Lines || p.Attack != c.Attack || p.Legit != c.Legit || p.NearMiss != c.NearMiss {
+			changed = append(changed, name)
+		}
+	}
+	if len(changed) == 0 {
+		return
+	}
+	b.WriteString("\nThe case lines differ between the two reports, so the rates are not over the same cases:\n\n")
+	header(b, "Source", "Lines before", "Lines now", "Attack before", "Attack now", "Legit before", "Legit now",
+		"Near-miss before", "Near-miss now")
+	for _, name := range changed {
+		p, c := before[name], after[name]
+		row(b, name, strconv.Itoa(p.Lines), strconv.Itoa(c.Lines), strconv.Itoa(p.Attack), strconv.Itoa(c.Attack),
+			strconv.Itoa(p.Legit), strconv.Itoa(c.Legit), strconv.Itoa(p.NearMiss), strconv.Itoa(c.NearMiss))
+	}
 }
 
 func indexOf(cs []Config, name string) int {
