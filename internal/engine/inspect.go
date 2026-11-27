@@ -240,18 +240,24 @@ func (s *state) scanWindows(loc model.Location, field, v string, extra func(stri
 // the text detectors. Windows, charges and what extra reads are those of the
 // whole value.
 func (s *state) scanWindowsAfter(loc model.Location, field, v string, hidden int, extra func(string) (detect.Hit, bool), skip model.Category) {
+	// A query value was percent-decoded from the request line, which cannot
+	// hold a raw line break: line breaks in it were sent encoded.
+	scanText := detect.ScanText
+	if loc == model.LocQuery {
+		scanText = detect.ScanQueryText
+	}
+	s.scanWindowsWith(scanText, loc, field, v, hidden, extra, skip)
+}
+
+// scanWindowsWith is scanWindowsAfter with the text detectors named by the
+// caller instead of chosen by loc.
+func (s *state) scanWindowsWith(scanText func(string) []detect.Hit, loc model.Location, field, v string, hidden int, extra func(string) (detect.Hit, bool), skip model.Category) {
 	if s.stop || s.exhausted || v == "" {
 		return
 	}
 	size := s.e.lim.MaxValueLen
 	if len(v) > size {
 		s.protoMatch(ruleValueTooLong, loc, field, v)
-	}
-	// A query value was percent-decoded from the request line, which cannot
-	// hold a raw line break: line breaks in it were sent encoded.
-	scanText := detect.ScanText
-	if loc == model.LocQuery {
-		scanText = detect.ScanQueryText
 	}
 	step := max(size/2, 1)
 	for start := 0; ; start += step {

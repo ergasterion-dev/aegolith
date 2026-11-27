@@ -39,6 +39,9 @@ func TestAllowedBodyTypesAreInspected(t *testing.T) {
 		{"application/graphql", "application/graphql"},
 		{"application/yaml", "application/yaml"},
 		{"application/x-made-up", "application/x-made-up"},
+		// model/ is binary, its XML and JSON members are not.
+		{"model/x3d+xml", "model/x3d+xml"},
+		{"model/vnd.collada+xml", "Model/VND.Collada+XML; charset=utf-8"},
 	} {
 		t.Run(tc.sent, func(t *testing.T) {
 			d := postBody(allowing(t, model.ModeEnforce, tc.allowed), tc.sent, sqlInMarkup)
@@ -51,13 +54,25 @@ func TestAllowedBodyTypesAreInspected(t *testing.T) {
 
 func TestXXERunsOnEveryAllowedXMLType(t *testing.T) {
 	const body = `<!DOCTYPE a [<!ENTITY b SYSTEM "file:///etc/hostname">]><a>&b;</a>`
-	for _, ct := range []string{"application/xml", "text/xml", "application/soap+xml"} {
+	for _, ct := range []string{"application/xml", "text/xml", "application/soap+xml", "model/x3d+xml"} {
 		t.Run(ct, func(t *testing.T) {
 			d := postBody(allowing(t, model.ModeMonitor, ct), ct, body)
 			if !hasMatch(d, "AEG-XXE-001", "body") {
 				t.Fatalf("want AEG-XXE-001 on body: %+v", d)
 			}
 		})
+	}
+}
+
+// A JSON suffix is walked as JSON, also under a prefix or beside a suffix
+// that otherwise names binary content.
+func TestJSONSuffixBeatsBinaryGroups(t *testing.T) {
+	const body = `{"q":"1' UNION SELECT password FROM users--"}`
+	for _, ct := range []string{"model/gltf+json", "application/vnd.oasis.opendocument.example+json"} {
+		d := postBody(allowing(t, model.ModeEnforce, ct), ct, body)
+		if d.Action != model.ActionBlock || !hasMatch(d, "AEG-SQLI-001", "body.q") {
+			t.Errorf("%s: want block with AEG-SQLI-001 on body.q: %+v", ct, d)
+		}
 	}
 }
 
@@ -73,9 +88,25 @@ func TestBinaryBodyTypesAreSkipped(t *testing.T) {
 		"application/msgpack", "application/x-msgpack", "application/vnd.msgpack",
 		"application/cbor", "application/wasm", "application/msword",
 		"application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+		"application/epub+zip", "application/vnd.example+gzip",
+		"application/senml+cbor", "application/vnd.example+der",
+		"model/gltf-binary", "model/stl",
+		"application/vnd.oasis.opendocument.text",
+		"application/vnd.oasis.opendocument.spreadsheet",
+		"application/zstd", "application/x-zstd", "application/x-bzip2",
+		"application/x-xz", "application/x-lz4", "application/x-brotli",
+		"application/vnd.rar", "application/x-rar-compressed",
+		"application/java-archive", "application/vnd.android.package-archive",
+		"application/vnd.sqlite3", "application/x-sqlite3", "application/bson",
+		"application/avro", "application/vnd.apache.parquet",
+		"application/x-parquet", "application/vnd.apache.thrift.binary",
+		"application/x-thrift", "application/x-rpm",
+		"application/vnd.debian.binary-package", "application/x-iso9660-image",
+		"Application/Zstd; version=1",
 	} {
 		t.Run(ct, func(t *testing.T) {
-			d := postBody(allowing(t, model.ModeEnforce, ct), ct, sqlInMarkup)
+			allowed, _, _ := strings.Cut(ct, ";")
+			d := postBody(allowing(t, model.ModeEnforce, allowed), ct, sqlInMarkup)
 			if d.Action != model.ActionAllow || len(d.Matches) != 0 {
 				t.Fatalf("want allow without matches: %+v", d)
 			}

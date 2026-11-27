@@ -218,9 +218,38 @@ func TestBase64ExclusionApplies(t *testing.T) {
 	}
 }
 
+// Decoded text carries real line breaks wherever it was sent, so a query
+// value is not read with the query string's command rule, which takes a bare
+// command after a line break for an attack.
+func TestBase64QueryValueIsJudgedLikeJSONText(t *testing.T) {
+	text := dataEngine(t, model.ModeEnforce, policy.TypeText)
+	query := dataLocations[1]
+	if d := text.Inspect(query.request(t, "Notes:\nls")); d.Action != model.ActionBlock || !hasMatch(d, "AEG-CMDI-001", query.field) {
+		t.Fatalf("the multi-line note does not tell the two forms apart: %+v", d)
+	}
+	for _, bt := range base64Types {
+		e := dataEngine(t, model.ModeEnforce, bt.typ)
+		t.Run(bt.typ+"/multi-line text", func(t *testing.T) {
+			d := e.Inspect(query.request(t, bt.raw.EncodeToString([]byte("Notes:\nls"))))
+			if d.Action != model.ActionAllow || len(d.Matches) != 0 {
+				t.Fatalf("want allow without matches: %+v", d)
+			}
+		})
+		for _, v := range []string{"x; cat /etc/passwd", "a && whoami", "q | id", "Notes:\nls; cat /etc/passwd"} {
+			t.Run(bt.typ+"/"+v, func(t *testing.T) {
+				d := e.Inspect(query.request(t, bt.raw.EncodeToString([]byte(v))))
+				if d.Action != model.ActionBlock || !hasMatch(d, "AEG-CMDI-001", query.field) {
+					t.Fatalf("want block with AEG-CMDI-001 on %s: %+v", query.field, d)
+				}
+			})
+		}
+	}
+}
+
 // TestBase64FieldJudgedLikeText holds the invariant of both types: in every
 // location, the matches on a base64 or base64url field are those on a text
-// field that was sent the decoded value.
+// field that was sent the decoded value, except that in the query string the
+// decoded value gets the verdicts of a JSON body value, reported in the query.
 func TestBase64FieldJudgedLikeText(t *testing.T) {
 	type verdict struct {
 		rule   string
@@ -239,6 +268,18 @@ func TestBase64FieldJudgedLikeText(t *testing.T) {
 	text := dataEngine(t, model.ModeMonitor, policy.TypeText)
 	enforceText := dataEngine(t, model.ModeEnforce, policy.TypeText)
 	seen := map[string]bool{} // rules the text side raised, over all cases
+	jsonBody := dataLocations[2]
+	// textVerdicts is what a base64 field in loc must report for v.
+	textVerdicts := func(t *testing.T, e *Engine, loc int, v string) []verdict {
+		if dataLocations[loc].name != "query" {
+			return on(e.Inspect(dataLocations[loc].request(t, v)), dataLocations[loc].field)
+		}
+		out := on(e.Inspect(jsonBody.request(t, v)), jsonBody.field)
+		for i := range out {
+			out[i].loc = model.LocQuery
+		}
+		return out
+	}
 	values := map[string]string{
 		"sql":                sqlAttack,
 		"markup":             `<script>alert(document.cookie)</script>`,
@@ -258,13 +299,13 @@ func TestBase64FieldJudgedLikeText(t *testing.T) {
 		b64 := dataEngine(t, model.ModeMonitor, bt.typ)
 		enforceB64 := dataEngine(t, model.ModeEnforce, bt.typ)
 		for name, v := range values {
-			for _, loc := range dataLocations {
+			for i, loc := range dataLocations {
 				t.Run(bt.typ+"/"+name+"/"+loc.name, func(t *testing.T) {
 					encoded := bt.raw.EncodeToString([]byte(v))
 					if loc.name == "path" && v == "" {
 						t.Skip("an empty path segment does not match the route")
 					}
-					want := on(text.Inspect(loc.request(t, v)), loc.field)
+					want := textVerdicts(t, text, i, v)
 					for _, w := range want {
 						seen[w.rule] = true
 					}
@@ -277,7 +318,7 @@ func TestBase64FieldJudgedLikeText(t *testing.T) {
 					if loc.name == "path" && strings.ContainsAny(v, "\n%") {
 						return
 					}
-					want = on(enforceText.Inspect(loc.request(t, v)), loc.field)
+					want = textVerdicts(t, enforceText, i, v)
 					if got := on(enforceB64.Inspect(loc.request(t, encoded)), loc.field); !slices.Equal(got, want) {
 						t.Errorf("enforce: base64 %+v, text %+v", got, want)
 					}

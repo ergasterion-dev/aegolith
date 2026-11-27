@@ -332,8 +332,8 @@ Both this file and the Go example above are compiled and loaded by the tests in 
 | `email` | An email address | Yes |
 | `text` | Free text, optional `max_len` | Yes, full detector set |
 | `url` | An absolute http(s) URL | Yes, plus the SSRF rules |
-| `base64` | Base64 in the standard alphabet (`+` `/`), optional `max_len` on the encoded value (see below) | Yes, the decoded value, as `text` |
-| `base64url` | Base64 in the URL-safe alphabet (`-` `_`), otherwise as `base64` | Yes, the decoded value, as `text` |
+| `base64` | Base64 in the standard alphabet (`+` `/`), optional `max_len` on the encoded value (see below) | Yes, the decoded value, as a JSON body value |
+| `base64url` | Base64 in the URL-safe alphabet (`-` `_`), otherwise as `base64` | Yes, the decoded value, as a JSON body value |
 
 Field paths, in exclusions and in match results: `path.<param>`, `query.<name>`, `body.<json.path>` (arrays as `items[]`), `form.<name>`, `header.<lowercase name>`, `cookie.<name>`. A route key is `"METHOD /template"`, as declared.
 
@@ -347,7 +347,7 @@ Field paths, in exclusions and in match results: `path.<param>`, `query.<name>`,
 <details>
 <summary><b>When to use <code>base64</code> and <code>base64url</code></b></summary>
 
-Use them for a field in which a client sends text as base64 and the handler decodes it: `{ "type": "base64", "max_len": 8000 }`. Declared as `string` or `text`, such a field is scanned as the encoded text, so an attack inside it passes. Declared as `base64` or `base64url`, the value is decoded and judged exactly like a `text` value in the same place, under the same field name in matches and exclusions; the encoded text is not scanned.
+Use them for a field in which a client sends text as base64 and the handler decodes it: `{ "type": "base64", "max_len": 8000 }`. Declared as `string` or `text`, such a field is scanned as the encoded text, so an attack inside it passes. Declared as `base64` or `base64url`, the value is decoded and the detectors judge the decoded text as they judge a JSON body value, wherever it was sent, under the location and field name it was sent in (in matches and exclusions); the encoded text is not scanned. In a query string, text of several lines is therefore not read with the query string's command rule.
 
 **Declare the alphabet the handler decodes.** `base64` (`aegolith.TypeBase64`) takes the standard alphabet (`+` `/`) only, `base64url` (`aegolith.TypeBase64URL`) the URL-safe alphabet (`-` `_`) only. On a `base64url` field the handler must decode with a URL-safe decoder: some standard decoders (Python's `base64.b64decode` by default, Ruby's `Base64.decode64`) skip `-` and `_` instead of failing, so they would read other text than Aegolith judged.
 
@@ -355,6 +355,7 @@ Use them for a field in which a client sends text as base64 and the handler deco
 - `max_len` bounds the encoded value, CR and LF included, not the decoded one.
 - For `base64` in a query string or urlencoded form, a bare `+` means a space, so the client must send it as `%2B`; in a path parameter a `/` must be sent as `%2F`. `base64url` needs neither.
 - Only declared fields are decoded, and once: base64 inside the decoded text stays encoded.
+- Path-level rules (`AEG-PROTO-005`, the scanner path rules) see only the encoded path of a path parameter. See [what is missed](docs/threat-model.md#base64-fields).
 - They are meant for text. Binary content (an image, a compressed file) is scanned as text too and can block, for example as `AEG-LFI-001` for a NUL byte; leave such a field `string`.
 
 </details>

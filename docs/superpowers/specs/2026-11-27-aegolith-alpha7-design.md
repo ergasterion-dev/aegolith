@@ -52,7 +52,7 @@ By media type, in this order:
 
 1. JSON (`application/json`, `+json`): walked, as before.
 2. `application/x-www-form-urlencoded`, `multipart/*`: parsed, as before.
-3. Binary: `image/*`, `audio/*`, `video/*`, `font/*`, `application/grpc*`, and the exact types in the plan: not inspected. `image/svg+xml` is in this group.
+3. Binary: `image/*`, `audio/*`, `video/*`, `font/*`, `model/*` (not `+xml`), `application/grpc*`, the OpenXML and OpenDocument prefixes, the suffixes `+zip`, `+gzip`, `+cbor` and `+der`, and a fixed list of exact types (in the threat model): not inspected. `image/svg+xml` is in this group.
 4. XML (`application/xml`, `text/xml`, `+xml`): scanned as text with the XXE rule, whether the type was allowed by `allow_xml` or by `allowed_content_types`.
 5. Everything else, including a missing content type: scanned as text.
 
@@ -70,7 +70,7 @@ Accepted miss: with `AEG-PROTO-002` switched off or excluded, a body declared as
 - One type for both alphabets was rejected: standard decoders that skip unknown characters (Python `base64.b64decode` by default, Ruby `Base64.decode64`) drop `-` and `_`, so a value judged as URL-safe could hide an attack from the firewall that such a handler reads. Scanning a second reading of each value was rejected too: it turns legitimate URL-safe values into binary noise. Each value is decoded once.
 - Both types: padded or unpadded, with CR and LF ignored. The other alphabet, other whitespace and wrong padding are `AEG-SCHEMA-001`.
 - `max_len` bounds the encoded value.
-- The decoded value is judged exactly like a `text` value in the same location.
+- The decoded value is judged by the detectors that read a JSON body value (`detect.ScanText`), in every location; matches and exclusions carry the location and field it was sent in. In the query string this differs from a `text` value: decoded text holds real line breaks, so the query-only command rule would block ordinary multi-line text.
 - Meant for base64-encoded text. Binary content would be scanned as text.
 
 ## Done when

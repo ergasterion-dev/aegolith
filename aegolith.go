@@ -112,8 +112,8 @@ const (
 
 	// TypeBase64 ("base64") is text sent as base64 in the standard alphabet
 	// ('+' and '/'), padded or not, CR and LF ignored. The detectors judge
-	// the decoded value as they judge a TypeText value; MaxLen bounds the
-	// encoded one.
+	// the decoded value as they judge a JSON body value, wherever it was
+	// sent; MaxLen bounds the encoded one.
 	TypeBase64 = policy.TypeBase64
 
 	// TypeBase64URL ("base64url") is TypeBase64 in the URL-safe alphabet

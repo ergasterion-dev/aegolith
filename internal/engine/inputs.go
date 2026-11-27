@@ -199,8 +199,8 @@ func (s *state) checkRoute() {
 // typed validates a declared value. A mismatch is AEG-SCHEMA-001 (block).
 // Valid string-like values (string, text, email, url) are still scanned as
 // defense in depth; url values also get the SSRF rules. Of a base64 or
-// base64url value the decoded form is scanned, as a text value, and the
-// encoded one is not.
+// base64url value the text detectors scan the decoded form and not the
+// encoded one.
 // Fully constrained types (uuid, uuid_lenient, int, number, bool, enum,
 // phone) skip the detectors.
 func (s *state) typed(loc model.Location, field string, spec policy.FieldSpec, v string, isString bool) {
@@ -224,10 +224,12 @@ func (s *state) typed(loc model.Location, field string, spec policy.FieldSpec, v
 }
 
 // decoded inspects the text a valid base64 or base64url value encodes, read
-// once by decode, as a text value in the same place is inspected. A query,
-// form or JSON value also gets the session identifier rule, which its caller
-// ran on the encoded value (that call covers the key); then the text
-// detectors run.
+// once by decode, as a JSON body value is inspected, in every location; the
+// matches carry loc and field. Decoded text holds real line breaks wherever
+// it was sent, so a query value is not read with detect.ScanQueryText, whose
+// command rule would flag ordinary multi-line text. A query, form or JSON
+// value also gets the session identifier rule, which its caller ran on the
+// encoded value (that call covers the key); then the text detectors run.
 func (s *state) decoded(loc model.Location, field, v string, decode func(string) (string, bool)) {
 	text, ok := decode(v)
 	if !ok { // typed validated v
@@ -238,7 +240,7 @@ func (s *state) decoded(loc model.Location, field, v string, decode func(string)
 			s.hit(h, loc, field, text)
 		}
 	}
-	s.scan(loc, field, text)
+	s.scanWindowsWith(detect.ScanText, loc, field, text, 0, nil, "")
 }
 
 // value inspects one query, form or JSON value. On a matched route whose
@@ -341,7 +343,9 @@ func mediaType(ct string) string {
 }
 
 // binaryMediaType reports whether mt (lower-case, no parameters) names
-// content that is not read as text, so its body is not inspected.
+// content that is not read as text, so its body is not inspected. checkBody
+// walks JSON (a "+json" suffix included) before it asks. A "model/" type with
+// the "+xml" suffix is XML, not binary.
 func binaryMediaType(mt string) bool {
 	switch mt {
 	case "application/octet-stream", "application/pdf", "application/zip",
@@ -350,18 +354,33 @@ func binaryMediaType(mt string) bool {
 		"application/protobuf", "application/vnd.google.protobuf",
 		"application/msgpack", "application/x-msgpack", "application/vnd.msgpack",
 		"application/cbor", "application/wasm", "application/msword",
-		"application/vnd.ms-excel", "application/vnd.ms-powerpoint":
+		"application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+		"application/zstd", "application/x-zstd", "application/x-bzip2",
+		"application/x-xz", "application/x-lz4", "application/x-brotli",
+		"application/vnd.rar", "application/x-rar-compressed",
+		"application/java-archive", "application/vnd.android.package-archive",
+		"application/vnd.sqlite3", "application/x-sqlite3", "application/bson",
+		"application/avro", "application/vnd.apache.parquet",
+		"application/x-parquet", "application/vnd.apache.thrift.binary",
+		"application/x-thrift", "application/x-rpm",
+		"application/vnd.debian.binary-package", "application/x-iso9660-image":
 		return true
 	}
 	for _, prefix := range [...]string{
 		"image/", "audio/", "video/", "font/", "application/grpc",
 		"application/vnd.openxmlformats-officedocument.",
+		"application/vnd.oasis.opendocument.",
 	} {
 		if strings.HasPrefix(mt, prefix) {
 			return true
 		}
 	}
-	return false
+	for _, suffix := range [...]string{"+zip", "+gzip", "+cbor", "+der"} {
+		if strings.HasSuffix(mt, suffix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(mt, "model/") && !xmlMediaType(mt)
 }
 
 // xmlMediaType reports whether mt (lower-case, no parameters) is XML.
@@ -398,8 +417,9 @@ func xmlDeclarationLen(body string) int {
 // before XML, so image/svg+xml is binary) are not inspected; XML is scanned
 // as text with the XXE rule, the text detectors not seeing a leading XML
 // declaration (xmlDeclaration), which libinjection reads as markup; every
-// other body, one without a content type included, is scanned as text. Whether the type was allowed is protocol's
-// decision (AEG-PROTO-002) and does not change how the body is inspected.
+// other body, one without a content type included, is scanned as text.
+// Whether the type was allowed is protocol's decision (AEG-PROTO-002) and
+// does not change how the body is inspected.
 func (s *state) checkBody() {
 	body := s.req.Body
 	if s.stop || len(body) == 0 {
