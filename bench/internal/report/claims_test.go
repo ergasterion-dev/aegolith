@@ -87,16 +87,17 @@ func TestClaimsAboutContentTypes(t *testing.T) {
 			t.Errorf("%s by default: rules %v, want the refusal alone", contentType, got)
 		}
 	}
-	// Allowed text and XML bodies are read; another allowed type is not.
-	allowed := aegolith.Config{AllowXML: true, AllowedContentTypes: []string{"text/plain", "application/soap+xml"}}
-	for _, contentType := range []string{"application/xml", "text/plain"} {
+	// Allowed text and XML bodies are read; an allowed binary type is not.
+	allowed := aegolith.Config{AllowXML: true,
+		AllowedContentTypes: []string{"text/plain", "application/soap+xml", "application/octet-stream"}}
+	for _, contentType := range []string{"application/xml", "text/plain", "application/soap+xml"} {
 		if got := inspect(t, allowed, request(contentType)); !slices.Contains(got, "AEG-SQLI-001") ||
 			slices.Contains(got, "AEG-PROTO-002") {
 			t.Errorf("%s when allowed: rules %v, want the injection", contentType, got)
 		}
 	}
-	if got := inspect(t, allowed, request("application/soap+xml")); len(got) != 0 {
-		t.Errorf("another allowed type: rules %v, want none", got)
+	if got := inspect(t, allowed, request("application/octet-stream")); len(got) != 0 {
+		t.Errorf("an allowed binary type: rules %v, want none", got)
 	}
 }
 

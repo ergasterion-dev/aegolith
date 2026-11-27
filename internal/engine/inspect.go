@@ -231,6 +231,13 @@ func (s *state) scan(loc model.Location, field, v string) {
 // request (a documented gap: it stays a monitor match). Hits whose
 // category is skip are dropped.
 func (s *state) scanWindows(loc model.Location, field, v string, extra func(string) (detect.Hit, bool), skip model.Category) {
+	s.scanWindowsAfter(loc, field, v, 0, extra, skip)
+}
+
+// scanWindowsAfter is scanWindows with the first hidden bytes of v kept from
+// the text detectors. Windows, charges and what extra reads are those of the
+// whole value.
+func (s *state) scanWindowsAfter(loc model.Location, field, v string, hidden int, extra func(string) (detect.Hit, bool), skip model.Category) {
 	if s.stop || s.exhausted || v == "" {
 		return
 	}
@@ -259,7 +266,7 @@ func (s *state) scanWindows(loc model.Location, field, v string, extra func(stri
 				s.hit(h, loc, field, win)
 			}
 		}
-		for _, h := range scanText(win) {
+		for _, h := range scanText(win[min(max(hidden-start, 0), len(win)):]) {
 			if h.Category != skip {
 				s.hit(h, loc, field, win)
 			}

@@ -43,8 +43,8 @@ type Config struct {
 	// to application/json, application/x-www-form-urlencoded and
 	// multipart/form-data.
 	AllowedContentTypes []string `json:"allowed_content_types,omitempty"`
-	// AllowXML also allows application/xml and text/xml bodies and runs
-	// the XXE rule on them.
+	// AllowXML also allows application/xml and text/xml bodies. The XXE
+	// rule runs on an inspected XML body however its type was allowed.
 	AllowXML bool `json:"allow_xml,omitempty"`
 	// Limits bound the work per request; each zero field takes its default
 	// (see DefaultLimits). Negative values are rejected. MaxValueLen is

@@ -48,8 +48,9 @@ The core module depends on the standard library and `github.com/corazawaf/libinj
  5. query           key rules (NoSQL operators, session ids), then each value: typed, or scanned
     |
     v
- 6. body            by media type: JSON walk, form, multipart (file parts skipped), XML (XXE rule
-    |               only if allowed), text/*; other types are not scanned
+ 6. body            by media type: JSON walk, form, multipart (file parts skipped), binary types
+    |               not read, XML as text with the XXE rule (the text detectors skip a leading XML
+    |               declaration), every other type (or none) as text
     v
  7. cookies, then User-Agent / Referer / configured headers
     |

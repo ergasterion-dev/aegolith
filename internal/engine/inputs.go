@@ -4,6 +4,7 @@ import (
 	"errors"
 	"maps"
 	"mime"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -324,12 +325,66 @@ func mediaType(ct string) string {
 	return strings.ToLower(strings.TrimSpace(mt))
 }
 
+// binaryMediaType reports whether mt (lower-case, no parameters) names
+// content that is not read as text, so its body is not inspected.
+func binaryMediaType(mt string) bool {
+	switch mt {
+	case "application/octet-stream", "application/pdf", "application/zip",
+		"application/gzip", "application/x-gzip", "application/x-tar",
+		"application/x-7z-compressed", "application/x-protobuf",
+		"application/protobuf", "application/vnd.google.protobuf",
+		"application/msgpack", "application/x-msgpack", "application/vnd.msgpack",
+		"application/cbor", "application/wasm", "application/msword",
+		"application/vnd.ms-excel", "application/vnd.ms-powerpoint":
+		return true
+	}
+	for _, prefix := range [...]string{
+		"image/", "audio/", "video/", "font/", "application/grpc",
+		"application/vnd.openxmlformats-officedocument.",
+	} {
+		if strings.HasPrefix(mt, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// xmlMediaType reports whether mt (lower-case, no parameters) is XML.
+func xmlMediaType(mt string) bool {
+	return mt == "application/xml" || mt == "text/xml" || strings.HasSuffix(mt, "+xml")
+}
+
+// xmlDeclaration matches an XML declaration at the very start of a body,
+// where only a UTF-8 byte order mark and ASCII whitespace may precede it:
+// version "1.<digit>", then optionally encoding, then optionally
+// standalone, each quoted, and nothing else.
+var xmlDeclaration = regexp.MustCompile(`\A\x{FEFF}?[\t\n\v\f\r ]*<\?xml` +
+	`[\t\n\r ]+version=(?:"1\.[0-9]"|'1\.[0-9]')` +
+	`(?:[\t\n\r ]+encoding=(?:"[A-Za-z][A-Za-z0-9._-]{0,39}"|'[A-Za-z][A-Za-z0-9._-]{0,39}'))?` +
+	`(?:[\t\n\r ]+standalone=(?:"(?:yes|no)"|'(?:yes|no)'))?` +
+	`[\t\n\r ]*\?>`)
+
+// xmlDeclarationLen returns the length of the XML declaration body starts
+// with, what precedes it included, or 0 without one that xmlDeclaration
+// matches.
+func xmlDeclarationLen(body string) int {
+	if loc := xmlDeclaration.FindStringIndex(body); loc != nil {
+		return loc[1]
+	}
+	return 0
+}
+
 // checkBody inspects the body according to its media type. Protocol
 // reports a body over MaxBodyBytes (AEG-PROTO-003, block by default, so in
 // enforce mode an over-size body never gets this far); with that rule set to
 // monitor, up to bodyInspectLimit (2 x MaxBodyBytes) of it is still inspected
-// so an attack placed after padding is seen. Bodies of other media types are scanned raw only
-// when textual (text/*); binary bodies are not.
+// so an attack placed after padding is seen. JSON, urlencoded form and
+// multipart bodies are parsed; binary types (binaryMediaType, which is asked
+// before XML, so image/svg+xml is binary) are not inspected; XML is scanned
+// as text with the XXE rule, the text detectors not seeing a leading XML
+// declaration (xmlDeclaration), which libinjection reads as markup; every
+// other body, one without a content type included, is scanned as text. Whether the type was allowed is protocol's
+// decision (AEG-PROTO-002) and does not change how the body is inspected.
 func (s *state) checkBody() {
 	body := s.req.Body
 	if s.stop || len(body) == 0 {
@@ -346,9 +401,12 @@ func (s *state) checkBody() {
 		s.pairs(model.LocBody, model.LocBody, "form", string(body), "form")
 	case strings.HasPrefix(mt, "multipart/"):
 		s.checkMultipart(body, ct, s.bodyCut(body))
-	case s.e.proto.AllowXML && (mt == "application/xml" || mt == "text/xml"):
-		s.scanWindows(model.LocBody, "body", string(body), detect.XXE, "")
-	case strings.HasPrefix(mt, "text/"):
+	case binaryMediaType(mt):
+		return
+	case xmlMediaType(mt):
+		text := string(body)
+		s.scanWindowsAfter(model.LocBody, "body", text, xmlDeclarationLen(text), detect.XXE, "")
+	default:
 		s.scan(model.LocBody, "body", string(body))
 	}
 }

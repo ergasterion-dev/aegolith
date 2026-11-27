@@ -23,7 +23,7 @@ Aegolith inspects the request (method, path, query, headers it knows how to read
 | OS command injection | `AEG-CMDI-001` | a shell operator followed by a command used as a shell is used, an absolute system path, reverse-shell and Shellshock markers |
 | Code injection | `AEG-CODEI-001`, `-002` | PHP open tags, eval of base64, Node `child_process`, Java serialized objects |
 | LDAP, template, JNDI, CRLF injection | `AEG-LDAP-001`, `AEG-SSTI-001`, `-002`, `AEG-JNDI-001`, `AEG-CRLF-001` | filter breakers, code in template expressions, server-side include directives, Log4Shell lookups (with nested obfuscation), header injection in values |
-| File and URL abuse | `AEG-LFI-*`, `AEG-RFI-001`, `AEG-SSRF-*`, `AEG-XXE-001` | traversal and system files, wrapper schemes, metadata and internal hosts, DOCTYPE entities (only when XML is allowed) |
+| File and URL abuse | `AEG-LFI-*`, `AEG-RFI-001`, `AEG-SSRF-*`, `AEG-XXE-001` | traversal and system files, wrapper schemes, metadata and internal hosts, DOCTYPE entities (in a body typed as XML) |
 | NoSQL and prototype pollution | `AEG-NOSQL-*`, `AEG-PPOLL-001` | operator keys in JSON and query strings, `__proto__`, `constructor`, `prototype` (JSON keys; bracket and dot paths in query and form keys) |
 | Reconnaissance | `AEG-SCANNER-*`, `AEG-SESSION-001` | scanner user agents, well-known probe paths and backup files, session ids in URLs |
 | Protocol abuse | `AEG-PROTO-*` | methods, content types, CR/LF/NUL, encoded and double-encoded traversal, request-smuggling header combinations |
@@ -82,6 +82,21 @@ Each item says what is missed and why. Most are the price of the first ground ru
 Only the first `MaxBodyBytes + 1` bytes of a body reach the engine (default 1 MiB) through the net/http adapter; the Fiber adapter hands over up to `2 * MaxBodyBytes + 1` bytes, so when `AEG-PROTO-003` does not block the attack must sit past `2 * MaxBodyBytes` to go unseen there (net/http still stops at `MaxBodyBytes + 1`). `AEG-PROTO-003`, raised for a longer body, defaults to **block**, so a body such as `{"pad":"<1 MiB of a>","q":"1' OR '1'='1"}` is refused in enforce mode. (In monitor mode it is only reported, like every other rule.)
 
 The gap reopens if you set `"rule_actions": {"AEG-PROTO-003": "monitor"}` (or `allow`), or add an exclusion that covers `AEG-PROTO-003`, for example to accept large multipart uploads: the part past the limit is then not inspected and the handler sees the attack. net/http has no body limit of its own, and Fiber's default `BodyLimit` (4 MiB) is above Aegolith's 1 MiB, so neither server closes it for you. Whatever the rule's action, cap the request body at or below `limits.max_body_bytes` in the server: `http.MaxBytesReader` (net/http), `fiber.Config{BodyLimit: ...}` (Fiber), or the reverse proxy. If you accept larger bodies, raise `max_body_bytes` rather than monitoring the rule.
+
+### Binary bodies
+
+A body is not inspected when its media type is binary: `image/*` (`image/svg+xml` included), `audio/*`, `video/*`, `font/*`, `application/grpc*`, `application/vnd.openxmlformats-officedocument.*`, `application/octet-stream`, `application/pdf`, `application/zip`, `application/gzip`, `application/x-gzip`, `application/x-tar`, `application/x-7z-compressed`, `application/x-protobuf`, `application/protobuf`, `application/vnd.google.protobuf`, `application/msgpack`, `application/x-msgpack`, `application/vnd.msgpack`, `application/cbor`, `application/wasm`, `application/msword`, `application/vnd.ms-excel` and `application/vnd.ms-powerpoint`. By default `AEG-PROTO-002` refuses these types. **Missed:** when the type is allowed, or `AEG-PROTO-002` is switched off or excluded, a body declared as a binary type is not inspected even if the handler parses it (an SVG read as XML, or a handler that decodes JSON whatever the content type says). Allow a binary type only where the handler treats the body as that type.
+
+### Markup in XML bodies
+
+An XML body is read by every text detector, and libinjection takes some ordinary XML for HTML, so `AEG-XSS-001` (block) matches it. The XML declaration is set aside: a declaration at the very start of the body (a UTF-8 byte order mark and ASCII whitespace may precede it) with `version="1.<digit>"`, then optionally `encoding`, then optionally `standalone="yes|no"`, each in matching single or double quotes, no blank around `=` and nothing else inside, is not read by the text detectors. `AEG-XXE-001` still reads the whole body. **Still flagged (false positives):**
+
+- a default namespace declaration, as in `<order xmlns="urn:example:orders">` (the prefixed form `xmlns:o="urn:example:orders"` is clear);
+- an element named like an HTML one, such as an Atom `<link href="https://example.com/a"/>` or `<style>bold</style>`;
+- an `<?xml-stylesheet ...?>` instruction;
+- a declaration in any other shape (`<?xml version = "1.0"?>`), and one in a body that is not typed as XML (`text/plain`) or in a JSON string.
+
+For a route whose XML bodies carry such markup, exclude the rule on the body: `{"rule": "AEG-XSS-001", "route": "POST /feed", "field": "body"}`. `AEG-XSS-001` then no longer checks that route's raw body; the other rules still do.
 
 ### Routes Aegolith does not match
 

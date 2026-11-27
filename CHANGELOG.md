@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Bodies of every non-binary content type are inspected
+
+- Before, a body was inspected only when it was JSON, a urlencoded form, multipart, `text/*`, or (with `allow_xml`) `application/xml`. XML, SOAP and other textual bodies (`application/soap+xml`, `application/graphql`, `application/yaml`, ...) allowed through `allowed_content_types` or a silenced `AEG-PROTO-002` were not inspected. They are now scanned as text and **can now block**. A body without a content type is scanned the same way.
+- The XXE rule (`AEG-XXE-001`) now runs on every inspected XML body (`application/xml`, `text/xml`, `+xml`), also without `allow_xml`.
+- [Binary types](docs/threat-model.md#binary-bodies) are still not inspected, `image/svg+xml` among them.
+- In an XML body the text detectors no longer read a leading XML declaration (`<?xml version="1.0" encoding="UTF-8"?>`). alpha.6 blocked such a body with `AEG-XSS-001` wherever it read it (`allow_xml`, or `text/xml`).
+- **False positives to expect:** [markup in XML bodies](docs/threat-model.md#markup-in-xml-bodies), such as a default namespace declaration (`xmlns="..."`), an Atom `<link href="...">`, a `<style>` element or `<?xml-stylesheet ...?>`, can match `AEG-XSS-001`. Exclude the rule on field `body` for that route.
+- With the default configuration, enforce mode decides as before: a refused type blocks before the body is read. Monitor mode now also reports what is in such a body.
+
 ## v0.1.0-alpha.6
 
 2026-11-26. Fixes the false positives found by an external validation of alpha.5 (public attack payload lists and benign text) and closes several cheap recall gaps. Corpus: 230 attacks (226 blocked generic, 227 API-aware) and 195 legitimate requests, 0 false positives (was 137 and 130). **Read [Changes in alpha.6](docs/threat-model.md#changes-in-alpha6-and-what-they-cost) and [Known gaps found in the alpha.6 review](docs/threat-model.md#known-gaps-found-in-the-alpha6-review) before upgrading:** every cost and accepted miss is listed there.

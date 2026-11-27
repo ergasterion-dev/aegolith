@@ -388,8 +388,8 @@ Unknown routes and unknown fields stay in monitor by default even in enforce mod
 | `rule_actions` | none | Selector to action (`block`, `monitor`, `allow`). |
 | `inspect_headers` | none | Extra headers to scan. `User-Agent` and `Referer` are always scanned. |
 | `allowed_methods` | `GET HEAD POST PUT PATCH DELETE OPTIONS` | Method allow-list (`AEG-PROTO-001`). |
-| `allowed_content_types` | JSON, urlencoded form, multipart | Content-type allow-list for requests with a body (`AEG-PROTO-002`). |
-| `allow_xml` | `false` | Also allow XML bodies and run the XXE rule on them. |
+| `allowed_content_types` | JSON, urlencoded form, multipart | Content-type allow-list for requests with a body (`AEG-PROTO-002`). An allowed body is inspected by its type: JSON, form and multipart are parsed, [binary types](docs/threat-model.md#binary-bodies) are not read, and every other type is scanned as text (XML with the XXE rule). |
+| `allow_xml` | `false` | Also allow `application/xml` and `text/xml` bodies. The XXE rule runs on an inspected XML body however its type was allowed. Some ordinary [XML markup](docs/threat-model.md#markup-in-xml-bodies) matches `AEG-XSS-001`. |
 | `limits` | `max_body_bytes` 1 MiB, `max_depth` 32, `max_fields` 1,000, `max_value_len` 8 KiB | Bounds on the work per request. |
 | `case_insensitive_routes` | `false` | Match literal route segments regardless of letter case. The Fiber adapter turns it on per request when Fiber routes case-insensitively. |
 | `fail_open` | `true` | On an internal error, allow (`true`) or block (`false`). `Decision.Err` is set either way. |
@@ -458,7 +458,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | `AEG-RFI-001` | rfi | block | Wrapper and remote-include URLs (`file:`, `php://`, `gopher://`, `dict://`, `ldap://`, `expect://`, `jar:`, `data:text/html`, an http(s) URL ending in `?`). |
 | `AEG-SSRF-001` | ssrf | block | A URL to a cloud metadata endpoint. |
 | `AEG-SSRF-002` | ssrf | block | A URL to localhost, a loopback, private or link-local address. Not applied to `Referer`. |
-| `AEG-XXE-001` | xxe | block | An XML `DOCTYPE` with an external identifier or an entity (only when `allow_xml` is set). |
+| `AEG-XXE-001` | xxe | block | An XML `DOCTYPE` with an external identifier or an entity, in a body typed `application/xml`, `text/xml` or `+xml` (`image/svg+xml` and other binary types are not read). |
 
 </details>
 
