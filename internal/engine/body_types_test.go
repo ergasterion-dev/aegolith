@@ -166,7 +166,6 @@ func TestXMLDeclarationIsNotReadAsMarkup(t *testing.T) {
 		{"every attribute and a final blank", `<?xml version="1.0" encoding="ISO-8859-1" standalone="no" ?>` + "\n"},
 		{"line breaks inside", "<?xml\r\n\tversion=\"1.0\"\n  encoding=\"windows-1252\"\n?>\n"},
 		{"a quote style per attribute", `<?xml version="1.0" encoding='UTF-8'?>`},
-		{"longest charset name", `<?xml version="1.0" encoding="a` + strings.Repeat("b", 39) + `"?>`},
 	} {
 		for _, ct := range []string{"application/xml", "text/xml", "application/soap+xml"} {
 			t.Run(tc.name+" "+ct, func(t *testing.T) {

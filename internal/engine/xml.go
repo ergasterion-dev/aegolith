@@ -46,9 +46,9 @@ const (
 //
 // Element and attribute names, namespace declarations, comments,
 // directives (a DOCTYPE) and the leading declaration are not read. A
-// declared ISO-8859-1, Latin-1, Windows-1252 or US-ASCII charset is
-// converted byte by byte (each byte becomes the code point of the same
-// value); any other declared charset is read unchanged.
+// declared ASCII-compatible charset is read byte by byte (xmlCharset); a
+// body declaring any other charset, or binding a prefix to "xmlns" or ""
+// (confusingBinding), is treated as malformed.
 //
 // Values beyond MaxFields raise AEG-PROTO-010 once and are still read one
 // by one. A tokenizer error (AEG-PROTO-020), nesting deeper than MaxDepth
@@ -91,10 +91,15 @@ func (s *state) walkXML(body []byte, cut bool) xmlEnd {
 	if n == 0 {
 		rest = bytes.TrimPrefix(rest, []byte("\ufeff"))
 	}
-	if singleByteCharset(enc) {
+	switch xmlCharset(enc) {
+	case charsetUTF8:
+		if cut {
+			rest = trimPartialRune(rest)
+		}
+	case charsetBytes:
 		rest = latin1ToUTF8(rest)
-	} else if cut {
-		rest = trimPartialRune(rest)
+	default:
+		return xmlMalformed
 	}
 	d := xml.NewDecoder(bytes.NewReader(rest))
 	d.Strict = true
@@ -127,6 +132,9 @@ func (s *state) walkXML(body []byte, cut bool) xmlEnd {
 			w.flush()
 			if depth++; depth > s.e.lim.MaxDepth {
 				return xmlTooDeep
+			}
+			if confusingBinding(t) {
+				return xmlMalformed
 			}
 			w.start(t)
 		case xml.EndElement:
@@ -216,8 +224,25 @@ func renderedElement(n xml.Name) bool {
 	return strings.EqualFold(n.Local, "script") || n.Space == xhtmlNamespace || n.Space == svgNamespace
 }
 
+// confusingBinding reports whether an element binds a prefix to "xmlns" or
+// to "": encoding/xml then translates an attribute in that prefix (q:x or
+// q:xmlns) into a name namespaceDeclaration cannot tell from a
+// declaration. Such a document is treated as malformed. Every binding is
+// seen on the element that makes it, before any element in its scope, and
+// no other translation yields those names: an unbound prefix stays as
+// written and "xml" becomes the XML namespace URI.
+func confusingBinding(e xml.StartElement) bool {
+	for _, a := range e.Attr {
+		if a.Name.Space == "xmlns" && (a.Value == "xmlns" || a.Value == "") {
+			return true
+		}
+	}
+	return false
+}
+
 // namespaceDeclaration reports whether an attribute declares a namespace
-// (xmlns="..." or xmlns:p="...", as encoding/xml names them).
+// (xmlns="..." or xmlns:p="...", as encoding/xml names them). It is exact
+// only once confusingBinding has ruled out prefixes bound to "xmlns" or "".
 func namespaceDeclaration(n xml.Name) bool {
 	return n.Space == "xmlns" || (n.Space == "" && n.Local == "xmlns")
 }
@@ -239,15 +264,58 @@ func unexpectedEOF(err error) bool {
 	return errors.Is(err, io.ErrUnexpectedEOF) || (errors.As(err, &se) && se.Msg == "unexpected EOF")
 }
 
-// singleByteCharset reports whether a declared encoding is read byte by
-// byte: ISO-8859-1, Latin-1, Windows-1252 or US-ASCII, in any case.
-func singleByteCharset(enc string) bool {
-	for _, c := range [...]string{"ISO-8859-1", "Latin-1", "Windows-1252", "US-ASCII"} {
+// How a declared charset is read.
+const (
+	charsetOther = iota // not tokenized: the raw body is scanned instead
+	charsetUTF8         // none declared, or UTF-8: read as sent
+	charsetBytes        // ASCII-compatible: read byte by byte
+)
+
+// xmlCharset sorts a declared encoding (any case). The ASCII-compatible
+// charsets tokenized are ISO-8859-1 and the other ISO-8859-* parts, Latin-1,
+// Windows-125x, US-ASCII, Shift_JIS, EUC-JP, EUC-KR, GB2312, GBK, GB18030,
+// Big5, KOI8-R and KOI8-U. Each of them is read byte by byte, each byte
+// becoming the code point of the same value: ASCII bytes stay exact, and no
+// byte of those charsets that belongs to a multi-byte character is one of
+// the ASCII bytes XML markup is made of (<, >, &, quotes), so the markup is
+// read as the application's parser reads it. Every other charset (UTF-16,
+// UTF-7, EBCDIC, an unknown name) could spell markup or an attack in bytes
+// this read would not see, so it is not tokenized.
+func xmlCharset(enc string) int {
+	if enc == "" || strings.EqualFold(enc, "UTF-8") {
+		return charsetUTF8
+	}
+	for _, c := range [...]string{
+		"Latin-1", "US-ASCII", "Shift_JIS", "EUC-JP", "EUC-KR", "GB2312", "GBK",
+		"GB18030", "Big5", "KOI8-R", "KOI8-U",
+	} {
 		if strings.EqualFold(enc, c) {
-			return true
+			return charsetBytes
 		}
 	}
-	return false
+	if part, ok := cutPrefixFold(enc, "ISO-8859-"); ok && digits(part) {
+		return charsetBytes
+	}
+	if part, ok := cutPrefixFold(enc, "Windows-125"); ok && len(part) == 1 && digits(part) {
+		return charsetBytes
+	}
+	return charsetOther
+}
+
+func cutPrefixFold(s, prefix string) (string, bool) {
+	if len(s) < len(prefix) || !strings.EqualFold(s[:len(prefix)], prefix) {
+		return "", false
+	}
+	return s[len(prefix):], true
+}
+
+func digits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // latin1ToUTF8 turns each byte of b into the code point of the same value,

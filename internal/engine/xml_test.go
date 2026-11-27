@@ -121,8 +121,10 @@ func TestXMLRenderedElements(t *testing.T) {
 // Accepted false positives (docs/threat-model.md): an element named script
 // is judged as markup whatever its vocabulary, and libinjection takes every
 // rebuilt <svg> start tag, and XHTML elements such as style, link and meta,
-// for markup, so they block however plain they are; and a body that does
-// not parse is scanned raw, where ordinary markup can match.
+// for markup, so they block however plain they are, as does a style
+// attribute on a rendered element; escaped HTML in text (an RSS
+// description) is judged as markup, as it is in a JSON string; and a body
+// that does not parse is scanned raw, where ordinary markup can match.
 func TestXMLRenderedElementsAcceptedFalsePositives(t *testing.T) {
 	for _, body := range []string{
 		`<job><script>backup.sh</script></job>`,
@@ -130,6 +132,12 @@ func TestXMLRenderedElementsAcceptedFalsePositives(t *testing.T) {
 		`<div xmlns="http://www.w3.org/1999/xhtml"><style>p { color: red }</style></div>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" href="a.css"/></head></html>`,
 		`<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"/></head></html>`,
+		// Escaped HTML in a feed is text, judged as a JSON string would be.
+		`<rss version="2.0"><channel><item><description>&lt;p style=&quot;color:red&quot;&gt;Sale&lt;/p&gt;</description></item></channel></rss>`,
+		`<rss version="2.0"><channel><item><description>&lt;iframe src=&quot;https://video.example.com/v/1&quot;&gt;&lt;/iframe&gt;</description></item></channel></rss>`,
+		// A style attribute on a rendered element is flagged too.
+		`<div xmlns="http://www.w3.org/1999/xhtml"><p style="color:red">Sale</p></div>`,
+		`<drawing xmlns:s="http://www.w3.org/2000/svg"><s:rect style="fill:red" width="8" height="8"/></drawing>`,
 		// A body that does not parse is scanned raw, declaration included.
 		`<?xml version="1.0"?><p>a&nbsp;b</p>`,
 	} {
@@ -155,6 +163,19 @@ func TestXMLFallback(t *testing.T) {
 		{"invalid UTF-8", model.Limits{}, "<a>\xff</a><b>" + xmlSQL + "</b>", "AEG-PROTO-020"},
 		{"malformed declaration", model.Limits{}, `<?xml version="1.0" note="x"?><a>` + xmlScript + `</a>`, "AEG-PROTO-020"},
 		{"too deep", deep, `<a><a><a><a><a><a>x</a></a></a></a></a></a><b>` + xmlSQL + `</b>`, "AEG-PROTO-010"},
+		// A prefix bound to "xmlns" or "" would make a value attribute look
+		// like a namespace declaration once encoding/xml translates it.
+		{"prefix bound to xmlns", model.Limits{}, `<a xmlns:q="xmlns" q:x="` + xmlSQL + `"/>`, "AEG-PROTO-020"},
+		{"prefix bound to empty", model.Limits{}, `<a xmlns:q="" q:xmlns="` + xmlSQL + `"/>`, "AEG-PROTO-020"},
+		{"prefix bound to xmlns on SVG", model.Limits{}, `<svg xmlns="http://www.w3.org/2000/svg" xmlns:q="xmlns" q:onload="alert(1)"/>`, "AEG-PROTO-020"},
+		{"binding on an ancestor", model.Limits{}, `<r xmlns:q="xmlns"><s><a q:x="` + xmlSQL + `"/></s></r>`, "AEG-PROTO-020"},
+		{"binding to empty on an ancestor", model.Limits{}, `<r xmlns:q=""><a q:xmlns="` + xmlSQL + `"/></r>`, "AEG-PROTO-020"},
+		// A charset that is not ASCII-compatible could hide the attack
+		// from a byte-wise read; the raw scan reads it as sent.
+		{"UTF-7", model.Limits{}, `<?xml version="1.0" encoding="UTF-7"?><a><!-- +AC0ALQA+- 1 UNION SELECT password FROM users# --></a>`, "AEG-PROTO-020"},
+		{"UTF-16", model.Limits{}, `<?xml version="1.0" encoding="UTF-16"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
+		{"EBCDIC", model.Limits{}, `<?xml version="1.0" encoding="IBM037"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
+		{"unknown charset", model.Limits{}, `<?xml version="1.0" encoding="x-made-up"?><a>` + xmlSQL + `</a>`, "AEG-PROTO-020"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := postBody(xmlEngine(t, model.ModeMonitor, tc.lim), "application/xml", tc.body)
@@ -181,6 +202,31 @@ func TestXMLCutBody(t *testing.T) {
 		t.Fatalf("cut body reported as malformed: %+v", d)
 	}
 	wantRule(t, d, "AEG-SQLI-001", "AEG-PROTO-003")
+}
+
+// Every charset on the tokenized list is read byte by byte, each byte as
+// the code point of the same value: ASCII stays exact and other bytes
+// cannot fail the tokenizer.
+func TestXMLDeclaredCharsets(t *testing.T) {
+	for _, enc := range []string{
+		"UTF-8", "utf-8", "ISO-8859-1", "latin-1", "Windows-1252", "US-ASCII", "ISO-8859-2", "iso-8859-15",
+		"Windows-1250", "windows-1251", "Shift_JIS", "shift_jis", "EUC-JP", "EUC-KR", "GB2312", "GBK",
+		"GB18030", "Big5", "KOI8-R", "koi8-u",
+	} {
+		t.Run(enc, func(t *testing.T) {
+			decl := `<?xml version="1.0" encoding="` + enc + `"?>`
+			text := "\x82\xa0\xb1\xe9\xfe"
+			if strings.EqualFold(enc, "UTF-8") {
+				text = "é"
+			}
+			wantClean(t, postBody(xmlEngine(t, model.ModeEnforce, model.Limits{}), "application/xml", decl+`<a xmlns="urn:x">`+text+`</a>`))
+			d := postBody(xmlEngine(t, model.ModeMonitor, model.Limits{}), "application/xml", decl+`<a>`+text+` `+xmlSQL+`</a>`)
+			wantRule(t, d, "AEG-SQLI-001")
+			if hasMatch(d, "AEG-PROTO-020", "body") {
+				t.Fatalf("tokenized charset fell back: %+v", d)
+			}
+		})
+	}
 }
 
 func TestXMLProcessingInstructions(t *testing.T) {
