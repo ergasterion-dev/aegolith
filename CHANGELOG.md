@@ -30,9 +30,9 @@
 
 ### Three more command injection techniques (`AEG-CMDI-001`)
 
-- **New detections:** a here-string written against a word (`cat<<<uname`); a rooted glob that matches a listed system file or program (`/???/?a?h`, `/e?c/pa[s]swd`); and a Windows `FOR` loop chained to another command (`& for %q in (x) do y`). Query and body values alike.
-- Clear: `miss you<<<3`, `x = <<<EOT`, Git conflict markers, `/???`, `/usr/bin/*`, `/usr/bin/py*`, `/[a-z]*`, and a batch loop with no operator before it.
-- **False positives to expect:** `Back<<<Home` or PHP `echo<<<EOT`; a shell glob in text that covers a listed file (`ls /usr/bin/c*`, `/etc/hosts*`), a short pattern such as `/e*` or `/*/id`, a link such as `/?tc=...`; a batch snippet such as `@echo off & for %%i in (*) do ...`. Exclude `AEG-CMDI-001` on a field that carries such text ([every accepted false positive and miss](docs/threat-model.md#command-injection-techniques-added-in-alpha7)).
+- **New detections:** a here-string written against a word (`cat<<<uname`); a rooted glob that matches a listed system file or program (`/???/?a?h`, `/e?c/pa[s]swd`); and a Windows `FOR` loop chained to another command (`& for %q in (x) do y`). Query and body values alike; in a query value a glob may also start after a line break (`?q=x%0a/???/?a?h`).
+- Clear: `miss you<<<3`, `x = <<<EOT`, Git conflict markers, `/???`, `/usr/bin/*`, `/usr/bin/py*`, `/[a-z]*`, a root-relative link such as `next=/?tc=1`, and a batch loop with no operator before it.
+- **False positives to expect:** `Back<<<Home` or PHP `echo<<<EOT`; a shell glob in text that covers a listed file (`ls /usr/bin/c*`, `/etc/hosts*`), a short pattern such as `/e*` or `/*/id` (in a query value also at the start of a later line), a link with a valueless parameter such as `/?tc`; a batch snippet such as `@echo off & for %%i in (*) do ...`. Exclude `AEG-CMDI-001` on a field that carries such text ([every accepted false positive and miss](docs/threat-model.md#command-injection-techniques-added-in-alpha7)).
 
 ## v0.1.0-alpha.6
 

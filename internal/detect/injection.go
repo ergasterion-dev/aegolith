@@ -50,6 +50,9 @@ type cmdMode struct {
 	// encodedSemi: the value was decoded from one carrying %3b, so every
 	// ";" is opShell.
 	encodedSemi bool
+	// globAfterLineBreak: a globbed system path may start after a line
+	// break (see hasSystemGlob); a query value.
+	globAfterLineBreak bool
 }
 
 // cmdI is CmdI; strictLiteral applies the stricter line-break rule to line
@@ -58,15 +61,21 @@ type cmdMode struct {
 // prose line. What arrives percent-encoded keeps the ordinary rules: a
 // person does not type %0a or %60 into a note.
 func cmdI(v string, strictLiteral bool) (Hit, bool) {
-	hit := isCmdI(v, cmdMode{strictNewline: strictLiteral, proseLineNewline: !strictLiteral, proseBacktick: strictLiteral})
+	hit := isCmdI(v, cmdMode{
+		strictNewline:      strictLiteral,
+		proseLineNewline:   !strictLiteral,
+		proseBacktick:      strictLiteral,
+		globAfterLineBreak: !strictLiteral,
+	})
 	if !hit {
 		if d, _ := normalize.DecodeValue(v); d != v {
 			encLB := hasEncodedLineBreak(v)
 			hit = isCmdI(d, cmdMode{
-				strictNewline:    strictLiteral && !encLB,
-				proseLineNewline: !strictLiteral && !encLB,
-				proseBacktick:    strictLiteral && !hasEncodedBacktick(v),
-				encodedSemi:      hasEncodedSemicolon(v),
+				strictNewline:      strictLiteral && !encLB,
+				proseLineNewline:   !strictLiteral && !encLB,
+				proseBacktick:      strictLiteral && !hasEncodedBacktick(v),
+				encodedSemi:        hasEncodedSemicolon(v),
+				globAfterLineBreak: !strictLiteral,
 			})
 		}
 	}
@@ -585,7 +594,7 @@ func plainTokenBefore(s string, end int) bool {
 // stretch no other call walks (the line before a line break, the bytes up
 // to the next backtick), so a scan is linear in len(s).
 func isCmdI(s string, m cmdMode) bool {
-	if hasCmdMarker(s) || hasCmdTechnique(s) {
+	if hasCmdMarker(s) || hasCmdTechnique(s, m.globAfterLineBreak) {
 		return true
 	}
 	firstBlank := strings.IndexAny(s, " \t")

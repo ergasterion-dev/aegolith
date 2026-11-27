@@ -11,11 +11,12 @@ import "strings"
 
 // hasCmdTechnique reports whether s holds one of the three shapes. isCmdI
 // calls it, so both CmdI entry points apply it to a value and to its
-// percent-decoded form, whatever their prose rules say. The accepted false
-// positives and misses are in docs/threat-model.md ("Command injection
-// techniques added in alpha.7").
-func hasCmdTechnique(s string) bool {
-	return hasHereString(s) || hasSystemGlob(s) || hasChainedFor(s)
+// percent-decoded form, whatever their prose rules say. globAfterLineBreak,
+// set for a query value, lets a glob start after a CR or LF (see
+// hasSystemGlob). The accepted false positives and misses are in
+// docs/threat-model.md ("Command injection techniques added in alpha.7").
+func hasCmdTechnique(s string, globAfterLineBreak bool) bool {
+	return hasHereString(s) || hasSystemGlob(s, globAfterLineBreak) || hasChainedFor(s)
 }
 
 // --- here-string ---
@@ -99,8 +100,8 @@ func isGlobLead(c byte) bool {
 }
 
 // isGlobEnd reports whether c ends a rooted token: every isGlobLead byte,
-// plus ")", "}" and a line break. Because it holds every lead byte, no token
-// starts inside another.
+// plus ")", "}" and a line break. Because it holds every byte a token may
+// start after, no token starts inside another.
 func isGlobEnd(c byte) bool {
 	return isGlobLead(c) || c == ')' || c == '}' || c == '\r' || c == '\n'
 }
@@ -112,9 +113,16 @@ func isGlobEnd(c byte) bool {
 // globsSystemFile). So "/???/?a?h" and "/e?c/pa[s]swd" match, and "/???",
 // "/usr/bin/*" and "/usr/bin/py*" do not.
 //
+// With afterLineBreak a token may also start after a CR or LF: a query
+// value cannot carry a raw line break, so one found there was sent encoded,
+// as scanners send it. Elsewhere a line break starts a line of a note.
+//
+// A token that starts "/?" and stops at "=" ("next=/?tc=1") is a
+// root-relative link with a query string, not a glob.
+//
 // Tokens do not overlap and each is read up to maxGlobToken bytes, so the
 // work is linear in len(s).
-func hasSystemGlob(s string) bool {
+func hasSystemGlob(s string, afterLineBreak bool) bool {
 	if strings.IndexByte(s, '?') < 0 && strings.IndexByte(s, '*') < 0 && strings.IndexByte(s, '[') < 0 {
 		return false
 	}
@@ -125,14 +133,15 @@ func hasSystemGlob(s string) bool {
 		}
 		i := off + n
 		off = i + 1
-		if i > 0 && !isGlobLead(s[i-1]) {
+		if i > 0 && !isGlobLead(s[i-1]) && !(afterLineBreak && (s[i-1] == '\r' || s[i-1] == '\n')) {
 			continue
 		}
 		end := i + 1
 		for end < len(s) && end-i <= maxGlobToken && !isGlobEnd(s[end]) {
 			end++
 		}
-		if end-i <= maxGlobToken && globsSystemFile(s[i+1:end]) {
+		queryLink := end < len(s) && s[end] == '=' && s[i+1] == '?'
+		if end-i <= maxGlobToken && !queryLink && globsSystemFile(s[i+1:end]) {
 			return true
 		}
 		off = end

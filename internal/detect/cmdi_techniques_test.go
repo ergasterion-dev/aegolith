@@ -211,6 +211,87 @@ func TestCmdIChainedFor(t *testing.T) {
 	})
 }
 
+// TestCmdIGlobAfterLineBreak: a query value cannot carry a raw line break,
+// so every CR or LF in it was sent encoded, and a glob may start after one.
+// In other places (CmdI, ScanText) a line break starts no glob.
+func TestCmdIGlobAfterLineBreak(t *testing.T) {
+	hits := []string{
+		"x\n/???/?a?h",
+		"x\r/???/?a?h",
+		"x\r\n/e?c/pa[s]swd",
+		"x\n\n/b?n/c?t",
+		"\n/e?c/passwd",
+		"x%0a/???/?a?h",
+		"x%0A/???/?a?h",
+		"x%0d/???/?a?h",
+		"x%0D%0A/e?c/pa[s]swd",
+		"Dear team\n/e?c/passwd",
+	}
+	cmdi := Hit{RuleID: "AEG-CMDI-001", Category: model.CatCmdi, Severity: model.SeverityCritical}
+	assertHits(t, "cmdIQuery", cmdIQuery, cmdi, hits)
+	for _, v := range hits {
+		if !containsRule(ScanQueryText(v), cmdi.RuleID) {
+			t.Errorf("ScanQueryText(%q): %s not reported", v, cmdi.RuleID)
+		}
+		if hit, ok := CmdI(v); ok {
+			t.Errorf("CmdI(%q) = %+v, want no hit", v, hit)
+		}
+		if containsRule(ScanText(v), cmdi.RuleID) {
+			t.Errorf("ScanText(%q): %s reported, want not", v, cmdi.RuleID)
+		}
+	}
+	// What is clear after a space is clear after a line break.
+	assertCmdI(t, false, []string{
+		"The redirect went to\n/???",
+		"ls\n/*/*",
+		"lines\n/*\n * a comment\n */",
+		"routes:\n/users/[id]\n/blog/[...slug]",
+		"pattern:\n/[a-z]*",
+		"link:\n/?tc=1",
+		"x%0a/?tc=1",
+		"see\n/u?r/bin/py*",
+	})
+	// Accepted false positives of the query form: a later line that starts
+	// with a pattern covering a listed file.
+	assertHits(t, "cmdIQuery", cmdIQuery, cmdi, []string{
+		"Blocked in robots.txt:\n/*/id",
+		"Short patterns:\n/e*",
+	})
+	for _, v := range []string{"Blocked in robots.txt:\n/*/id", "Short patterns:\n/e*"} {
+		if hit, ok := CmdI(v); ok {
+			t.Errorf("CmdI(%q) = %+v, want no hit", v, hit)
+		}
+	}
+}
+
+// TestCmdIGlobRootQueryLink: a token that starts "/?" and stops at "=" is a
+// root-relative link with a query string, not a glob. With any other end it
+// is still read.
+func TestCmdIGlobRootQueryLink(t *testing.T) {
+	assertCmdI(t, false, []string{
+		"/?tc=1",
+		"next=/?tc=1",
+		"redirect=/?tc=accepted&page=2",
+		"See /?tc=2024 for the terms",
+		"next=%2F%3Ftc%3D1",
+		"next=/??c=1",
+		"url=/?t?=1",
+	})
+	assertCmdI(t, true, []string{
+		"/?tc",
+		"next=/?tc",
+		"next=/?tc&x=1",
+		"/?tc;x",
+		"(/?tc)",
+		"go to /?tc now",
+		"next=%2F%3Ftc",
+		// Only a token that starts "/?" is excused.
+		"/e?c=1",
+		"a=/??c/passwd",
+		"x=/?tc=1 /e?c/passwd",
+	})
+}
+
 // TestCmdIChainedForSharedSet: several loops whose sets share bytes are
 // each judged by their own bounds, also after an earlier loop in the value
 // found no close, and when a quoted option makes an earlier operator read
@@ -252,7 +333,9 @@ func TestCmdITechniquesAcceptedFalsePositives(t *testing.T) {
 		"the short pattern /e* matches it",
 		"Disallow: /*c",
 		`regex = "/[a-z]tc*"`,
-		"redirect=/?tc=accepted",
+		// A root-relative link with a parameter that has no value.
+		"redirect=/?tc",
+		"redirect=/?tc&x=1",
 		// A chained loop in a batch snippet.
 		`@echo off & for %%i in (*.log) do del %%i`,
 		"Run cd logs && for %f in (*.log) do type %f",
@@ -281,7 +364,6 @@ func TestCmdITechniquesAcceptedMisses(t *testing.T) {
 		`/e?c/p\asswd`,
 		"/etc/[[:lower:]]asswd",
 		"cat${IFS}/e?c/passwd",
-		"x\n/e?c/passwd",
 		"x:/e?c/passwd",
 		"/e?c/passwd$x",
 		"/d?v/t?p/192.0.2.1/4444",
@@ -289,6 +371,24 @@ func TestCmdITechniquesAcceptedMisses(t *testing.T) {
 		"/e?c/crontab",
 		"/usr/local/bin/b?sh",
 		"/e" + strings.Repeat("*", 64) + "c",
+		// Quotes end the token, and a "." segment is not collapsed.
+		"/e?c/pa''sswd",
+		`/e?c/"passwd"`,
+		"/e?c/'passwd'",
+		"/./e?c/passwd",
+		"/e?c/./passwd",
+		// No glob starts after a byte outside the lead list.
+		"cat$IFS/e?c/passwd",
+		"x}/e?c/passwd",
+		"x)/e?c/passwd",
+		// A token that starts "/?" and stops at "=" is read as a link,
+		// whatever follows the first segment.
+		"/??c/passwd=",
+		// A here-string word that starts with a backslash.
+		`cat<<<\id`,
+		// FOR written with the "^" escape or a "," separator.
+		"& f^or %q in (x) do y",
+		"&for,%q in (x) do y",
 		// FOR: no operator, a line break or "(" before it, "@", a path with
 		// blanks, and the length bounds.
 		"x\nfor %q in (x) do y",
@@ -303,7 +403,7 @@ func TestCmdITechniquesAcceptedMisses(t *testing.T) {
 
 // TestNewCmdIChecksLinear: the here-string, system glob and chained FOR
 // checks stay linear on 1 MiB hostile values, and still find an attack at
-// the end of one.
+// the end of one. They run in the query form, which reads the most.
 func TestNewCmdIChecksLinear(t *testing.T) {
 	units := map[string]string{
 		"here":           "a<<<$",
@@ -312,6 +412,10 @@ func TestNewCmdIChecksLinear(t *testing.T) {
 		"here-blanks":    "a<<<" + strings.Repeat(" ", 200) + "1 ",
 		"here-digits":    "a<<<1 ",
 		"glob-slashes":   " /",
+		"glob-lines":     "\n/e?x",
+		"glob-crlf":      "\r\n/?",
+		"glob-link":      " /?tc=",
+		"glob-link-line": "\n/?tc=",
 		"glob-short":     " /?",
 		"glob-nomatch":   " /e?x",
 		"glob-stars":     " /" + strings.Repeat("*", 62) + "x",
@@ -334,7 +438,8 @@ func TestNewCmdIChecksLinear(t *testing.T) {
 		"for-var":        "&for %" + strings.Repeat("a", 20),
 		"for-no-do":      "&for %a in(x)dx ",
 	}
-	tails := []string{" cat<<<uname", " /???/?a?h", " & for %q in (x) do y"}
+	// The last tail starts a glob only after a line break.
+	tails := []string{" cat<<<uname", " /???/?a?h", " & for %q in (x) do y", "/???/?a?h"}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
 	// A quadratic scan of 1 MiB takes tens of seconds.
 	lim := wallLimit(250*time.Millisecond, 5*time.Second)
@@ -342,11 +447,11 @@ func TestNewCmdIChecksLinear(t *testing.T) {
 		s := strings.Repeat(unit, small/len(unit))
 		m := strings.Repeat(unit, medium/len(unit))
 		l := strings.Repeat(unit, large/len(unit))
-		if hasCmdTechnique(l) {
+		if hasCmdTechnique(l, true) {
 			t.Errorf("%s: hit on the hostile value, want none", name)
 		}
 		for _, end := range tails {
-			if !hasCmdTechnique(l + "\n" + end) {
+			if !hasCmdTechnique(l+"\n"+end, true) {
 				t.Errorf("%s: no hit with %q at the end", name, end)
 			}
 		}
@@ -358,7 +463,7 @@ func TestNewCmdIChecksLinear(t *testing.T) {
 		if raceSlowdown == 1 && techniqueSuperLinear(s, m) && techniqueSuperLinear(s, m) && techniqueSuperLinear(s, m) {
 			t.Errorf("%s: %d bytes took over 8x the time of %d bytes three times: super-linear", name, len(m), len(s))
 		}
-		if d := bestOf(3, func() { hasCmdTechnique(l) }); d > lim {
+		if d := bestOf(3, func() { hasCmdTechnique(l, true) }); d > lim {
 			t.Errorf("%s: %v on %d bytes, want under %v", name, d, len(l), lim)
 		}
 	}
@@ -370,10 +475,10 @@ func TestNewCmdIChecksLinear(t *testing.T) {
 		"one-for-blanks":  "%(&" + strings.Repeat(" ", large),
 		"shared-gap":      strings.Repeat("&for %a in(", 100) + ")" + strings.Repeat(" ", large),
 	} {
-		if hasCmdTechnique(l) {
+		if hasCmdTechnique(l, true) {
 			t.Errorf("%s: hit on the hostile value, want none", name)
 		}
-		if d := bestOf(3, func() { hasCmdTechnique(l) }); !testing.Short() && d > lim {
+		if d := bestOf(3, func() { hasCmdTechnique(l, true) }); !testing.Short() && d > lim {
 			t.Errorf("%s: %v on %d bytes, want under %v", name, d, len(l), lim)
 		}
 	}
@@ -383,8 +488,8 @@ func TestNewCmdIChecksLinear(t *testing.T) {
 // length of s) took more than eight times as long as on s, best of five runs
 // each. Runs on s under 200µs are too fast to time reliably and never count.
 func techniqueSuperLinear(s, m string) bool {
-	ds := bestOf(5, func() { hasCmdTechnique(s) })
-	dm := bestOf(5, func() { hasCmdTechnique(m) })
+	ds := bestOf(5, func() { hasCmdTechnique(s, true) })
+	dm := bestOf(5, func() { hasCmdTechnique(m, true) })
 	return ds > 200*time.Microsecond && dm > 8*ds
 }
 
@@ -405,11 +510,11 @@ func BenchmarkCmdTechnique(b *testing.B) {
 		b.Run(in.name, func(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(in.v)))
-			if hasCmdTechnique(in.v) {
+			if hasCmdTechnique(in.v, true) {
 				b.Fatal("the input matches, want a worst case without a match")
 			}
 			for b.Loop() {
-				hasCmdTechnique(in.v)
+				hasCmdTechnique(in.v, true)
 			}
 		})
 	}
