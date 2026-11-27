@@ -22,7 +22,9 @@ var fuzzInspectBound = wallLimit(100*time.Millisecond, 2*time.Second)
 
 // FuzzInspect feeds arbitrary methods, paths, queries, content types,
 // bodies, cookies and User-Agents through a generic enforce firewall, a
-// generic monitor firewall and the API-aware corpus policy. Inspect must
+// generic monitor firewall and the API-aware corpus policy (the generic
+// enforce one declares one route with base64 and base64url fields, so the
+// decode path is fuzzed too). Inspect must
 // not panic (a recovered panic surfaces as Decision.Err), must return a
 // valid action (never block in monitor mode), must be deterministic (a
 // second inspection of an identical, independently built request gives the
@@ -40,6 +42,16 @@ func FuzzInspect(f *testing.F) {
 	f.Add("POST", "/api/v1/cart/items", "", "multipart/form-data; boundary=x", []byte("--x\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n<script>\r\n--x--\r\n"), "", "")
 	f.Add("POST", "/x", "", "application/xml", []byte(`<!DOCTYPE a [<!ENTITY b SYSTEM "file:///etc/passwd">]><a>&b;</a>`), "", "")
 	f.Add("GET", "/%2e%2e/%2fetc", "a=%25&b[$ne]=1&__proto__[x]=1", "", []byte(nil), "sid=a; sid=b", "sqlmap/1.0")
+	// The generic firewall's base64 route. Enforce stops at the first
+	// block, so the first seed passes and has every field decoded; the
+	// others hold attacks in the path, a JSON body and a form.
+	f.Add("POST", "/b64/bm90ZXM", "std=Tm90ZXM6CmxzCg&url=bm90ZXM", "application/json",
+		[]byte(`{"std":"TGVhdmUgYXQgdGhlIGRlc2su","url":"bm90ZXM"}`), "", "")
+	f.Add("POST", "/b64/PHNjcmlwdD4", "", "", []byte(nil), "", "")
+	f.Add("POST", "/b64/bm90ZXM", "", "application/json",
+		[]byte(`{"std":"MScgVU5JT04gU0VMRUNUIDEtLQ==","url":"Li4vLi4vZXRjL3Bhc3N3ZA"}`), "", "")
+	f.Add("POST", "/b64/bm90ZXM", "", "application/x-www-form-urlencoded",
+		[]byte("std=PD9waHA&url=JHtqbmRpOmxkYXA6Ly94L2F9"), "", "")
 
 	policy, err := aegolith.LoadConfig(filepath.Join("testdata", "corpus", "example-api-policy.json"))
 	if err != nil {
@@ -50,12 +62,20 @@ func FuzzInspect(f *testing.F) {
 		fw      *aegolith.Firewall
 		monitor bool
 	}
+	encoded := map[string]aegolith.Field{
+		"std": {Type: aegolith.TypeBase64},
+		"url": {Type: aegolith.TypeBase64URL},
+	}
+	base64Route := aegolith.Route{Method: "POST", Path: "/b64/:id",
+		PathParams: map[string]aegolith.Field{"id": {Type: aegolith.TypeBase64URL}},
+		Query:      encoded, Body: encoded}
 	var fws []fw
 	for _, c := range []struct {
 		name string
 		cfg  aegolith.Config
 	}{
-		{"generic", aegolith.Config{Mode: aegolith.ModeEnforce, AllowXML: true, InspectHeaders: []string{"X-Fuzz"}}},
+		{"generic", aegolith.Config{Mode: aegolith.ModeEnforce, AllowXML: true, InspectHeaders: []string{"X-Fuzz"},
+			Routes: []aegolith.Route{base64Route}}},
 		{"monitor", aegolith.Config{Mode: aegolith.ModeMonitor, AllowXML: true}},
 		{"api-aware", policy},
 	} {
