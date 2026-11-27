@@ -669,7 +669,7 @@ The corpus above was written by the people who tuned the rules. The WAF bench in
 | Source pinning, fetch script, rewriting callback hosts to `callback.invalid` | Done |
 | CRS regression test importer (stages that cannot be sent as one HTTP/1.1 request are skipped and counted) | Done |
 | GoTestWAF importer (one case per payload, encoder and placeholder, built as the tool builds its requests; gRPC and GraphQL cases are skipped and counted) | Done |
-| Generated legitimate traffic (names, addresses, reviews, support messages, prices, texts with URLs, code-like prose, other languages; seeded and reproducible) | Done |
+| Generated legitimate traffic (names, addresses, reviews, support messages, prices, texts with URLs, punctuation-heavy prose, pasted code, other languages; seeded and reproducible; texts in the shape of an attack are labelled near-miss) | Done |
 | A public set of recorded legitimate traffic | Not included: no licence verified (candidates are listed in `bench/sources.json`) |
 | Load phase, guarded remote mode, one-command `make` targets, first report | Not started |
 

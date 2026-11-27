@@ -129,6 +129,24 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 	if *out == "" {
 		return fmt.Errorf("%w: --out is required", errUsage)
 	}
+	// A flag the source does not read would otherwise be ignored in silence.
+	generated := *source == legit.Source
+	var misplaced []string
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "seed", "n":
+			if !generated {
+				misplaced = append(misplaced, "--"+f.Name)
+			}
+		case "corpus", "root", "skipped":
+			if generated {
+				misplaced = append(misplaced, "--"+f.Name)
+			}
+		}
+	})
+	if len(misplaced) > 0 {
+		return fmt.Errorf("%w: %s cannot be used with source %q", errUsage, strings.Join(misplaced, ", "), *source)
+	}
 	if *skippedPath != "" && (filepath.Clean(*skippedPath) == filepath.Clean(*out) || sameFile(*skippedPath, *out)) {
 		return fmt.Errorf("%w: --skipped and --out must be different files", errUsage)
 	}
@@ -156,12 +174,8 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 		if *n < 1 {
 			return fmt.Errorf("%w: --n must be at least 1 for source %s", errUsage, *source)
 		}
-		lines = legit.Generate(*seed, *n)
-		// A smaller set than the one asked for would be taken for it.
-		if len(lines) < *n {
-			return fmt.Errorf("source %s has only %d distinct cases for seed %d, not the %d asked for",
-				*source, len(lines), *seed, *n)
-		}
+		// Fails rather than write a smaller set than the one asked for.
+		lines, err = legit.GenerateExact(*seed, *n)
 	default:
 		return fmt.Errorf("%w: unknown source %q", errUsage, *source)
 	}
@@ -195,17 +209,26 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 	return printSkips(stdout, skipped)
 }
 
-// printCategories prints how many cases each category has, by name.
+// printCategories prints how many legitimate and near-miss cases each
+// category has, by name.
 func printCategories(w io.Writer, lines []cases.Line) error {
-	count := map[string]int{}
-	for _, l := range lines {
-		count[l.Category]++
+	type key struct {
+		category string
+		expected cases.Expected
 	}
-	if _, err := fmt.Fprintln(w, "by category:"); err != nil {
+	count := map[key]int{}
+	categories := map[string]bool{}
+	for _, l := range lines {
+		count[key{l.Category, l.Expected}]++
+		categories[l.Category] = true
+	}
+	if _, err := fmt.Fprintln(w, "  legit  near-miss  category"); err != nil {
 		return err
 	}
-	for _, category := range slices.Sorted(maps.Keys(count)) {
-		if _, err := fmt.Fprintf(w, "%7d  %s\n", count[category], category); err != nil {
+	for _, category := range slices.Sorted(maps.Keys(categories)) {
+		_, err := fmt.Fprintf(w, "%7d %10d  %s\n",
+			count[key{category, cases.Legit}], count[key{category, cases.NearMiss}], category)
+		if err != nil {
 			return err
 		}
 	}

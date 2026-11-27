@@ -145,6 +145,8 @@ var addressesCategory = category{
 		"⟦house-name⟧, ⟦street-uk⟧, ⟦city-uk⟧, United Kingdom",
 		"⟦street-de⟧ ⟦#1-180⟧, ⟦#10000-99999⟧ ⟦city-de⟧",
 		"⟦street-de⟧ ⟦#1-180⟧⟦house-letter⟧, ⟦#10000-99999⟧ ⟦city-de⟧, Deutschland",
+		"⟦street-de⟧ ⟦#1-180⟧/⟦#1-40⟧, ⟦#1010-9990⟧ ⟦city-at⟧, Österreich",
+		"⟦street-de⟧ ⟦#1-180⟧, ⟦#1000-9658⟧ ⟦city-ch⟧, Schweiz",
 		"⟦#1-140⟧ ⟦street-fr⟧, ⟦#10000-95999⟧ ⟦city-fr⟧",
 		"⟦#1-140⟧ bis ⟦street-fr⟧, ⟦unit-fr⟧, ⟦#10000-95999⟧ ⟦city-fr⟧, France",
 		"⟦street-es⟧, ⟦#1-200⟧, ⟦unit-es⟧, ⟦#10000-52999⟧ ⟦city-es⟧",
@@ -233,9 +235,11 @@ var addressesSlots = map[string][]string{
 		"Unter den Eichen", "Große Bleichen", "Zum Weißen Roß", "Jahnstraße",
 	},
 	"city-de": {
-		"Berlin", "München", "Köln", "Frankfurt am Main", "Düsseldorf", "Nürnberg", "Halle (Saale)", "Wien",
-		"Zürich", "Freiburg im Breisgau", "Mülheim an der Ruhr", "Lübeck",
+		"Berlin", "München", "Köln", "Frankfurt am Main", "Düsseldorf", "Nürnberg", "Halle (Saale)",
+		"Freiburg im Breisgau", "Mülheim an der Ruhr", "Lübeck", "Garmisch-Partenkirchen", "Weil am Rhein",
 	},
+	"city-at": {"Wien", "Graz", "Linz", "Salzburg", "Innsbruck", "St. Pölten", "Klagenfurt am Wörthersee"},
+	"city-ch": {"Zürich", "Bern", "Basel", "Luzern", "St. Gallen", "Biel/Bienne", "Winterthur"},
 	"street-fr": {
 		"rue de la Paix", "avenue des Champs-Élysées", "boulevard Saint-Germain", "rue de l'Église", "place du Marché",
 		"chemin des Vignes", "allée des Tilleuls", "rue Victor-Hugo", "quai de la Mégisserie", "impasse du Château",
@@ -246,17 +250,17 @@ var addressesSlots = map[string][]string{
 	},
 	"city-fr": {
 		"Paris", "Lyon", "Marseille", "Aix-en-Provence", "Saint-Étienne", "L'Haÿ-les-Roses", "Besançon", "Nîmes",
-		"Bruxelles", "Genève", "Orléans CEDEX 1", "Châlons-en-Champagne",
+		"Clermont-Ferrand", "Villeneuve-d'Ascq", "Orléans CEDEX 1", "Châlons-en-Champagne",
 	},
 	"street-es": {
 		"Calle Mayor", "Avda. de la Constitución", "C/ San Juan", "Paseo de Gracia", "Plaza de España",
-		"Carrer d'Aragó", "Calle del Río", "Camino Viejo de Leganés", "Rúa do Vilar", "Av. Insurgentes Sur",
+		"Carrer d'Aragó", "Calle del Río", "Camino Viejo de Leganés", "Rúa do Vilar", "Avda. de Andalucía",
 		"Calle 13 de Septiembre", "Ronda de Sant Pere",
 	},
 	"unit-es": {"3º B", "2º izq.", "1º dcha.", "bajo A", "ático", "Esc. 2, 4º C", "piso 5, depto. 12", "local 3"},
 	"city-es": {
-		"Madrid", "Barcelona", "Sevilla", "Valencia", "A Coruña", "San Sebastián", "Málaga", "Ciudad de México",
-		"Bogotá D.C.", "Alcalá de Henares", "L'Hospitalet de Llobregat", "Cádiz",
+		"Madrid", "Barcelona", "Sevilla", "Valencia", "A Coruña", "San Sebastián", "Málaga", "Santiago de Compostela",
+		"Palma de Mallorca", "Alcalá de Henares", "L'Hospitalet de Llobregat", "Cádiz",
 	},
 	"street-it": {
 		"Via Roma", "Corso Vittorio Emanuele II", "Piazza San Marco", "Via Dante Alighieri", "Viale dei Mille",
@@ -267,12 +271,12 @@ var addressesSlots = map[string][]string{
 		"Keizersgracht", "Prinsengracht", "Dorpsstraat", "Stationsweg", "Van Goghlaan", "Burgemeester de Vlugtlaan",
 		"'s-Gravendijkwal", "Oude Delft", "Kerkstraat",
 	},
-	"city-nl": {"Amsterdam", "Utrecht", "'s-Hertogenbosch", "Den Haag", "Groningen", "Antwerpen", "Leiden", "Gent"},
+	"city-nl": {"Amsterdam", "Utrecht", "'s-Hertogenbosch", "Den Haag", "Groningen", "Capelle aan den IJssel", "Leiden", "Alphen aan den Rijn"},
 	"street-pl": {
 		"ul. Długa", "ul. Marszałkowska", "al. Jana Pawła II", "ul. Świętego Marcina", "os. Słoneczne", "pl. Wolności",
 		"ul. Żeromskiego", "ul. 3 Maja",
 	},
-	"city-pl": {"Warszawa", "Kraków", "Łódź", "Wrocław", "Gdańsk", "Poznań", "Zielona Góra", "Praha 1"},
+	"city-pl": {"Warszawa", "Kraków", "Łódź", "Wrocław", "Gdańsk", "Poznań", "Zielona Góra", "Bielsko-Biała"},
 	"street-pt": {
 		"Rua Augusta", "Av. Paulista", "Rua das Flores", "Travessa do Carmo", "Praça da Sé", "Rua 25 de Março",
 		"Alameda Santos", "Largo do Chiado",

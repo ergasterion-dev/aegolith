@@ -8,7 +8,8 @@ var material = []category{
 	supportCategory,
 	pricesCategory,
 	urlsCategory,
-	codeCategory,
+	punctuationCategory,
+	pastedCodeCategory,
 	otherLanguagesCategory,
 }
 
@@ -16,7 +17,7 @@ var material = []category{
 // A list name belongs to one file only, which the tests check.
 var slotSets = []map[string][]string{
 	sharedSlots, namesSlots, addressesSlots, reviewsSlots, supportSlots,
-	pricesSlots, urlsSlots, codeSlots, otherLanguagesSlots,
+	pricesSlots, urlsSlots, punctuationSlots, pastedCodeSlots, otherLanguagesSlots,
 }
 
 var slots = func() map[string][]string {

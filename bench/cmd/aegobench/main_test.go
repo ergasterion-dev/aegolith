@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/ergasterion-dev/aegolith/bench/internal/cases"
 	"github.com/ergasterion-dev/aegolith/bench/internal/records"
+	"github.com/ergasterion-dev/aegolith/bench/internal/sources/legit"
 )
 
 const corpusDir = "../../../testdata/corpus"
@@ -444,7 +446,7 @@ func TestImportGeneratedLegitWritesCasesPerCategory(t *testing.T) {
 	t.Parallel()
 	out := filepath.Join(t.TempDir(), "legit.jsonl")
 	var stdout, stderr bytes.Buffer
-	args := []string{"import", "--source", "generated-legit", "--seed", "7", "--n", "40", "--out", out}
+	args := []string{"import", "--source", "generated-legit", "--seed", "1", "--n", "400", "--out", out}
 	if err := run(args, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
@@ -456,26 +458,41 @@ func TestImportGeneratedLegitWritesCasesPerCategory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	count := map[cases.Expected]int{}
 	for _, l := range lines {
 		if _, err := cases.FromLine(l); err != nil {
 			t.Error(err)
 		}
+		count[l.Expected]++
 	}
-	want := "wrote 40 cases from generated-legit (0 attack, 40 legit, 0 near-miss) to " + out + "\n" +
-		"by category:\n" +
-		"      4  addresses\n" +
-		"      8  code-like-prose\n" +
-		"      4  names\n" +
-		"      4  other-languages\n" +
-		"      4  prices-and-quantities\n" +
-		"      6  reviews\n" +
-		"      6  support-messages\n" +
-		"      4  urls-in-text\n"
-	if got := stdout.String(); got != want {
-		t.Errorf("summary:\n%s\nwant:\n%s", got, want)
+	// Every line is legitimate or a near-miss, and the summary counts both
+	// for each category.
+	if count[cases.Legit]+count[cases.NearMiss] != 400 || count[cases.NearMiss] == 0 {
+		t.Fatalf("%d legit and %d near-miss lines of %d", count[cases.Legit], count[cases.NearMiss], len(lines))
 	}
-	if len(lines) != 40 || stderr.Len() != 0 {
-		t.Errorf("%d lines, stderr %q", len(lines), stderr.String())
+	got := stdout.String()
+	head := fmt.Sprintf("wrote 400 cases from generated-legit (0 attack, %d legit, %d near-miss) to %s\n"+
+		"  legit  near-miss  category\n", count[cases.Legit], count[cases.NearMiss], out)
+	if !strings.HasPrefix(got, head) {
+		t.Errorf("summary:\n%s\nwant it to start with:\n%s", got, head)
+	}
+	for _, row := range []string{
+		"     40          0  addresses\n",
+		"     40          0  names\n",
+		"     40          0  other-languages\n",
+		fmt.Sprintf("%7d %10d  pasted-code\n", 60-count[cases.NearMiss], count[cases.NearMiss]),
+		"     40          0  prices-and-quantities\n",
+		"     40          0  punctuation-prose\n",
+		"     60          0  reviews\n",
+		"     40          0  support-messages\n",
+		"     40          0  urls-in-text\n",
+	} {
+		if !strings.Contains(got, row) {
+			t.Errorf("summary lacks the row %q:\n%s", row, got)
+		}
+	}
+	if strings.Count(got, "\n") != 11 || stderr.Len() != 0 {
+		t.Errorf("summary of %d lines, stderr %q:\n%s", strings.Count(got, "\n"), stderr.String(), got)
 	}
 
 	// The same seed and size write the same file; another seed does not.
@@ -487,7 +504,7 @@ func TestImportGeneratedLegitWritesCasesPerCategory(t *testing.T) {
 	if second, err := os.ReadFile(again); err != nil || !bytes.Equal(first, second) {
 		t.Errorf("a second run wrote a different file (error %v)", err)
 	}
-	if err := run([]string{"import", "--source", "generated-legit", "--seed", "8", "--n", "40", "--out", again}, &stdout, &stderr); err != nil {
+	if err := run([]string{"import", "--source", "generated-legit", "--seed", "8", "--n", "400", "--out", again}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if other, err := os.ReadFile(again); err != nil || bytes.Equal(first, other) {
@@ -511,7 +528,7 @@ func TestImportGeneratedLegitNeedsASizeItCanReach(t *testing.T) {
 	// More than the material holds: an error that says how many there are,
 	// and no file with fewer cases than were asked for.
 	err := run([]string{"import", "--source", "generated-legit", "--n", "5000000", "--out", out}, &stdout, &stderr)
-	if err == nil || errors.Is(err, errUsage) || !strings.Contains(err.Error(), "distinct cases") {
+	if err == nil || errors.Is(err, errUsage) || !errors.Is(err, legit.ErrExhausted) || !strings.Contains(err.Error(), "distinct cases") {
 		t.Errorf("error %v, want one that says how many distinct cases there are", err)
 	}
 	if _, statErr := os.Stat(out); !errors.Is(statErr, os.ErrNotExist) {
@@ -519,5 +536,37 @@ func TestImportGeneratedLegitNeedsASizeItCanReach(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Errorf("stdout after failed imports: %q", stdout.String())
+	}
+}
+
+// A flag that the chosen source does not read is a mistake of the caller,
+// not something to ignore.
+func TestImportRejectsFlagsOfAnotherSource(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	out := filepath.Join(dir, "out.jsonl")
+	for name, args := range map[string][]string{
+		"seed with baseline": {"import", "--source", "baseline", "--corpus", corpusDir, "--seed", "3", "--out", out},
+		"n with baseline":    {"import", "--source", "baseline", "--corpus", corpusDir, "--n", "10", "--out", out},
+		"n with crs":         {"import", "--source", "crs", "--root", "../../internal/sources/crs/testdata/tree", "--n", "10", "--out", out},
+		"seed with gotestwaf": {
+			"import", "--source", "gotestwaf", "--root", "../../internal/sources/gotestwaf/testdata/tree", "--seed", "1", "--out", out,
+		},
+		"skipped with generated-legit": {
+			"import", "--source", "generated-legit", "--n", "20", "--out", out, "--skipped", filepath.Join(dir, "skipped.jsonl"),
+		},
+		"corpus with generated-legit": {"import", "--source", "generated-legit", "--n", "20", "--out", out, "--corpus", corpusDir},
+		"root with generated-legit":   {"import", "--source", "generated-legit", "--n", "20", "--out", out, "--root", dir},
+	} {
+		var stdout, stderr bytes.Buffer
+		if err := run(args, &stdout, &stderr); !errors.Is(err, errUsage) {
+			t.Errorf("%s: error %v, want a usage error", name, err)
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%s: stdout %q", name, stdout.String())
+		}
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Errorf("files were written: %v (error %v)", entries, err)
 	}
 }

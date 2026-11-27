@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -44,7 +45,7 @@ func TestGenerateIsDeterministic(t *testing.T) {
 // change here changes what they measure. Update the digest only on purpose.
 func TestGenerateOutputIsPinned(t *testing.T) {
 	t.Parallel()
-	const want = "459e00118d37b2075401889403a9738431e5bd8db014df6e376097813e2b57a3"
+	const want = "d7d36106e7a279b6e48dfa44c997ac230ac488afb4ac6c25c45f3591f327c092"
 	sum := sha256.Sum256(encode(t, Generate(1, 5000)))
 	if got := hex.EncodeToString(sum[:]); got != want {
 		t.Errorf("SHA-256 of the lines of Generate(1, 5000) is %s, want %s", got, want)
@@ -83,7 +84,7 @@ func TestGenerateDistinctRequests(t *testing.T) {
 		// Texts that differ only in their numbers count as one.
 		texts[digitsFolded(l.Payload)] = true
 
-		if l.Source != Source || l.Expected != cases.Legit || l.Kind != "legit" {
+		if l.Source != Source || l.Expected != cases.Legit && l.Expected != cases.NearMiss || l.Kind != string(l.Expected) {
 			t.Fatalf("%s: source %q, expected %q, kind %q", l.SourceCaseID, l.Source, l.Expected, l.Kind)
 		}
 		if l.Payload == "" || l.Payload != strings.TrimSpace(l.Payload) || !utf8.ValidString(l.Payload) {
@@ -92,8 +93,14 @@ func TestGenerateDistinctRequests(t *testing.T) {
 		if strings.ContainsAny(l.Payload, "⟦⟧") {
 			t.Fatalf("%s: payload holds an unfilled slot: %q", l.SourceCaseID, l.Payload)
 		}
-		if got := sentValue(t, l); got != l.Payload {
+		if len(c.Payloads) != 1 || string(c.Payloads[0]) != l.Payload {
+			t.Fatalf("%s: the case does not record the payload of the line", l.SourceCaseID)
+		}
+		if got := sentValues(t, c); !slices.Contains(got, l.Payload) {
 			t.Fatalf("%s: the request carries %q, the payload is %q", l.SourceCaseID, got, l.Payload)
+		}
+		if c.Placement == placementQuery && strings.Contains(l.Payload, "\n") {
+			t.Fatalf("%s: a text of several lines is a query value: %q", l.SourceCaseID, l.Payload)
 		}
 		for name := range l.Headers {
 			switch strings.ToLower(name) {
@@ -108,55 +115,155 @@ func TestGenerateDistinctRequests(t *testing.T) {
 	}
 }
 
-// sentValue returns the text the request of l carries where its placement
-// says, decoded as a server would decode it.
-func sentValue(t *testing.T, l cases.Line) string {
+// sentValues returns the values the request of c carries in the part its
+// placement names, decoded from the request as a server would decode it.
+func sentValues(t *testing.T, c cases.Case) []string {
 	t.Helper()
+	id := c.Sources[0].CaseID
+	contentType := c.Headers["Content-Type"]
 	var found []string
-	switch l.Placement {
+	switch c.Placement {
 	case placementQuery:
-		if l.Body != "" || l.ContentType != "" {
-			t.Fatalf("%s: a query case has a body", l.SourceCaseID)
+		if len(c.Body) != 0 || contentType != "" {
+			t.Fatalf("%s: a query case has a body", id)
 		}
-		for _, kv := range l.Query {
-			found = append(found, kv[1])
+		fields, err := url.ParseQuery(c.RawQuery)
+		if err != nil {
+			t.Fatalf("%s: the query does not parse: %v", id, err)
+		}
+		for _, vs := range fields {
+			found = append(found, vs...)
 		}
 	case placementJSON:
-		if l.ContentType != "application/json" || len(l.Query) != 0 {
-			t.Fatalf("%s: content type %q, %d query pairs", l.SourceCaseID, l.ContentType, len(l.Query))
+		if contentType != "application/json" || c.RawQuery != "" {
+			t.Fatalf("%s: content type %q, query %q", id, contentType, c.RawQuery)
 		}
 		var fields map[string]string
-		if err := json.Unmarshal([]byte(l.Body), &fields); err != nil {
-			t.Fatalf("%s: body is not a JSON object of strings: %v", l.SourceCaseID, err)
+		if err := json.Unmarshal(c.Body, &fields); err != nil {
+			t.Fatalf("%s: body is not a JSON object of strings: %v", id, err)
 		}
 		for _, v := range fields {
 			found = append(found, v)
 		}
 	case placementForm:
-		if l.ContentType != "application/x-www-form-urlencoded" || len(l.Query) != 0 {
-			t.Fatalf("%s: content type %q, %d query pairs", l.SourceCaseID, l.ContentType, len(l.Query))
+		if contentType != "application/x-www-form-urlencoded" || c.RawQuery != "" {
+			t.Fatalf("%s: content type %q, query %q", id, contentType, c.RawQuery)
 		}
-		fields, err := url.ParseQuery(l.Body)
+		fields, err := url.ParseQuery(string(c.Body))
 		if err != nil {
-			t.Fatalf("%s: body is not a form: %v", l.SourceCaseID, err)
+			t.Fatalf("%s: body is not a form: %v", id, err)
 		}
 		for _, vs := range fields {
 			found = append(found, vs...)
 		}
 	default:
-		t.Fatalf("%s: placement %q", l.SourceCaseID, l.Placement)
+		t.Fatalf("%s: placement %q", id, c.Placement)
 	}
-	if !slices.Contains(found, l.Payload) {
-		return strings.Join(found, " | ")
+	return found
+}
+
+// probeShaped is the content rule of the package comment: a text in the
+// canonical shape of an attack is a near-miss, however plausible a harmless
+// sender is. It is written here a second time, as patterns, so that an entry
+// of these kinds cannot be added as legitimate.
+var probeShaped = []*regexp.Regexp{
+	// HTML with a script element, an event handler attribute or a
+	// javascript: URL.
+	regexp.MustCompile(`(?i)<script[\s>]`),
+	regexp.MustCompile(`(?i)<[a-z][^<>]*\son[a-z]+\s*=`),
+	regexp.MustCompile(`(?i)javascript:`),
+	// A command that reads the password files. A log line that names one
+	// is not a command.
+	regexp.MustCompile(`\b(cat|less|more|head|tail|grep|cp|scp|vi|vim|nano|awk|sed)\b[^\n]*/etc/(passwd|shadow)`),
+}
+
+// timeDelay and sqlWords together are the last kind: SQL that calls a
+// time-delay function.
+var (
+	timeDelay = regexp.MustCompile(`(?i)pg_sleep\s*\(|\bsleep\s*\(|waitfor\s+delay|benchmark\s*\(`)
+	sqlWords  = regexp.MustCompile(`(?i)\b(select|union|where|waitfor|exec)\b`)
+)
+
+func isProbeShaped(s string) bool {
+	for _, re := range probeShaped {
+		if re.MatchString(s) {
+			return true
+		}
 	}
-	return l.Payload
+	return timeDelay.MatchString(s) && sqlWords.MatchString(s)
+}
+
+func TestProbeShapedTextIsNearMiss(t *testing.T) {
+	t.Parallel()
+	// Every entry of the material that the rule covers is marked, and no
+	// other entry is.
+	marked := 0
+	entry := func(where, s string) {
+		text, isMarked := strings.CutPrefix(s, nearMissMark)
+		if isMarked {
+			marked++
+		}
+		if strings.Contains(text, nearMissMark) {
+			t.Errorf("%s: the near-miss mark is not at the start of %q", where, s)
+		}
+		if isProbeShaped(text) != isMarked {
+			t.Errorf("%s: marked near-miss %t, covered by the content rule %t: %q", where, isMarked, isProbeShaped(text), text)
+		}
+	}
+	for _, c := range material {
+		for _, template := range c.templates {
+			entry("category "+c.name, template)
+		}
+	}
+	for name, list := range slots {
+		for _, s := range list {
+			entry("list "+name, s)
+		}
+	}
+	if marked == 0 {
+		t.Error("no entry is marked near-miss")
+	}
+	for _, re := range []string{"whoami"} {
+		for name, list := range slots {
+			for _, s := range list {
+				if strings.Contains(s, re) {
+					t.Errorf("list %s holds a reconnaissance command: %q", name, s)
+				}
+			}
+		}
+	}
+
+	// A line is a near-miss exactly when a marked entry went into it, and
+	// no legitimate line is covered by the rule, whatever it was built from.
+	items, _ := generate(material, 1, 30000)
+	nearMisses := 0
+	for _, it := range items {
+		l := it.line
+		want := cases.Legit
+		if it.nearMiss {
+			want = cases.NearMiss
+			nearMisses++
+		}
+		if l.Expected != want {
+			t.Fatalf("%s: expected %q, want %q: %q", l.SourceCaseID, l.Expected, want, l.Payload)
+		}
+		if l.Expected == cases.Legit && isProbeShaped(l.Payload) {
+			t.Fatalf("%s: a legitimate line is covered by the content rule: %q", l.SourceCaseID, l.Payload)
+		}
+		if strings.Contains(l.Payload, "near-miss") {
+			t.Fatalf("%s: the mark is in the text: %q", l.SourceCaseID, l.Payload)
+		}
+	}
+	if nearMisses == 0 {
+		t.Error("no near-miss line in 30000")
+	}
 }
 
 func TestEveryCategoryAndPlacement(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"addresses", "code-like-prose", "names", "other-languages", "prices-and-quantities",
-		"reviews", "support-messages", "urls-in-text",
+		"addresses", "names", "other-languages", "pasted-code", "prices-and-quantities",
+		"punctuation-prose", "reviews", "support-messages", "urls-in-text",
 	}
 	// One round of the schedule already holds every category.
 	var small []string
@@ -181,6 +288,14 @@ func TestEveryCategoryAndPlacement(t *testing.T) {
 	if len(perCategory) != len(want) {
 		t.Errorf("%d categories, want %d", len(perCategory), len(want))
 	}
+	// Punctuation-heavy prose and pasted code together stay about a quarter
+	// of the set, and neither is a token share.
+	if got := countOf(schedule, "pasted-code"); got != 3 {
+		t.Errorf("pasted-code has %d of %d turns, want 3", got, len(schedule))
+	}
+	if got := countOf(schedule, "punctuation-prose"); got != 2 {
+		t.Errorf("punctuation-prose has %d of %d turns, want 2", got, len(schedule))
+	}
 	for _, name := range want {
 		total := 0
 		for _, placement := range []string{placementQuery, placementJSON, placementForm} {
@@ -191,8 +306,8 @@ func TestEveryCategoryAndPlacement(t *testing.T) {
 			}
 		}
 		// The smallest share of the schedule is 2 in 20.
-		if total < n/10 {
-			t.Errorf("category %s has %d cases, want at least %d", name, total, n/10)
+		if total < n*2/len(schedule) {
+			t.Errorf("category %s has %d cases, want at least %d", name, total, n*2/len(schedule))
 		}
 	}
 	for _, placement := range []string{placementQuery, placementJSON, placementForm} {
@@ -247,7 +362,9 @@ func TestMaterialIsWellFormed(t *testing.T) {
 				t.Errorf("%s: unclosed slot in %q", where, s)
 				break
 			}
-			if strings.HasPrefix(name, "#") {
+			if slotOpen+name+slotClose == nearMissMark {
+				// Checked in TestProbeShapedTextIsNearMiss.
+			} else if strings.HasPrefix(name, "#") {
 				if _, _, ok := numberRange(name); !ok {
 					t.Errorf("%s: bad number slot %q", where, name)
 				}
@@ -327,6 +444,14 @@ func TestGenerateStopsWhenTheMaterialRunsOut(t *testing.T) {
 		t.Errorf("n < 0 gave %d lines", len(got))
 	}
 
+	if _, err := GenerateExact(1, 300); err != nil {
+		t.Errorf("GenerateExact(1, 300): %v", err)
+	}
+	// More than the material holds: an error, and never a shorter set.
+	if lines, err := GenerateExact(1, 5_000_000); err == nil || lines != nil {
+		t.Errorf("GenerateExact past the material: %d lines, error %v", len(lines), err)
+	}
+
 	// Three texts, two of which differ only in a number: two distinct lines,
 	// however many are asked for.
 	endpoints := material[0].endpoints
@@ -356,10 +481,18 @@ func TestGenerateStopsWhenTheMaterialRunsOut(t *testing.T) {
 		t.Errorf("%d lines from the small category and %d distinct texts in %d lines, want 2 and no repeats",
 			fromTiny, len(texts), len(items))
 	}
-	// The mix stays that of the schedule: generation ends with the category
-	// that ran out, on its third turn.
-	if want := 2*len(schedule)/countOf(schedule, schedule[0]) + 1; len(items) > want {
-		t.Errorf("%d lines after a category ran out, want at most %d", len(items), want)
+	// The mix stays that of the schedule: generation ends at the third turn
+	// of the category that ran out.
+	turns, third := 0, 0
+	for i, name := range schedule {
+		if name == schedule[0] {
+			if turns++; turns == 3 {
+				third = i
+			}
+		}
+	}
+	if len(items) != third {
+		t.Errorf("%d lines when a category ran out, want the %d before its third turn", len(items), third)
 	}
 }
 
@@ -371,4 +504,25 @@ func countOf(list []string, name string) int {
 		}
 	}
 	return n
+}
+
+// TestNumberSlotsDoNotNeedAWideInt checks the largest number slot of the
+// material against the 32-bit int of some platforms: the range is read as
+// int64 everywhere.
+func TestNumberSlotsDoNotNeedAWideInt(t *testing.T) {
+	t.Parallel()
+	lo, hi, ok := numberRange("#4500000000-4599999999")
+	if !ok || lo != 4500000000 || hi != 4599999999 {
+		t.Fatalf("range %d-%d, ok %t", lo, hi, ok)
+	}
+	var _ int64 = lo
+	r := &rng{state: 1}
+	var b strings.Builder
+	var nearMiss bool
+	if !expand(r, &b, "⟦#4500000000-4599999999⟧", 0, &nearMiss) {
+		t.Fatal("the slot did not expand")
+	}
+	if got := b.String(); len(got) != 10 || got < "4500000000" || got > "4599999999" {
+		t.Errorf("number %q is outside the range", got)
+	}
 }

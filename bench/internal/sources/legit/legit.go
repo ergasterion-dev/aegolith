@@ -4,18 +4,39 @@
 //
 // Each case is a free-text value that a person or a system would send (a
 // name, an address, a review, a support message, a price, a text with a URL,
-// prose full of punctuation or code, a text in another language) placed in a query value, a JSON body or a form body of a
-// plain request. The texts are built from the templates and word lists in the
-// material files of this package. They were written to be what people send,
-// awkward kinds included: quoted error messages, pasted shell commands and
-// SQL, HTML and template snippets, file paths, apostrophes and ampersands.
-// No text was chosen, changed or left out because of what a firewall does
-// with it, and none may be: that would make the measured rate a lie. Texts
-// that are attack payloads in their own right are not written here at all.
+// prose full of punctuation, pasted code, a text in another language) placed
+// in a query value, a JSON body or a form body of a plain request. The texts
+// are built from the templates and word lists in the material files of this
+// package. They were written to be what people send, awkward kinds included:
+// quoted error messages, pasted shell commands and SQL, HTML and template
+// snippets, file paths, apostrophes and ampersands. No text was chosen,
+// changed or left out because of what a firewall does with it, and none may
+// be: that would make the measured rate a lie.
+//
+// # Legitimate and near-miss
+//
+// A line is expected to be legitimate unless its text has the canonical
+// shape of an attack; then it is a near-miss, however plausible a harmless
+// sender is, and is counted apart. The rule looks at the text alone:
+//
+//   - HTML with a script element, an on...= event handler attribute or a
+//     javascript: URL;
+//   - a command that reads /etc/passwd or /etc/shadow;
+//   - SQL that calls a time-delay function (pg_sleep, sleep, waitfor delay,
+//     benchmark).
+//
+// An entry of the material of one of these kinds starts with nearMissMark,
+// and every line built from such an entry is a near-miss. Everything else
+// stays legitimate, including ordinary SQL (a UNION of two real tables, a
+// query of information_schema), shell commands with pipes, && and $(...),
+// relative paths, localhost URLs, passive HTML and a log line that merely
+// names a password file. Stock reconnaissance commands and attack payloads
+// in their own right are not written here at all.
 //
 // The mix of categories is fixed (see schedule) and is not a model of how
-// often each kind occurs in real traffic; code-like text is deliberately
-// over-represented. Read the rate of each category, not only the total.
+// often each kind occurs in real traffic; punctuation-heavy prose and pasted
+// code are deliberately over-represented. Read the rate of each category,
+// not only the total.
 //
 // Names, addresses, phone numbers and e-mail addresses are invented; hosts
 // are reserved names (example.com, example.org, example.net, .test,
@@ -27,10 +48,11 @@
 // Generate(seed, n) returns the same lines on every platform and with every
 // Go release: the random numbers come from SplitMix64, written out below, and
 // not from math/rand, whose derived methods (such as IntN) are free to draw
-// differently in a later release; no map is iterated; and every choice is
-// made in one fixed order. Generate(seed, m) is the start of Generate(seed,
-// n) for m < n. Editing the material changes the lines of every seed; a test
-// pins the digest of one set so that this cannot happen unnoticed.
+// differently in a later release; numbers are 64 bits wide whatever the
+// platform's int; no map is iterated; and every choice is made in one fixed
+// order. Generate(seed, m) is the start of Generate(seed, n) for m < n.
+// Editing the material changes the lines of every seed; a test pins the
+// digest of one set so that this cannot happen unnoticed.
 //
 // # Distinctness
 //
@@ -38,7 +60,8 @@
 // digits count as the same text: a second order number does not make a second
 // case. So every line is a distinct request. Generation stops early when the
 // category whose turn it is cannot produce a new text, which keeps the mix
-// the same for every n; Generate then returns fewer than n lines.
+// the same for every n; Generate then returns fewer than n lines, and
+// GenerateExact an error.
 package legit
 
 import (
@@ -46,6 +69,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math/bits"
 	"net/url"
 	"strconv"
@@ -73,6 +98,14 @@ const (
 	slotClose = "⟧"
 )
 
+// nearMissMark starts a material entry whose text has the canonical shape of
+// an attack; see the package comment. It is written like a slot and fills in
+// as nothing.
+const nearMissMark = slotOpen + "near-miss" + slotClose
+
+// nearMiss marks the entry s.
+func nearMiss(s string) string { return nearMissMark + s }
+
 // payloadMark is the value of the field of an endpoint that takes the text.
 const payloadMark = "\x00"
 
@@ -99,13 +132,14 @@ type endpoint struct {
 	fields       [][2]string
 }
 
-// schedule is the order in which categories take turns: 4 in 20 lines are
-// code-like prose, 3 each reviews and support messages, 2 each the others.
+// schedule is the order in which categories take turns: of 20 lines, 3 each
+// are pasted code and reviews, and 2 each the others. Pasted code and
+// punctuation-heavy prose are a quarter of the set together.
 var schedule = []string{
-	"code-like-prose", "names", "reviews", "support-messages", "code-like-prose",
+	"pasted-code", "names", "reviews", "support-messages", "punctuation-prose",
 	"addresses", "prices-and-quantities", "urls-in-text", "other-languages", "reviews",
-	"code-like-prose", "support-messages", "names", "addresses", "other-languages",
-	"code-like-prose", "prices-and-quantities", "urls-in-text", "reviews", "support-messages",
+	"pasted-code", "support-messages", "names", "addresses", "other-languages",
+	"punctuation-prose", "prices-and-quantities", "urls-in-text", "reviews", "pasted-code",
 }
 
 // userAgents are the browsers and clients the requests claim to come from.
@@ -118,9 +152,18 @@ var userAgents = []string{
 	"okhttp/4.12.0",
 }
 
-// Generate returns up to n legitimate case lines for seed. It returns fewer
-// than n only when the material cannot give n distinct texts in the fixed mix
-// of categories; see the package comment. n < 1 gives no lines.
+// ErrExhausted reports that the material cannot give as many distinct texts
+// as were asked for in the fixed mix of categories.
+var ErrExhausted = errors.New("the legitimate material is used up")
+
+// Generate returns up to n case lines for seed, each expected to be
+// legitimate or a near-miss; n < 1 gives no lines.
+//
+// The result is SHORTER than n when the material cannot give n distinct
+// texts in the fixed mix of categories (see the package comment): compare its
+// length with n, or call GenerateExact, which reports that as an error. A set
+// that is silently smaller than the one asked for must not be published under
+// the size that was asked for.
 func Generate(seed int64, n int) []cases.Line {
 	items, _ := generate(material, seed, n)
 	lines := make([]cases.Line, len(items))
@@ -130,10 +173,22 @@ func Generate(seed int64, n int) []cases.Line {
 	return lines
 }
 
-// item is a generated line and the template its text came from.
+// GenerateExact returns exactly n case lines for seed, or no lines and an
+// error that wraps ErrExhausted and says how many there are.
+func GenerateExact(seed int64, n int) ([]cases.Line, error) {
+	lines := Generate(seed, n)
+	if len(lines) < n {
+		return nil, fmt.Errorf("%w: seed %d gives %d distinct cases, not %d", ErrExhausted, seed, len(lines), n)
+	}
+	return lines, nil
+}
+
+// item is a generated line, the template its text came from and whether a
+// near-miss entry went into the text.
 type item struct {
 	line     cases.Line
 	template string
+	nearMiss bool
 }
 
 // generate is Generate over the given categories. exhausted reports that it
@@ -152,21 +207,27 @@ func generate(categories []category, seed int64, n int) (items []item, exhausted
 		if c == nil || len(c.templates) == 0 {
 			return items, true
 		}
-		template, text, ok := newText(r, c, seen)
+		template, text, isNearMiss, ok := newText(r, c, seen)
 		if !ok {
 			return items, true
 		}
-		items = append(items, item{line: request(r, c, text), template: template})
+		expected := cases.Legit
+		if isNearMiss {
+			expected = cases.NearMiss
+		}
+		items = append(items, item{line: request(r, c, text, expected), template: template, nearMiss: isNearMiss})
 	}
 	return items, false
 }
 
 // newText draws texts of c until one is new, and records it in seen.
-func newText(r *rng, c *category, seen map[string]bool) (template, text string, ok bool) {
+// nearMiss reports that a marked entry went into the text.
+func newText(r *rng, c *category, seen map[string]bool) (template, text string, nearMiss, ok bool) {
 	for range maxDraws {
 		template = c.templates[r.intn(len(c.templates))]
 		var b strings.Builder
-		if !expand(r, &b, template, 0) {
+		nearMiss = false
+		if !expand(r, &b, template, 0, &nearMiss) {
 			continue
 		}
 		text = strings.TrimSpace(b.String())
@@ -175,14 +236,15 @@ func newText(r *rng, c *category, seen map[string]bool) (template, text string, 
 			continue
 		}
 		seen[key] = true
-		return template, text, true
+		return template, text, nearMiss, true
 	}
-	return "", "", false
+	return "", "", false, false
 }
 
-// expand writes s to b with its slots filled. It fails on a slot that does
+// expand writes s to b with its slots filled, and sets nearMiss when s or an
+// entry that fills one of its slots is marked. It fails on a slot that does
 // not exist or nests too deep; the tests keep the material free of both.
-func expand(r *rng, b *strings.Builder, s string, depth int) bool {
+func expand(r *rng, b *strings.Builder, s string, depth int, nearMiss *bool) bool {
 	if depth > maxDepth {
 		return false
 	}
@@ -196,15 +258,18 @@ func expand(r *rng, b *strings.Builder, s string, depth int) bool {
 		if !closed {
 			return false
 		}
-		if strings.HasPrefix(name, "#") {
+		switch {
+		case slotOpen+name+slotClose == nearMissMark:
+			*nearMiss = true
+		case strings.HasPrefix(name, "#"):
 			lo, hi, ok := numberRange(name)
 			if !ok {
 				return false
 			}
-			b.WriteString(strconv.Itoa(lo + r.intn(hi-lo+1)))
-		} else {
+			b.WriteString(strconv.FormatInt(lo+int64(r.below(uint64(hi-lo)+1)), 10))
+		default:
 			list := slots[name]
-			if len(list) == 0 || !expand(r, b, list[r.intn(len(list))], depth+1) {
+			if len(list) == 0 || !expand(r, b, list[r.intn(len(list))], depth+1, nearMiss) {
 				return false
 			}
 		}
@@ -212,11 +277,12 @@ func expand(r *rng, b *strings.Builder, s string, depth int) bool {
 	}
 }
 
-// numberRange parses the slot name "#lo-hi".
-func numberRange(name string) (lo, hi int, ok bool) {
+// numberRange parses the slot name "#lo-hi". The numbers are int64, so that
+// a range beyond 32 bits reads the same on every platform.
+func numberRange(name string) (lo, hi int64, ok bool) {
 	from, to, found := strings.Cut(strings.TrimPrefix(name, "#"), "-")
-	lo, errLo := strconv.Atoi(from)
-	hi, errHi := strconv.Atoi(to)
+	lo, errLo := strconv.ParseInt(from, 10, 64)
+	hi, errHi := strconv.ParseInt(to, 10, 64)
 	return lo, hi, found && errLo == nil && errHi == nil && 0 <= lo && lo <= hi
 }
 
@@ -238,10 +304,15 @@ func digitsFolded(s string) string {
 	return b.String()
 }
 
-// request places text in a request of c.
-func request(r *rng, c *category, text string) cases.Line {
+// request places text in a request of c. A text of several lines (a pasted
+// traceback, a list, an address block) comes from a text area and is sent in
+// a body, never as a query value.
+func request(r *rng, c *category, text string, expected cases.Expected) cases.Line {
 	placements := [3]string{placementQuery, placementJSON, placementForm}
 	p := r.intn(len(placements))
+	if strings.Contains(text, "\n") {
+		p = 1 + r.intn(len(placements)-1)
+	}
 	e := c.endpoints[p][r.intn(len(c.endpoints[p]))]
 	fields := make([][]string, len(e.fields))
 	for i, f := range e.fields {
@@ -257,13 +328,13 @@ func request(r *rng, c *category, text string) cases.Line {
 	line := cases.Line{
 		Name:         Source + "-" + caseID,
 		Category:     c.name,
-		Kind:         string(cases.Legit),
+		Kind:         string(expected), // as the other importers write it
 		Method:       e.method,
 		Path:         e.path,
 		Headers:      map[string]string{"User-Agent": userAgents[r.intn(len(userAgents))]},
 		Source:       Source,
 		SourceCaseID: caseID,
-		Expected:     cases.Legit,
+		Expected:     expected,
 		Payload:      text,
 		Placement:    placements[p],
 	}
@@ -329,9 +400,12 @@ func (r *rng) next() uint64 {
 	return z ^ z>>31
 }
 
-// intn returns a number in [0, n) for n > 0: the high word of a 64 by 64 bit
+// below returns a number in [0, n) for n > 0: the high word of a 64 by 64 bit
 // product. Its bias is below n/2^64.
-func (r *rng) intn(n int) int {
-	hi, _ := bits.Mul64(r.next(), uint64(n))
-	return int(hi)
+func (r *rng) below(n uint64) uint64 {
+	hi, _ := bits.Mul64(r.next(), n)
+	return hi
 }
+
+// intn is below for the length of a list.
+func (r *rng) intn(n int) int { return int(r.below(uint64(n))) }
