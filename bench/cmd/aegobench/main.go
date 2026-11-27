@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -29,6 +31,7 @@ import (
 	"github.com/ergasterion-dev/aegolith/bench/internal/records"
 	runner "github.com/ergasterion-dev/aegolith/bench/internal/run"
 	"github.com/ergasterion-dev/aegolith/bench/internal/sources/baseline"
+	"github.com/ergasterion-dev/aegolith/bench/internal/sources/crs"
 	"github.com/ergasterion-dev/aegolith/bench/internal/target"
 )
 
@@ -111,8 +114,9 @@ func parseFlags(fs *flag.FlagSet, args []string) (help bool, err error) {
 func runImport(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("aegobench import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	source := fs.String("source", "", `source to import: "baseline"`)
+	source := fs.String("source", "", `source to import: "baseline" or "crs"`)
 	corpus := fs.String("corpus", "", "corpus directory (source baseline)")
+	root := fs.String("root", "", "fetched source tree (source crs)")
 	out := fs.String("out", "", "case file to write")
 	if help, err := parseFlags(fs, args); help || err != nil {
 		return err
@@ -122,6 +126,7 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 	}
 
 	var lines []cases.Line
+	var skipped []cases.Skip
 	var err error
 	switch *source {
 	case cases.SourceBaseline:
@@ -129,6 +134,11 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("%w: --corpus is required for source %s", errUsage, *source)
 		}
 		lines, err = baseline.Import(*corpus)
+	case crs.Source:
+		if *root == "" {
+			return fmt.Errorf("%w: --root is required for source %s", errUsage, *source)
+		}
+		lines, skipped, err = crs.Import(*root)
 	default:
 		return fmt.Errorf("%w: unknown source %q", errUsage, *source)
 	}
@@ -145,7 +155,31 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 	}
 	_, err = fmt.Fprintf(stdout, "wrote %d cases from %s (%d attack, %d legit, %d near-miss) to %s\n",
 		len(lines), *source, count[cases.Attack], count[cases.Legit], count[cases.NearMiss], *out)
-	return err
+	if err != nil || len(skipped) == 0 {
+		return err
+	}
+	return printSkips(stdout, skipped)
+}
+
+// printSkips prints how many source cases were left out for each reason, the
+// most frequent reason first.
+func printSkips(w io.Writer, skipped []cases.Skip) error {
+	count := map[string]int{}
+	for _, s := range skipped {
+		count[s.Reason]++
+	}
+	reasons := slices.SortedFunc(maps.Keys(count), func(a, b string) int {
+		return cmp.Or(cmp.Compare(count[b], count[a]), cmp.Compare(a, b))
+	})
+	if _, err := fmt.Fprintf(w, "skipped %d:\n", len(skipped)); err != nil {
+		return err
+	}
+	for _, reason := range reasons {
+		if _, err := fmt.Fprintf(w, "%7d  %s\n", count[reason], reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeCaseFile replaces path with lines, see writeFile.

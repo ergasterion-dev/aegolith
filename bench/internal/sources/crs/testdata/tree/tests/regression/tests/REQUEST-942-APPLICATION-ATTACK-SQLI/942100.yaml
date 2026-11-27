@@ -1,0 +1,72 @@
+---
+# Hand-written for the importer's tests, in the shape of the CRS regression
+# test files. Not a copy of an upstream file.
+meta:
+  author: "aegolith bench"
+  description: "SQL injection fixture"
+rule_id: 942100
+tests:
+  - test_id: 1
+    desc: "attack in a form body"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          method: "POST"
+          uri: "/post"
+          version: "HTTP/1.1"
+          headers:
+            Host: "localhost"
+            User-Agent: "OWASP CRS test agent"
+            Accept: "*/*"
+          data: "id=7%27+OR+%271%27%3D%271"
+        output:
+          log:
+            expect_ids: [942100]
+  - test_id: 2
+    desc: "harmless value in the query"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          method: "GET"
+          uri: "/get?note=union%20station"
+          version: "HTTP/1.1"
+          headers:
+            Host: "localhost"
+            User-Agent: "OWASP CRS test agent"
+            Accept: "*/*"
+        output:
+          log:
+            no_expect_ids: [942100]
+  - test_id: 3
+    desc: "request given as raw bytes"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          encoded_request: "R0VUIC8/aWQ9MSBIVFRQLzEuMQ0KSG9zdDogbG9jYWxob3N0DQoNCg=="
+        output:
+          log:
+            expect_ids: [942100]
+  - test_id: 4
+    desc: "two requests"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          uri: "/get?id=1"
+          headers:
+            Host: "localhost"
+        output:
+          log:
+            no_expect_ids: [942100]
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          uri: "/get?id=1%20OR%201=1"
+          headers:
+            Host: "localhost"
+        output:
+          log:
+            expect_ids: [942100]

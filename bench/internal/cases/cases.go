@@ -77,6 +77,10 @@ type Line struct {
 // SourceRef is one source's name for a case.
 type SourceRef struct{ Source, CaseID string }
 
+// Skip records a source case that an importer left out, and why. Reason is
+// never empty and never repeats a value of the request.
+type Skip struct{ CaseID, Reason string }
+
 // Case is one distinct request and every source that provides it.
 type Case struct {
 	ID       string // hex SHA-256 of the request, see requestID

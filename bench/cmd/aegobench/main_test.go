@@ -57,6 +57,65 @@ func TestImportBaselineWritesCaseFile(t *testing.T) {
 	}
 }
 
+func TestImportCRSWritesCasesAndCountsSkips(t *testing.T) {
+	t.Parallel()
+	out := filepath.Join(t.TempDir(), "crs.jsonl")
+	var stdout, stderr bytes.Buffer
+	args := []string{"import", "--source", "crs", "--root", "../../internal/sources/crs/testdata/tree", "--out", out}
+	if err := run(args, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	lines, err := cases.ReadLines(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 4 {
+		t.Errorf("%d lines, want 4", len(lines))
+	}
+	for _, l := range lines {
+		if _, err := cases.FromLine(l); err != nil {
+			t.Error(err)
+		}
+	}
+	want := "wrote 4 cases from crs (2 attack, 0 legit, 2 near-miss) to " + out + "\n" +
+		"skipped 7:\n" +
+		"      1  HTTP version is not HTTP/1.1\n" +
+		"      1  file holds no tests\n" +
+		"      1  file is not valid YAML\n" +
+		"      1  output requires no rule IDs and excludes none\n" +
+		"      1  request is given as raw or encoded bytes\n" +
+		"      1  response-phase rule: the attack is not in the request\n" +
+		"      1  test has several stages\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("summary:\n%s\nwant:\n%s", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr: %s", stderr.String())
+	}
+}
+
+func TestImportCRSNeedsARoot(t *testing.T) {
+	t.Parallel()
+	out := filepath.Join(t.TempDir(), "crs.jsonl")
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"import", "--source", "crs", "--out", out}, &stdout, &stderr)
+	if !errors.Is(err, errUsage) {
+		t.Errorf("error %v, want a usage error", err)
+	}
+	err = run([]string{"import", "--source", "crs", "--root", t.TempDir(), "--out", out}, &stdout, &stderr)
+	if err == nil || errors.Is(err, errUsage) {
+		t.Errorf("error %v, want a failed import for a tree without tests", err)
+	}
+	if _, statErr := os.Stat(out); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the output exists after failed imports: %v", statErr)
+	}
+}
+
 func TestFailedImportLeavesOutputAlone(t *testing.T) {
 	t.Parallel()
 	out := filepath.Join(t.TempDir(), "cases.jsonl")

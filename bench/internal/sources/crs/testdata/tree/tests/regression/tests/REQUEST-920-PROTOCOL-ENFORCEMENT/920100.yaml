@@ -1,0 +1,41 @@
+---
+# Hand-written for the importer's tests. Not a copy of an upstream file.
+meta:
+  author: "aegolith bench"
+  description: "protocol fixture"
+rule_id: 920100
+tests:
+  - test_id: 1
+    desc: "no method, target or version given"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          headers:
+            Host: "localhost"
+            Keep-Alive: 300
+        output:
+          log:
+            no_expect_ids: [920100]
+  - test_id: 2
+    desc: "old protocol version"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          version: "HTTP/1.0"
+          headers:
+            Host: "localhost"
+        output:
+          log:
+            expect_ids: [920100]
+  - test_id: 3
+    desc: "only a status is expected"
+    stages:
+      - input:
+          dest_addr: "127.0.0.1"
+          port: 80
+          headers:
+            Host: "localhost"
+        output:
+          status: 400
