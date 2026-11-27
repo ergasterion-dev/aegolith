@@ -252,7 +252,7 @@ func TestRunRejectsBadUsage(t *testing.T) {
 
 func TestHelpIsNotAnError(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {"import", "-h"}, {"target", "-h"}, {"detect", "-h"}, {"report", "-h"}} {
+	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {"import", "-h"}, {"target", "-h"}, {"detect", "-h"}, {"load", "-h"}, {"report", "-h"}} {
 		var stdout, stderr bytes.Buffer
 		if err := run(args, &stdout, &stderr); err != nil {
 			t.Errorf("%v: %v", args, err)
@@ -263,6 +263,8 @@ func TestHelpIsNotAnError(t *testing.T) {
 			want = "-decisions"
 		case "detect":
 			want = "-id-prefix"
+		case "load":
+			want = "-attack-share"
 		case "report":
 			want = "-previous"
 		}

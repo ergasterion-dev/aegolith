@@ -73,6 +73,9 @@ type Listed struct {
 type Report struct {
 	Meta    Meta
 	Configs []Config
+	// Load is the result of a load run, if one was made. It enters no count
+	// and no rate of Configs.
+	Load *run.LoadResult `json:",omitempty"`
 }
 
 // BuildConfig counts the results rs of the cases cs.

@@ -671,7 +671,8 @@ The corpus above was written by the people who tuned the rules. The WAF bench in
 | GoTestWAF importer (one case per payload, encoder and placeholder, built as the tool builds its requests; gRPC and GraphQL cases are skipped and counted) | Done |
 | Generated legitimate traffic (names, addresses, reviews, support messages, prices, texts with URLs, punctuation-heavy prose, pasted code, other languages; seeded and reproducible; texts in the shape of an attack are labelled near-miss) | Done |
 | A public set of recorded legitimate traffic | Not included: no licence verified (candidates are listed in `bench/sources.json`) |
-| Load phase, guarded remote mode, one-command `make` targets, first report | Not started |
+| Load phase (loopback targets only): a seeded mix of legitimate and attack requests at a fixed rate; client round-trip percentiles, errors, dropped requests, the firewall's own latency from the decision log, the target's heap | Done |
+| Guarded remote mode, one-command `make` targets, first report | Not started |
 
 The commands that exist now, run from `bench/` (the target runs in a second terminal; `bench/out/` is git-ignored):
 
@@ -698,11 +699,18 @@ go run ./cmd/aegobench target --mode enforce --policy ../testdata/corpus/example
 go run ./cmd/aegobench detect --cases out/baseline.jsonl --base http://127.0.0.1:8088 \
   --access out/access.jsonl --decisions out/decisions.jsonl --out out/results.jsonl
 
-# 4. Write out/report/report.md and report.json (add --previous to compare)
-go run ./cmd/aegobench report --cases out/baseline.jsonl --results api-aware=out/results.jsonl --out out/report
+# 4. Optional: 60 s of load, one request in ten an attack (Ctrl-C writes the partial result)
+go run ./cmd/aegobench load --cases out/baseline.jsonl --base http://127.0.0.1:8088 --admin http://127.0.0.1:8089 \
+  --rps 500 --duration 60s --attack-share 0.1 --decisions out/decisions.jsonl --out out/load.json
+
+# 5. Write out/report/report.md and report.json (add --previous to compare, --load to include step 4)
+go run ./cmd/aegobench report --cases out/baseline.jsonl --results api-aware=out/results.jsonl \
+  --load out/load.json --out out/report
 ```
 
-`bench/scripts/fetch-sources.sh` fetches the two pinned sources into `bench/.sources/` (it needs git, jq and network access, and runs nothing it fetches). `detect` refuses any host but a loopback one; remote mode is not built.
+`bench/scripts/fetch-sources.sh` fetches the two pinned sources into `bench/.sources/` (it needs git, jq and network access, and runs nothing it fetches). `detect` and `load` refuse any host but a loopback one; remote mode is not built.
+
+`load` sends at fixed times whatever the target does: a request that is due while all `--workers` are busy is dropped and counted, never queued, so a slow target shows as dropped requests and a lower achieved rate. Its latency is the client's round trip (HTTP on both sides plus the connection), not the firewall's decision latency, which it reads from the decision log for the requests that left a record there. It does not send a case's own `Connection` header, uses no near-miss cases and writes no detection results. On one machine the generator and the target share the processors, so its numbers describe that machine at that moment.
 
 ## Status and roadmap
 

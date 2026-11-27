@@ -1,6 +1,7 @@
 // Command aegobench measures Aegolith against request sets: it imports each
 // source into case lines, serves the target they are replayed against, sends
-// them to it, judges the outcome of each and reports the results.
+// them to it, judges the outcome of each, puts the target under load and
+// reports the results.
 package main
 
 import (
@@ -43,6 +44,7 @@ commands:
   import    convert a source into case lines
   target    serve the firewall-wrapped server that cases are sent to
   detect    send every case to the target once and record each outcome
+  load      send a mix of cases at a fixed rate and measure latency and memory
   report    count the outcomes and compare them with an earlier report
   help      show this text
 
@@ -82,6 +84,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		ctx, stop := signalContext()
 		defer stop()
 		return runDetect(ctx, args[1:], stdout, stderr)
+	case "load":
+		ctx, stop := signalContext()
+		defer stop()
+		return runLoad(ctx, args[1:], stdout, stderr)
 	case "report":
 		return runReport(args[1:], stdout, stderr)
 	default:
@@ -517,7 +523,7 @@ func parseDetect(args []string, stderr io.Writer) (o detectOptions, help bool, e
 	if slices.Contains(o.caseFiles, "") {
 		return o, false, fmt.Errorf("%w: --cases holds an empty file name", errUsage)
 	}
-	if o.base, err = parseBase(*base); err != nil {
+	if o.base, err = parseBase("--base", *base); err != nil {
 		return o, false, err
 	}
 	// Other hosts are for remote mode, which has the limits that sending to
@@ -542,11 +548,11 @@ func parseDetect(args []string, stderr io.Writer) (o detectOptions, help bool, e
 // parseBase accepts only a scheme and a host: anything else in the URL would
 // be left out of the requests. Its errors do not repeat the value, which may
 // hold a password.
-func parseBase(raw string) (*url.URL, error) {
+func parseBase(flagName, raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
 		u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return nil, fmt.Errorf("%w: --base must be http://host[:port] or https://host[:port]", errUsage)
+		return nil, fmt.Errorf("%w: %s must be http://host[:port] or https://host[:port]", errUsage, flagName)
 	}
 	return u, nil
 }

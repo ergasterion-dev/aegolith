@@ -2,6 +2,7 @@ package report
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/ergasterion-dev/aegolith/bench/internal/cases"
+	"github.com/ergasterion-dev/aegolith/bench/internal/run"
 )
 
 // shortID is how much of a case ID the Markdown shows; report.json has all of
@@ -57,7 +59,112 @@ func (r Report) Markdown() string {
 	for _, c := range r.Configs {
 		c.markdown(&b)
 	}
+	if r.Load != nil {
+		loadMarkdown(&b, *r.Load)
+	}
 	return b.String()
+}
+
+// loadMarkdown renders the result of a load run. It names no case.
+func loadMarkdown(b *strings.Builder, l run.LoadResult) {
+	b.WriteString("\n## Load\n\n")
+	b.WriteString(`A mix of legitimate and attack requests sent at a fixed rate, to see how the
+target holds up. It gives no outcome per case and enters none of the rates
+above. A request is sent at its scheduled time or dropped, never queued.
+`)
+	if l.Interrupted {
+		b.WriteString("\n**The run was interrupted: these are the figures of the part that ran.**\n")
+	}
+	answered := l.Sent - l.TransportErrors
+	fmt.Fprintf(b, "\n- Rate: asked %d requests per second, achieved %.1f over %s, with %d workers\n",
+		l.RPS, l.AchievedRPS, l.Duration.Round(time.Millisecond), l.Workers)
+	fmt.Fprintf(b, "- Attack share: %.1f%% asked (seed %d); %d of %d sent requests (%s) were drawn from attack cases\n",
+		100*l.AttackShare, l.Seed, l.Attacks, l.Sent, percent(l.Attacks, l.Sent))
+	fmt.Fprintf(b, "- Cases: drawn from %d attack and %d legitimate cases; near-miss cases are never used; "+
+		"%d cases were left out before the run because the client cannot send them as given\n",
+		l.AttackCases, l.LegitCases, l.Excluded)
+	fmt.Fprintf(b, "- Sent: %d (%d answered, %d transport errors)\n", l.Sent, answered, l.TransportErrors)
+	fmt.Fprintf(b, "- Dropped: %d scheduled requests found every worker busy; nothing was sent for them, "+
+		"so they lower the achieved rate and have no latency\n", l.Dropped)
+	if l.Cancelled > 0 {
+		fmt.Fprintf(b, "- %d requests were in flight when the run was interrupted and are in no other count\n", l.Cancelled)
+	}
+	if l.NotSent > 0 {
+		fmt.Fprintf(b, "- %d requests were refused by the client and are in no other count\n", l.NotSent)
+	}
+	if answered > 0 {
+		fmt.Fprintf(b, "- Client round trip: p50 %s, p90 %s, p99 %s, max %s, from sending a request until its "+
+			"answer was read, over the %d answered requests. It includes the HTTP handling of both sides and the "+
+			"connection, so it is not the firewall's decision latency. A percentile is at most 0.8%% above the "+
+			"true value; the maximum is exact.\n",
+			micros(l.P50US), micros(l.P90US), micros(l.P99US), micros(l.MaxUS), answered)
+	} else {
+		b.WriteString("- Client round trip: no request was answered\n")
+	}
+	fmt.Fprintf(b, "- Schedule: a request was sent or dropped at most %s after its scheduled time\n", micros(l.MaxLagUS))
+	fmt.Fprintf(b, "- Firewall decision latency: %s\n", decisionLatency(l.Decisions))
+	fmt.Fprintf(b, "- Target heap: %s\n", heap(l))
+
+	b.WriteString("\n")
+	if len(l.ByStatus) == 0 {
+		b.WriteString("No request was answered.\n")
+		return
+	}
+	header(b, "Status", "Requests")
+	for _, status := range slices.Sorted(maps.Keys(l.ByStatus)) {
+		row(b, fmt.Sprint(status), fmt.Sprint(l.ByStatus[status]))
+	}
+}
+
+// decisionLatency describes the firewall's own latency of a load run.
+func decisionLatency(d *run.DecisionLatency) string {
+	if d == nil {
+		return "not read (no decision log was given)"
+	}
+	var s string
+	if d.Records == 0 {
+		s = "no decision record of this run has a latency"
+	} else {
+		s = fmt.Sprintf("p50 %s, p90 %s, p99 %s, max %s over %d decision records",
+			micros(d.P50US), micros(d.P90US), micros(d.P99US), micros(d.MaxUS), d.Records)
+	}
+	s += ". The firewall leaves a record only for a request it blocked, matched a rule on in monitor mode " +
+		"or failed on, so requests it passed are not in this figure"
+	return s + fmt.Sprintf("; left out: %d records of requests blocked because inspection failed, which carry no "+
+		"latency, %d records of other runs, %d unreadable lines", d.Skipped, d.Other, d.Unreadable)
+}
+
+// heap describes the readings of the target's heap during a load run.
+func heap(l run.LoadResult) string {
+	if l.MemPolls == 0 {
+		return "not read (no admin URL was given)"
+	}
+	size := func(v uint64) string {
+		if v == 0 {
+			return "not read"
+		}
+		return mib(float64(v))
+	}
+	growth := "n/a"
+	if l.HeapStart > 0 && l.HeapEnd > 0 {
+		growth = fmt.Sprintf("%+.1f MiB", (float64(l.HeapEnd)-float64(l.HeapStart))/(1<<20))
+	}
+	return fmt.Sprintf("start %s, peak %s, end %s, growth %s (bytes in use, including garbage not yet collected, "+
+		"so single readings swing with the collector); %d readings, %d failed",
+		size(l.HeapStart), size(l.HeapPeak), size(l.HeapEnd), growth, l.MemPolls, l.MemPollFailures)
+}
+
+func mib(bytes float64) string { return fmt.Sprintf("%.1f MiB", bytes/(1<<20)) }
+
+// micros writes a time given in microseconds.
+func micros(us int64) string {
+	switch {
+	case us < 1000:
+		return fmt.Sprintf("%d µs", us)
+	case us < 1_000_000:
+		return fmt.Sprintf("%.2f ms", float64(us)/1e3)
+	}
+	return fmt.Sprintf("%.2f s", float64(us)/1e6)
 }
 
 func (c Config) markdown(b *strings.Builder) {

@@ -1,5 +1,7 @@
-// Package run is the detection phase: it sends cases to a target over HTTP and
-// judges each one from the answer and the target's two logs.
+// Package run sends cases to a target over HTTP. In the detection phase it
+// sends each case once and judges it from the answer and the target's two
+// logs; in the load phase it sends a mix of cases at a fixed rate and measures
+// latency, errors and the target's memory, without judging any case.
 package run
 
 import (

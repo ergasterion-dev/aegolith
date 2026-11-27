@@ -508,3 +508,105 @@ func TestPercentAtTheEdges(t *testing.T) {
 		}
 	}
 }
+
+func loadResult() *run.LoadResult {
+	return &run.LoadResult{
+		RPS: 500, Workers: 64, AttackShare: 0.1, Seed: 7, AttackCases: 230, LegitCases: 195, Excluded: 3,
+		IDPrefix: "load-abc-", Sent: 29990, TransportErrors: 4, Attacks: 3010, Dropped: 10,
+		ByStatus: map[int]int{403: 3000, 200: 26980, 400: 6},
+		P50US:    180, P90US: 420, P99US: 1500, MaxUS: 2_340_000, MaxLagUS: 950,
+		HeapStart: 3 << 20, HeapPeak: 9 << 20, HeapEnd: 5 << 20, MemPolls: 14, MemPollFailures: 1,
+		Duration: time.Minute, AchievedRPS: 499.8333,
+	}
+}
+
+func TestReportWithoutLoadIsUnchanged(t *testing.T) {
+	t.Parallel()
+	r := Report{Configs: []Config{BuildConfig("default", nil, nil)}}
+	if md := r.Markdown(); strings.Contains(md, "Load") || strings.Contains(md, "round trip") {
+		t.Errorf("a report without a load run mentions one:\n%s", md)
+	}
+	if js := asJSON(t, r); strings.Contains(js, "Load") {
+		t.Errorf("report.json without a load run has a Load key: %s", js)
+	}
+	with := r
+	with.Load = loadResult()
+	if md := with.Markdown(); !strings.HasPrefix(md, r.Markdown()) {
+		t.Error("the load section changes the report before it")
+	}
+	var back Report
+	if err := json.Unmarshal([]byte(asJSON(t, with)), &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Load == nil || back.Load.Sent != 29990 || back.Load.ByStatus[403] != 3000 || back.Load.Duration != time.Minute {
+		t.Errorf("the load result does not survive report.json: %+v", back.Load)
+	}
+}
+
+func TestLoadSection(t *testing.T) {
+	t.Parallel()
+	md := Report{Load: loadResult()}.Markdown()
+	_, section, found := strings.Cut(md, "\n## Load\n")
+	if !found {
+		t.Fatalf("no load section in:\n%s", md)
+	}
+	contains(t, section,
+		"asked 500 requests per second, achieved 499.8 over 1m0s",
+		"64 workers",
+		"10.0% asked (seed 7)",
+		"3010 of 29990",
+		"230 attack and 195 legitimate cases",
+		"3 cases were left out before the run",
+		"Sent: 29990 (29986 answered, 4 transport errors)",
+		"Dropped: 10",
+		"| 200 | 26980 |", "| 400 | 6 |", "| 403 | 3000 |",
+		"p50 180 µs, p90 420 µs, p99 1.50 ms, max 2.34 s",
+		"not the firewall's decision latency",
+		"at most 0.8% above",
+		"950 µs",
+		"start 3.0 MiB, peak 9.0 MiB, end 5.0 MiB, growth +2.0 MiB",
+		"14 readings, 1 failed",
+		"Firewall decision latency: not read",
+	)
+	// Statuses in order.
+	if strings.Index(section, "| 200 |") > strings.Index(section, "| 403 |") {
+		t.Error("the statuses are not sorted")
+	}
+	for _, not := range []string{"Interrupted", "interrupted", "refused", "load-abc-"} {
+		if strings.Contains(section, not) {
+			t.Errorf("a complete run says %q:\n%s", not, section)
+		}
+	}
+}
+
+func TestLoadSectionSaysWhatIsMissing(t *testing.T) {
+	t.Parallel()
+	l := loadResult()
+	l.Interrupted, l.Cancelled, l.NotSent = true, 5, 2
+	l.HeapStart, l.HeapPeak, l.HeapEnd, l.MemPolls, l.MemPollFailures = 0, 0, 0, 0, 0
+	l.Decisions = &run.DecisionLatency{Records: 3000, Skipped: 2, Other: 7, Unreadable: 1, P50US: 12, P90US: 30, P99US: 61, MaxUS: 4100}
+	md := Report{Load: l}.Markdown()
+	contains(t, md,
+		"The run was interrupted",
+		"5 requests were in flight",
+		"2 requests were refused by the client",
+		"Target heap: not read",
+		"Firewall decision latency: p50 12 µs, p90 30 µs, p99 61 µs, max 4.10 ms over 3000 decision records",
+		"2 records of requests blocked because inspection failed",
+		"7 records of other runs", "1 unreadable line",
+	)
+
+	// A heap that shrank, and a reading that failed.
+	l = loadResult()
+	l.HeapStart, l.HeapEnd = 5<<20, 3<<20
+	contains(t, Report{Load: l}.Markdown(), "growth -2.0 MiB")
+	l.HeapEnd = 0
+	contains(t, Report{Load: l}.Markdown(), "start 5.0 MiB, peak 9.0 MiB, end not read, growth n/a")
+
+	// Nothing answered: no latency to show.
+	l = loadResult()
+	l.ByStatus, l.TransportErrors, l.P50US, l.P90US, l.P99US, l.MaxUS = nil, l.Sent, 0, 0, 0, 0
+	contains(t, Report{Load: l}.Markdown(), "Client round trip: no request was answered", "No request was answered.")
+	l.Decisions = &run.DecisionLatency{Skipped: 1}
+	contains(t, Report{Load: l}.Markdown(), "Firewall decision latency: no decision record of this run has a latency")
+}

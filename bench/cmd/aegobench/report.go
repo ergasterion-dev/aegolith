@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -33,6 +34,7 @@ type reportOptions struct {
 	caseFiles     []string
 	results       []resultsFile
 	out, previous string
+	load          string
 }
 
 // parseReport parses and checks the flags of report; help reports that the
@@ -44,6 +46,7 @@ func parseReport(args []string, stderr io.Writer) (o reportOptions, help bool, e
 	results := fs.String("results", "", "name=file pairs, separated by commas: a configuration and its results")
 	fs.StringVar(&o.out, "out", "", "directory to write "+markdownName+" and "+jsonName+" into")
 	fs.StringVar(&o.previous, "previous", "", "earlier "+jsonName+" to compare with")
+	fs.StringVar(&o.load, "load", "", "result of a load run to include (optional)")
 	if help, err := parseFlags(fs, args); help || err != nil {
 		return o, help, err
 	}
@@ -63,10 +66,13 @@ func parseReport(args []string, stderr io.Writer) (o reportOptions, help bool, e
 	for _, r := range o.results {
 		inputs = append(inputs, r.path)
 	}
+	if o.load != "" {
+		inputs = append(inputs, o.load)
+	}
 	for _, name := range []string{markdownName, jsonName} {
 		out := filepath.Join(o.out, name)
 		if slices.ContainsFunc(inputs, func(in string) bool { return sameFile(in, out) }) {
-			return o, false, fmt.Errorf("%w: --out would replace a case file or a results file", errUsage)
+			return o, false, fmt.Errorf("%w: --out would replace a case file, a results file or the load result", errUsage)
 		}
 	}
 	return o, false, nil
@@ -111,6 +117,11 @@ func runReport(args []string, stdout, stderr io.Writer) error {
 		Created: time.Now().UTC().Truncate(time.Second),
 		Sources: sourcesOf(cs),
 	}}
+	if o.load != "" {
+		if current.Load, err = readLoadResult(o.load); err != nil {
+			return fmt.Errorf("reading the load result %s: %w", o.load, err)
+		}
+	}
 	var missing []string
 	for _, file := range o.results {
 		results, err := readResultsFile(file.path, cs)
@@ -185,6 +196,34 @@ func readResultsFile(path string, cs []cases.Case) (out []runner.Result, err err
 		return nil, fmt.Errorf("%d results are of no case in the case files and %d repeat a case", foreign, repeated)
 	}
 	return results, nil
+}
+
+// readLoadResult reads the file the load command wrote. Its errors do not
+// repeat the file.
+func readLoadResult(path string) (*runner.LoadResult, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// The decoder would accept "null" as an empty object.
+	if !bytes.HasPrefix(bytes.TrimSpace(b), []byte("{")) {
+		return nil, errors.New("not a JSON object")
+	}
+	var res runner.LoadResult
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&res); err != nil {
+		return nil, errors.New("not a load result: broken JSON, an unknown key or a value of the wrong type")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("trailing data after the JSON object")
+	}
+	counts := []int{res.Sent, res.TransportErrors, res.Attacks, res.Dropped, res.NotSent, res.Cancelled,
+		res.AttackCases, res.LegitCases, res.Excluded, res.MemPolls, res.MemPollFailures}
+	if res.RPS < 1 || res.Workers < 1 || res.Duration <= 0 || slices.ContainsFunc(counts, func(n int) bool { return n < 0 }) {
+		return nil, errors.New("not a load result: it has no rate, workers or duration, or a negative count")
+	}
+	return &res, nil
 }
 
 // readReport reads a report.json.
