@@ -105,14 +105,36 @@ func jsonOperatorAt(s string, k int) bool {
 	return ok && (s[n] == '\'' || s[n] == '"')
 }
 
+// uncastOperators are the JSON and containment operators read after a
+// literal that carries no cast, each longer form before the shorter one it
+// starts with. Prose writes "?", "->" and "->>" after quoted text, so they
+// are not among them. Read-only.
+var uncastOperators = [...]string{"@>", "<@", "?|", "?&", "#>>", "#>"}
+
+// uncastOperatorAt reports whether one of uncastOperators starts at s[k] and
+// is followed, after blanks, by an operand SQL gives it there: a quote or
+// "array[". So a chat mention ("<@U1234>"), an entity ("?&nbsp;") and a
+// Markdown table cell ("?| yes |") do not match.
+func uncastOperatorAt(s string, k int) bool {
+	for _, op := range uncastOperators {
+		if !strings.HasPrefix(s[k:], op) {
+			continue
+		}
+		n, ok := skipTokenGap(s, k+len(op), false)
+		return ok && (s[n] == '\'' || hasPrefixFold(s[n:], "array["))
+	}
+	return false
+}
+
 // hasBooleanJSON reports whether s holds "or" or "and", blanks, and a
 // single-quoted literal of at most maxSQLLiteral bytes followed, after
 // blanks, by either
 //
-//   - a JSON operator, when the literal is written as a JSON or array value:
-//     it starts with '{' or '[' ("or '{"a":1}' ->> 'a'"). Prose quotes words
-//     around arrows and questions ("Press 'Ctrl' and 'S' -> save"), so any
-//     other literal does not count here; or
+//   - one of uncastOperators and its operand (see uncastOperatorAt), when the
+//     literal is written as a JSON or array value: it starts with '{' or '['
+//     ("or '{"a":1}' @> '{}'"). Developer prose quotes such values and words
+//     around arrows and questions ("'{}' or '[]' -> 'empty'"), so both
+//     conditions are needed; or
 //   - a "::json" or "::jsonb" cast, when "or" or "and" itself follows a
 //     quote, a digit or ")" ("x' or '1'::json"), the end of the expression a
 //     breakout leaves. "NULL or '{}'::jsonb" in a note does not match.
@@ -142,7 +164,7 @@ func hasBooleanJSON(s string) bool {
 		if jsonCastEnd(s, k) >= 0 && endsOperand(s, word) {
 			return true
 		}
-		if isJSONLiteral(s[q+1:end-1]) && jsonOperatorAt(s, k) {
+		if isJSONLiteral(s[q+1:end-1]) && uncastOperatorAt(s, k) {
 			return true
 		}
 	}

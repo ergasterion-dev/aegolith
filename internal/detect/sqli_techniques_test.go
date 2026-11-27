@@ -92,16 +92,17 @@ func TestSQLiPostgresLiteralCast(t *testing.T) {
 
 func TestSQLiPostgresAfterBoolean(t *testing.T) {
 	assertSQLTechnique(t, true, []string{
-		// Every operator after "or" or "and" and a JSON or array literal.
+		// After "or" or "and" and a JSON or array literal, each operator
+		// prose does not write, before a quote or "array[".
 		`or '{"k":1}' @> '{"k":1}'`,
-		`and '{"k":1}' <@ doc`,
+		`and '{"k":1}' <@ '{"k":1,"m":2}'`,
 		`OR '{"k":1}' ?| array['k']`,
-		`And '{"k":1}' ?& array['k']`,
+		`And '{"k":1}' ?& ARRAY['k']`,
 		`or '{"k":{"m":1}}' #> '{k}'`,
 		`or '{"k":{"m":1}}' #>> '{k,m}'`,
-		`or '{"k":1}' -> 'k'`,
-		`or '{"k":1}'->>'k'='1`,
-		`or '{"k":1}' ? 'k'`,
+		`and '[1]' <@ array[1,2]`,
+		`or '{k}'?|'{k}'`,
+		`or '{k}' ?& '{k}'`,
 		`and '[1,2]' @> '[1]'`,
 		`and ' {1,2}' @> '{1}'`,
 		"or\t\n'{}' <@ '{}'",
@@ -136,17 +137,45 @@ func TestSQLiPostgresAfterBoolean(t *testing.T) {
 	})
 }
 
+// sqliBracketProse is developer prose that quotes JSON or bracketed words
+// around "or"/"and" next to arrows, questions, table cells, entities and chat
+// mentions. Neither SQL rule flags it.
+var sqliBracketProse = []string{
+	`Should the body be '{}' or '[]'? 'null' fails`,
+	`Is the default '[]' or '{}' ? 'x'`,
+	`Go to '[Settings]' or '[Account]' -> 'Security'`,
+	`Use '{' or '[' -> 'bracket'`,
+	`Should we send '{"a":1}' or '{"a":2}'? 'a' is required`,
+	`The API returns '{}' or '[]' -> 'empty'`,
+	`POST '{"id":1}' and '{"id":2}' ->> 'created'`,
+	`Open '[File]' or '[Edit]' ->> "Preferences"`,
+	`It accepts '{"ok":true}' and '[]' ? "yes" : "no"`,
+	`| Is it '{}' or '[]'?| yes |`,
+	`| '[a]' and '[b]'?& more |`,
+	`Send '{}' or '[]'?&nbsp;Both work`,
+	`Ping '[ops]' or '[dev]' <@U024BE7LH> about it`,
+	`Tag '[bug]' or '[task]' <@here>`,
+	`Mark '[open]' and '[done]' #> then archive`,
+	`Retry '{id}' or '{name}' @> noon`,
+	"## Errors\n\n- '{}' or '[]' -> `400`",
+}
+
+func TestSQLiPostgresAfterBooleanProse(t *testing.T) {
+	assertSQLTechnique(t, false, sqliBracketProse)
+	assertSQLClean(t, sqliBracketProse)
+}
+
 // TestSQLiPostgresLiteralBound: the literal is read at most 200 bytes.
 func TestSQLiPostgresLiteralBound(t *testing.T) {
 	lit := func(n int) string { return "'{" + strings.Repeat("a", n-2) + "}'" }
 	assertSQLTechnique(t, true, []string{
 		lit(200) + "::jsonb @> x",
-		"or " + lit(200) + " @> x",
+		"or " + lit(200) + " @> '{}'",
 		"1 or " + lit(200) + "::jsonb",
 	})
 	assertSQLTechnique(t, false, []string{
 		lit(201) + "::jsonb @> x",
-		"or " + lit(201) + " @> x",
+		"or " + lit(201) + " @> '{}'",
 		"1 or " + lit(201) + "::jsonb",
 	})
 }
@@ -404,6 +433,9 @@ var sqliTechniqueAcceptedFalsePositives = []string{
 	`cast it: '{}'::json::jsonb`,
 	`WHERE id = 1 or '{}'::jsonb`,
 	`you can test x and '{a,b}' @> '{a}'`,
+	// The same, where a note puts a quote after the operator.
+	`type '[a]' or '[b]' #> 'c' at the prompt`,
+	`|Is it '[x]' or '[y]'?|'yes'|`,
 	// A subquery cast.
 	`SELECT (SELECT count(*) FROM items)::int`,
 	// A fragment cut after its "(".
@@ -427,6 +459,13 @@ var sqliTechniqueAcceptedFalsePositives = []string{
 var sqliTechniqueAcceptedMisses = []string{
 	// An uncast literal that is not a JSON object or array.
 	`or 'abc' @> 'a'`,
+	// After an uncast literal: an arrow, a '?', and an operand that is
+	// neither a quote nor "array[".
+	`or '{"k":1}' -> 'k'`,
+	`or '{"k":1}'->>'k'='1`,
+	`or '{"k":1}' ? 'k'`,
+	`and '{"k":1}' <@ doc`,
+	`or '{a}' @> (select tags)`,
 	// A bare cast after a word, or at the start.
 	`name or '{}'::jsonb`,
 	// A blank before the cast, and an operand before the literal.
@@ -462,7 +501,7 @@ func TestSQLiTechniquesAcceptedMisses(t *testing.T) {
 func TestSQLiTechniquesPercentDecoded(t *testing.T) {
 	for _, v := range []string{
 		`%27%7B%7D%27%3A%3Ajsonb%20%40%3E%20%27%7B%7D%27`,
-		`zz%27%20or%20%27%7B%7D%27%20%40%3E%20x`,
+		`zz%27%20or%20%27%7B%7D%27%20%40%3E%20%27%7B%7D%27`,
 		"7%29%3A%3Aint%20and%201",
 		"zz%27or%20flag--",
 		"zz%27%20mod%20flag%23",
@@ -619,6 +658,9 @@ func TestNewSQLiChecksLinear(t *testing.T) {
 		"or-open-literal": "or '" + strings.Repeat("a", 199),
 		"or-pairs":        "or '' ",
 		"or-literal":      "or '{}' x ",
+		"or-operator":     "or '{}' @> x ",
+		"or-array":        "or '{}' ?| array ",
+		"or-operand-gap":  "or '{}' <@" + strings.Repeat(" ", 200),
 		"or-blanks":       "or" + strings.Repeat(" ", 200) + "'",
 		"blanks-quote":    strings.Repeat(" ", 127) + "'{}'",
 		"cast":            "::json",
@@ -645,7 +687,7 @@ func TestNewSQLiChecksLinear(t *testing.T) {
 		"delay-names":     "sleep(",
 	}
 	tails := []string{
-		` zz or '{}' @> x`, ` '{}'::jsonb -> 'k'`, ` (select 1)::int`, ` x or sleep(5)`,
+		` zz or '{}' @> '{}'`, ` '{}'::jsonb -> 'k'`, ` (select 1)::int`, ` x or sleep(5)`,
 	}
 	const small, medium, large = 64 << 10, 256 << 10, 1 << 20
 	// A quadratic scan of 1 MiB takes tens of seconds.

@@ -30,7 +30,7 @@
 
 ### More SQL injection techniques (`AEG-SQLI-001`, `AEG-SQLI-002`)
 
-- **New `AEG-SQLI-001` detections:** Postgres JSON operators and casts on a literal (`'{...}'::jsonb @> ...`, `or '{...}' ->> 'k'`, `)::int and`), and a quote breakout that ends in a comment or `;` (`x'or ... --`, `x' mod ... #`, `x' ^ name--`, `\' or f();`).
+- **New `AEG-SQLI-001` detections:** Postgres JSON operators and casts on a literal (`'{...}'::jsonb @> ...`, `or '{...}' @> '{...}'`, `)::int and`), and a quote breakout that ends in a comment or `;` (`x'or ... --`, `x' mod ... #`, `x' ^ name--`, `\' or f();`).
 - **New `AEG-SQLI-002` detections:** MySQL `sleep(` and `benchmark(` inside an expression (`if(sleep(5)`, `and benchmark(...)`, `1,sleep(5)`).
 - Clear: `data->>'name'`, `'{}'::jsonb`, `(total * 100)::integer`, `Kids' like it--`, `I said 'no' or else--`, `sql += ' collate nocase';`. The new delay check leaves `(sleep (2))` and `eat and sleep(8 hours)` alone (`AEG-SQLI-001` flagged both before, and still does).
 - **False positives to expect:** SQL pasted into a text field that applies a JSON operator to a literal or casts a subquery, a rare unmatched apostrophe before an SQL word in a value that ends in `--` or `#`, and prose written like a delay call (`recover by sleep(8)`). Exclude the rule on a field that carries such text ([every accepted false positive and miss](docs/threat-model.md#sql-techniques-added-in-alpha7)).
