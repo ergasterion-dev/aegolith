@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,9 +62,24 @@ func TestImportCRSWritesCasesAndCountsSkips(t *testing.T) {
 	t.Parallel()
 	out := filepath.Join(t.TempDir(), "crs.jsonl")
 	var stdout, stderr bytes.Buffer
-	args := []string{"import", "--source", "crs", "--root", "../../internal/sources/crs/testdata/tree", "--out", out}
+	skipped := filepath.Join(filepath.Dir(out), "audit", "skipped.jsonl")
+	args := []string{
+		"import", "--source", "crs", "--root", "../../internal/sources/crs/testdata/tree",
+		"--out", out, "--skipped", skipped,
+	}
 	if err := run(args, &stdout, &stderr); err != nil {
 		t.Fatal(err)
+	}
+	audit, err := os.ReadFile(skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditLines := strings.Split(strings.TrimSuffix(string(audit), "\n"), "\n")
+	if len(auditLines) != 7 {
+		t.Errorf("%d lines in the skip file, want 7:\n%s", len(auditLines), audit)
+	}
+	if want := `{"case_id":"942100-3","reason":"request is given as raw or encoded bytes"}`; !slices.Contains(auditLines, want) {
+		t.Errorf("the skip file lacks %s:\n%s", want, audit)
 	}
 	f, err := os.Open(out)
 	if err != nil {
@@ -113,6 +129,18 @@ func TestImportCRSNeedsARoot(t *testing.T) {
 	}
 	if _, statErr := os.Stat(out); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("the output exists after failed imports: %v", statErr)
+	}
+	const tree = "../../internal/sources/crs/testdata/tree"
+	err = run([]string{"import", "--source", "crs", "--root", tree, "--out", out, "--skipped", out}, &stdout, &stderr)
+	if !errors.Is(err, errUsage) {
+		t.Errorf("error %v, want a usage error for one file given twice", err)
+	}
+	err = run([]string{"import", "--source", "baseline", "--corpus", corpusDir, "--out", out, "--skipped", out + ".skips"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, readErr := os.ReadFile(out + ".skips"); readErr != nil || len(got) != 0 {
+		t.Errorf("skip file of a source without skips: %q, %v; want it empty", got, readErr)
 	}
 }
 

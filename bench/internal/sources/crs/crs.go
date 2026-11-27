@@ -4,18 +4,33 @@
 //
 // A test file belongs to one rule and holds tests; a test holds stages; a
 // stage is one request (input) and what the rule set must log for it
-// (output). A stage becomes a line only if the line sends the request the
-// upstream test runner would send. Three differences are accepted and are not
-// reasons to skip:
+// (output). A stage becomes a line only if the line makes the bench send the
+// request that the upstream test runner sends; any other stage is reported
+// as a cases.Skip.
 //
-//   - the runner adds "Connection: close" to a request that names no
-//     Connection header; the line does not, so connections are reused;
-//   - a body written with unescaped characters for a form content type is
-//     sent as written, whether or not the runner would escape it;
-//   - the bench's sender adds "Content-Length: 0" to a POST, PUT or PATCH
-//     without a body.
+// What the runner sends was read from the source of go-ftw v2.3.0, the
+// version the pinned tree runs its tests with (ftwhttp.BuildRequest,
+// ftwhttp.encodeDataParameters, (*ftwhttp.Request).AddStandardHeaders, the
+// defaults in package test). For a stage that is not a raw request:
 //
-// Everything else that cannot be reproduced is reported as a cases.Skip.
+//   - the request line is the method (default GET), the target (default /)
+//     and the version (default HTTP/1.1), as written;
+//   - the headers are sent as written; none is replaced. With header
+//     completion (the default) the runner adds "Connection: close" if there
+//     is no Connection header, a form Content-Type if there is a body and no
+//     Content-Type, and a Content-Length if there is none and the request
+//     has a body or a method that matches ^POST|PUT|PATCH|DELETE$;
+//   - with header completion, a body whose Content-Type is exactly the form
+//     type and that holds no "%" escape and no "+" has the names and values
+//     of its parameters query-escaped. Any other body is sent as written;
+//   - a body whose Content-Type holds "multipart/form-data;" gets a carriage
+//     return before every line feed.
+//
+// The lines reproduce all of this. The Connection header is in the line; the
+// bench's sender writes the same Content-Length as the runner for a body and
+// for POST, PUT and PATCH, and stages for which the two would differ are
+// skipped. The sender names the headers in canonical case and in its own
+// order, and adds X-Request-Id.
 package crs
 
 import (
@@ -49,16 +64,16 @@ const (
 	// formContentType is what the upstream runner adds to a request that has
 	// a body and no Content-Type.
 	formContentType = "application/x-www-form-urlencoded"
-	// multipartPrefix is the start of the content types whose body the
-	// upstream runner sends with CRLF line ends.
-	multipartPrefix = "multipart/form-data;"
+	// multipartMark is what the upstream runner looks for in a Content-Type
+	// to send the body with CRLF line ends.
+	multipartMark = "multipart/form-data;"
 	// testAgent is the User-Agent the upstream tests send when the agent is
 	// not what they test.
 	testAgent = "OWASP CRS test agent"
 )
 
-// categories maps the number of a request rule file group to a category.
-// Group 934 mixes several attack classes and stays "other".
+// categories maps the number of a rule file group to a category. Group 934
+// mixes several attack classes and stays "other".
 var categories = map[string]string{
 	"911": "protocol",
 	"913": "scanner",
@@ -75,13 +90,30 @@ var categories = map[string]string{
 	"944": "java",
 }
 
-var groupPattern = regexp.MustCompile(`^REQUEST-([0-9]{3})(-|$)`)
+// mechanics are the groups that test how the rule set works (set-up,
+// exclusions, anomaly scoring), not what it detects. Another firewall has no
+// reason to flag their requests.
+var mechanics = map[string]bool{"901": true, "905": true, "949": true, "980": true, "999": true}
 
-// category returns the category of a rule file group such as
-// "REQUEST-942-APPLICATION-ATTACK-SQLI", or "other".
-func category(group string) string {
+// framing are the groups that test how a request is framed. The one value in
+// such a request that looks like a payload is incidental, so none is named.
+var framing = map[string]bool{"911": true, "920": true, "921": true, "922": true}
+
+var groupPattern = regexp.MustCompile(`^(REQUEST|RESPONSE)-([0-9]{3})(-|$)`)
+
+// groupNumber returns the phase and number of a rule file group such as
+// "REQUEST-942-APPLICATION-ATTACK-SQLI", or two empty strings.
+func groupNumber(group string) (phase, number string) {
 	if m := groupPattern.FindStringSubmatch(group); m != nil {
-		if c, ok := categories[m[1]]; ok {
+		return m[1], m[2]
+	}
+	return "", ""
+}
+
+// category returns the category of a rule file group, or "other".
+func category(group string) string {
+	if phase, number := groupNumber(group); phase == "REQUEST" {
+		if c, ok := categories[number]; ok {
 			return c
 		}
 	}
@@ -110,30 +142,45 @@ func Import(root string) (lines []cases.Line, skipped []cases.Skip, err error) {
 	}()
 	// The tree cannot name a file outside itself: links are not followed.
 	fsys := tree.FS()
-	var files []string
+	type entry struct {
+		name string
+		link bool
+	}
+	var entries []entry
+	files := 0
 	err = fs.WalkDir(fsys, testsDir, func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if ext := path.Ext(name); d.Type().IsRegular() && (ext == ".yaml" || ext == ".yml") {
-			files = append(files, name)
+		ext := path.Ext(name)
+		switch {
+		case d.Type()&fs.ModeSymlink != 0:
+			entries = append(entries, entry{name, true})
+		case d.Type().IsRegular() && (ext == ".yaml" || ext == ".yml"):
+			entries = append(entries, entry{name, false})
+			files++
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing the CRS tests: %w", err)
 	}
-	if len(files) == 0 {
+	if files == 0 {
 		return nil, nil, fmt.Errorf("no test files under %s", testsDir)
 	}
 
 	im := importer{seen: map[string]bool{}}
-	for _, name := range files {
-		content, err := readFile(fsys, name)
+	for _, e := range entries {
+		rel := strings.TrimPrefix(e.name, testsDir+"/")
+		if e.link {
+			im.skip(rel, "link is not followed")
+			continue
+		}
+		content, err := readFile(fsys, e.name)
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading a CRS test file: %w", err)
 		}
-		im.file(strings.TrimPrefix(name, testsDir+"/"), content)
+		im.file(rel, content)
 	}
 	return im.lines, im.skipped, nil
 }
@@ -166,8 +213,8 @@ func (im *importer) file(rel string, content []byte) {
 		im.skip(rel, fmt.Sprintf("file is larger than %d bytes", maxFileBytes))
 		return
 	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(content, &doc); err != nil {
+	doc, more, err := documents(content)
+	if err != nil {
 		im.skip(rel, "file is not valid YAML")
 		return
 	}
@@ -175,9 +222,9 @@ func (im *importer) file(rel string, content []byte) {
 		im.skip(rel, "file holds no tests")
 		return
 	}
-	top, ok := mapping(doc.Content[0])
-	if !ok {
-		im.skip(rel, "file is not a YAML mapping")
+	top, problem := mapping(doc.Content[0])
+	if problem != "" {
+		im.skip(rel, "file "+problem)
 		return
 	}
 	ruleID, ok := number(top.get("rule_id"))
@@ -197,6 +244,9 @@ func (im *importer) file(rel string, content []byte) {
 		im.skip(rel, "file holds no tests")
 		return
 	}
+	if more {
+		im.skip(rel, "file holds more than one YAML document; only the first is read")
+	}
 
 	group, _, inGroup := strings.Cut(rel, "/")
 	if !inGroup {
@@ -204,9 +254,9 @@ func (im *importer) file(rel string, content []byte) {
 	}
 	for i, node := range tests.Content {
 		position := rel + "#" + strconv.Itoa(i+1)
-		test, ok := mapping(node)
-		if !ok {
-			im.skip(position, "test is not a mapping")
+		test, problem := mapping(node)
+		if problem != "" {
+			im.skip(position, "test "+problem)
 			continue
 		}
 		testID, ok := number(test.get("test_id"))
@@ -232,8 +282,11 @@ func (im *importer) file(rel string, content []byte) {
 // convert builds the line of the test with the given stages, or says why
 // there is none.
 func convert(group, id string, stages *yaml.Node) (line cases.Line, reason string) {
+	phase, number := groupNumber(group)
 	switch {
-	case strings.HasPrefix(group, "RESPONSE-"):
+	case mechanics[number]:
+		return line, "rule-set mechanics, not an attack"
+	case phase == "RESPONSE":
 		return line, "response-phase rule: the attack is not in the request"
 	case stages == nil || stages.Kind != yaml.SequenceNode:
 		return line, "stages is not a list"
@@ -242,9 +295,9 @@ func convert(group, id string, stages *yaml.Node) (line cases.Line, reason strin
 	case len(stages.Content) > 1:
 		return line, "test has several stages"
 	}
-	stage, ok := mapping(stages.Content[0])
-	if !ok {
-		return line, "stage is not a mapping"
+	stage, problem := mapping(stages.Content[0])
+	if problem != "" {
+		return line, "stage " + problem
 	}
 	req, reason := readInput(stage.get("input"))
 	if reason != "" {
@@ -254,7 +307,7 @@ func convert(group, id string, stages *yaml.Node) (line cases.Line, reason strin
 	if reason != "" {
 		return line, reason
 	}
-	line, reason = req.line()
+	line, reason = req.line(!framing[number])
 	if reason != "" {
 		return line, reason
 	}
@@ -266,16 +319,19 @@ func convert(group, id string, stages *yaml.Node) (line cases.Line, reason strin
 	line.Expected = expected
 	if _, err := cases.FromLine(line); err != nil {
 		// Without the source and case ID that FromLine adds.
-		return cases.Line{}, errors.Unwrap(err).Error()
+		if cause := errors.Unwrap(err); cause != nil {
+			return cases.Line{}, cause.Error()
+		}
+		return cases.Line{}, "the line is not a valid case"
 	}
 	return line, ""
 }
 
 // readOutput says what a stage's output expects of the request.
 func readOutput(node *yaml.Node) (expected cases.Expected, reason string) {
-	output, ok := mapping(node)
-	if !ok {
-		return "", "output is not a mapping"
+	output, problem := mapping(node)
+	if problem != "" {
+		return "", "output " + problem
 	}
 	if n := output.get("expect_error"); n != nil {
 		var fails bool
@@ -288,9 +344,9 @@ func readOutput(node *yaml.Node) (expected cases.Expected, reason string) {
 	}
 	var required, excluded int
 	if n := output.get("log"); n != nil && !isNull(n) {
-		log, ok := mapping(n)
-		if !ok {
-			return "", "output log is not a mapping"
+		log, problem := mapping(n)
+		if problem != "" {
+			return "", "output log " + problem
 		}
 		var okRequired, okExcluded bool
 		required, okRequired = listLength(log.get("expect_ids"))
@@ -301,6 +357,8 @@ func readOutput(node *yaml.Node) (expected cases.Expected, reason string) {
 	}
 	switch {
 	case required > 0:
+		// Also when other IDs are excluded: the rule set must still flag the
+		// request, the test only says which of its rules do.
 		return cases.Attack, ""
 	case excluded > 0:
 		return cases.NearMiss, ""
@@ -313,8 +371,7 @@ type request struct {
 	method, uri string
 	headers     []pair
 	data        string
-	// complete says that the upstream runner completes the headers: a
-	// Content-Type and a Content-Length for a body.
+	// complete says that the upstream runner completes the headers.
 	complete bool
 }
 
@@ -323,19 +380,14 @@ type pair struct{ name, value string }
 
 // readInput reads a stage's input, or says why the stage cannot be imported.
 func readInput(node *yaml.Node) (req request, reason string) {
-	input, ok := mapping(node)
-	if !ok {
-		return req, "input is not a mapping"
+	input, problem := mapping(node)
+	if problem != "" {
+		return req, "input " + problem
 	}
 	req = request{method: "GET", uri: "/", complete: true}
 	version := "HTTP/1.1"
 	var headers *yaml.Node
-	seen := map[string]bool{}
 	for _, f := range input {
-		if seen[f.key] {
-			return req, "input names a field twice"
-		}
-		seen[f.key] = true
 		// An empty field is a field left out.
 		if isNull(f.value) {
 			continue
@@ -358,6 +410,7 @@ func readInput(node *yaml.Node) (req request, reason string) {
 		case "autocomplete_headers":
 			ok = f.value.Kind == yaml.ScalarNode && f.value.Decode(&req.complete) == nil
 		case "encoded_request", "raw_request":
+			// The runner writes these bytes to the connection as they are.
 			return req, "request is given as raw or encoded bytes"
 		default:
 			return req, "input field is not supported" + fieldName(f.key)
@@ -374,9 +427,9 @@ func readInput(node *yaml.Node) (req request, reason string) {
 		return req, "data is a template"
 	}
 	if headers != nil {
-		fields, ok := mapping(headers)
-		if !ok {
-			return req, "headers is not a mapping"
+		fields, problem := mapping(headers)
+		if problem != "" {
+			return req, "headers " + problem
 		}
 		for _, f := range fields {
 			value, ok := scalar(f.value)
@@ -400,14 +453,16 @@ func fieldName(key string) string {
 	return ""
 }
 
-// line builds the request part of the case line, or says why the request
-// cannot be sent as upstream means it.
-func (r request) line() (line cases.Line, reason string) {
+// line builds the request part of the case line, with its payload if
+// namePayload is set, or says why the bench cannot send the request the
+// upstream runner sends.
+func (r request) line(namePayload bool) (line cases.Line, reason string) {
 	if !utf8.ValidString(r.method) {
 		return line, "method is not valid UTF-8"
 	}
-	headers := make(map[string]string, len(r.headers))
+	headers := make(map[string]string, len(r.headers)+1)
 	lower := make(map[string]string, len(r.headers))
+	sent := make([]pair, 0, len(r.headers))
 	for _, h := range r.headers {
 		// A case line has no other form for these bytes.
 		if !utf8.ValidString(h.name) || !utf8.ValidString(h.value) {
@@ -417,8 +472,12 @@ func (r request) line() (line cases.Line, reason string) {
 		if _, ok := lower[name]; ok {
 			return line, "a header name is used twice"
 		}
+		if h.value != strings.Trim(h.value, " \t") {
+			return line, "a header value starts or ends with a blank, which the sender removes"
+		}
 		value := cases.RewriteCallbacks(h.value)
 		headers[h.name], lower[name] = value, value
+		sent = append(sent, pair{h.name, value})
 	}
 	// The sender always writes a Host header, and frames a body itself.
 	if _, ok := lower["host"]; !ok {
@@ -426,6 +485,9 @@ func (r request) line() (line cases.Line, reason string) {
 	}
 	if _, ok := lower["transfer-encoding"]; ok {
 		return line, "Transfer-Encoding header: the sender would frame the body differently"
+	}
+	if _, ok := lower["connection"]; r.complete && !ok {
+		headers["Connection"] = "close"
 	}
 
 	uri := cases.RewriteCallbacks(r.uri)
@@ -438,32 +500,35 @@ func (r request) line() (line cases.Line, reason string) {
 	}
 
 	contentType, hasContentType := lower["content-type"]
-	multipart := strings.HasPrefix(lowerASCII(contentType), strings.TrimSuffix(multipartPrefix, ";"))
-	body, upstreamLength := cases.RewriteCallbacks(r.data), len(r.data)
-	if multipart && strings.Contains(r.data, "\n") {
-		// The upstream runner sends these bodies with CRLF line ends. Cases
-		// in which it is not certain what it sends are left out.
-		switch {
-		case !r.complete:
-			return line, "multipart body without header completion"
-		case !strings.HasPrefix(contentType, multipartPrefix):
-			return line, "multipart content type is spelled unusually"
-		case strings.Contains(r.data, "\r"):
-			return line, "multipart body already holds carriage returns"
-		}
-		body = strings.ReplaceAll(body, "\n", "\r\n")
-		upstreamLength += strings.Count(r.data, "\n")
-	}
-	_, hasLength := lower["content-length"]
-	switch {
-	case hasLength && lower["content-length"] == strconv.Itoa(upstreamLength) && len(body) != upstreamLength:
-		return line, "rewriting a callback host changes the body length that a Content-Length header states"
-	case !r.complete && !hasLength && (body != "" || r.method == "POST" || r.method == "PUT" || r.method == "PATCH"):
-		return line, "no header completion and no Content-Length header: the sender would add one"
-	}
-	if r.complete && body != "" && !hasContentType {
+	if r.complete && r.data != "" && !hasContentType {
 		line.ContentType = formContentType
 		contentType = formContentType
+	}
+	// What the runner does to a body is decided by the test's own data, so
+	// that rewriting a callback host cannot change it.
+	escape := r.complete && strings.EqualFold(contentType, formContentType) && unescaped(r.data)
+	crlf := strings.Contains(strings.ToLower(contentType), multipartMark)
+	asSent := func(data string) string {
+		if escape {
+			data = escapeForm(data)
+		}
+		if crlf {
+			data = strings.ReplaceAll(data, "\n", "\r\n")
+		}
+		return data
+	}
+	upstream, body := asSent(r.data), asSent(cases.RewriteCallbacks(r.data))
+
+	stated, hasLength := lower["content-length"]
+	runnerAdds := r.complete && !hasLength && (upstream != "" || runnerMethodHasBody(r.method))
+	senderAdds := !hasLength && (body != "" || r.method == "POST" || r.method == "PUT" || r.method == "PATCH")
+	switch {
+	case hasLength && stated == strconv.Itoa(len(upstream)) && len(body) != len(upstream):
+		return line, "rewriting a callback host changes the body length that a Content-Length header states"
+	case senderAdds && !runnerAdds:
+		return line, "no header completion and no Content-Length header: the sender would add one"
+	case runnerAdds && !senderAdds:
+		return line, "the upstream runner adds a Content-Length header for this method, the sender does not"
 	}
 
 	line.Method = r.method
@@ -475,7 +540,10 @@ func (r request) line() (line cases.Line, reason string) {
 	} else {
 		line.BodyBase64 = encodeBase64(body)
 	}
-	payload, placement := findPayload(rawPath, rawQuery, r.headers, lower, contentType, body)
+	if !namePayload {
+		return line, ""
+	}
+	payload, placement := findPayload(rawPath, rawQuery, sent, contentType, body)
 	line.Placement = placement
 	if utf8.ValidString(payload) {
 		line.Payload = payload
@@ -485,64 +553,35 @@ func (r request) line() (line cases.Line, reason string) {
 	return line, ""
 }
 
-// boilerplate are the headers that describe the client or the body and are
-// not looked at for a payload.
-var boilerplate = map[string]bool{
-	"host": true, "accept": true, "accept-encoding": true, "accept-language": true, "accept-charset": true,
-	"connection": true, "proxy-connection": true, "keep-alive": true, "cache-control": true,
-	"content-type": true, "content-length": true,
+// runnerMethodHasBody reports whether the upstream runner adds a
+// Content-Length to a request with this method and no body: its pattern is
+// ^POST|PUT|PATCH|DELETE$, which also matches POSTS and INPUT.
+func runnerMethodHasBody(method string) bool {
+	return strings.HasPrefix(method, "POST") || strings.Contains(method, "PUT") ||
+		strings.Contains(method, "PATCH") || strings.HasSuffix(method, "DELETE")
 }
 
-var plainPath = regexp.MustCompile(`^(/[A-Za-z0-9_-]+(\.[A-Za-z0-9]+)?)*/?$`)
-
-// findPayload returns the decoded part of the request that carries the
-// attack, and where it is. Candidates are the query parameters, the
-// parameters of a form body, the headers that are not boilerplate, and a
-// path that is more than plain segments. With several candidates, or a body
-// that is not a form, no part can be named and both results are empty.
-func findPayload(rawPath, rawQuery string, headers []pair, lower map[string]string, contentType, body string) (payload, placement string) {
-	type candidate struct{ value, placement string }
-	var found []candidate
-	parameters := func(encoded, placement string) {
-		for _, parameter := range strings.Split(encoded, "&") {
-			key, value, _ := strings.Cut(parameter, "=")
-			if value == "" {
-				value = key
-			}
-			if value != "" {
-				found = append(found, candidate{decodeOr(url.QueryUnescape, value), placement})
-			}
-		}
-	}
-	parameters(rawQuery, "query")
-	if body != "" {
-		mediaType, _, _ := strings.Cut(contentType, ";")
-		if lowerASCII(strings.TrimSpace(mediaType)) != formContentType {
-			return "", ""
-		}
-		parameters(body, "body")
-	}
-	for _, h := range headers {
-		name := lowerASCII(h.name)
-		if value := lower[name]; !boilerplate[name] && value != "" && (name != "user-agent" || value != testAgent) {
-			found = append(found, candidate{value, "header"})
-		}
-	}
-	if !plainPath.MatchString(rawPath) {
-		found = append(found, candidate{decodeOr(url.PathUnescape, rawPath), "path"})
-	}
-	if len(found) != 1 {
-		return "", ""
-	}
-	return found[0].value, found[0].placement
+// unescaped reports whether the upstream runner takes data for a form body
+// that still has to be escaped: one that query-unescaping leaves unchanged,
+// which is one without "+" and without a valid or invalid "%" escape.
+func unescaped(data string) bool {
+	decoded, err := url.QueryUnescape(data)
+	return err == nil && decoded == data && data != ""
 }
 
-// decodeOr returns s decoded, or s itself if it is not validly encoded.
-func decodeOr(decode func(string) (string, error), s string) string {
-	if decoded, err := decode(s); err == nil {
-		return decoded
+// escapeForm escapes a form body as the upstream runner does: the text
+// around every "&" and on both sides of the first "=" in it is query-escaped.
+// The runner does not write the empty part after a final "&".
+func escapeForm(data string) string {
+	parts := strings.Split(strings.TrimSuffix(data, "&"), "&")
+	for i, part := range parts {
+		name, value, hasValue := strings.Cut(part, "=")
+		parts[i] = url.QueryEscape(name)
+		if hasValue {
+			parts[i] += "=" + url.QueryEscape(value)
+		}
 	}
-	return s
+	return strings.Join(parts, "&")
 }
 
 // escapeInvalid percent-encodes the bytes of s that are not valid UTF-8,
@@ -576,78 +615,4 @@ func lowerASCII(s string) string {
 		}
 	}
 	return string(b)
-}
-
-// field is one entry of a YAML mapping.
-type field struct {
-	key   string
-	value *yaml.Node
-}
-
-// fields are the entries of a YAML mapping, in file order.
-type fields []field
-
-// get returns the first value with the given key, or nil.
-func (fs fields) get(key string) *yaml.Node {
-	for _, f := range fs {
-		if f.key == key {
-			return f.value
-		}
-	}
-	return nil
-}
-
-// mapping reads n as a mapping with scalar keys. Aliases are not followed
-// here or below: the test format does not need them.
-func mapping(n *yaml.Node) (fields, bool) {
-	if n == nil || n.Kind != yaml.MappingNode {
-		return nil, false
-	}
-	out := make(fields, 0, len(n.Content)/2)
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		key, ok := scalar(n.Content[i])
-		if !ok {
-			return nil, false
-		}
-		out = append(out, field{key, n.Content[i+1]})
-	}
-	return out, true
-}
-
-// scalar returns the text of a scalar: as written for a number or a boolean,
-// decoded for a !!binary value.
-func scalar(n *yaml.Node) (string, bool) {
-	if n == nil || n.Kind != yaml.ScalarNode {
-		return "", false
-	}
-	var s string
-	if err := n.Decode(&s); err != nil {
-		return "", false
-	}
-	return s, true
-}
-
-func isNull(n *yaml.Node) bool {
-	return n.Kind == yaml.ScalarNode && n.ShortTag() == "!!null"
-}
-
-var numberPattern = regexp.MustCompile(`^[0-9]{1,12}$`)
-
-// number returns the digits of a rule or test ID.
-func number(n *yaml.Node) (string, bool) {
-	if n == nil || n.Kind != yaml.ScalarNode || !numberPattern.MatchString(n.Value) {
-		return "", false
-	}
-	return n.Value, true
-}
-
-// listLength returns the length of a list; a list left out is empty.
-func listLength(n *yaml.Node) (int, bool) {
-	switch {
-	case n == nil || isNull(n):
-		return 0, true
-	case n.Kind == yaml.SequenceNode:
-		return len(n.Content), true
-	}
-	return 0, false
 }
