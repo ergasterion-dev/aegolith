@@ -11,12 +11,13 @@
 - **False positives to expect:** [markup in XML bodies](docs/threat-model.md#markup-in-xml-bodies), such as a default namespace declaration (`xmlns="..."`), an Atom `<link href="...">`, a `<style>` element or `<?xml-stylesheet ...?>`, can match `AEG-XSS-001`. Exclude the rule on field `body` for that route.
 - With the default configuration, enforce mode decides as before: a refused type blocks before the body is read. Monitor mode now also reports what is in such a body.
 
-### New field type `base64`
+### New field types `base64` and `base64url`
 
-- A route can declare a path parameter, query value, form field or JSON body field `base64` (`aegolith.TypeBase64`). The value is decoded and judged exactly like a `text` value in the same place; the encoded text is not scanned.
-- Standard or URL-safe alphabet (never both), padding optional but correct when present, CR and LF ignored. Anything else is `AEG-SCHEMA-001`. `max_len` bounds the encoded value.
+- A route can declare a path parameter, query value, form field or JSON body field `base64` (`aegolith.TypeBase64`) or `base64url` (`aegolith.TypeBase64URL`). The value is decoded and judged exactly like a `text` value in the same place; the encoded text is not scanned.
+- `base64` takes the standard alphabet (`+` `/`) only, `base64url` the URL-safe one (`-` `_`) only. On a `base64url` field the handler must decode with a URL-safe decoder.
+- Padding is optional but correct when present, CR and LF are ignored. Anything else is `AEG-SCHEMA-001`. `max_len` bounds the encoded value.
 - Meant for base64-encoded text: binary content would be scanned as text and can block.
-- Nothing is decoded outside declared fields, so a configuration without this type decides as before.
+- Nothing is decoded outside declared fields, so a configuration without these types decides as before.
 
 ## v0.1.0-alpha.6
 

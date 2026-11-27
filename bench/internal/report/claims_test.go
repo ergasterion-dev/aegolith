@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -157,9 +158,14 @@ func TestClaimsAboutBase64(t *testing.T) {
 	if got := inspect(t, aegolith.Config{}, query(encoded)); len(got) != 0 {
 		t.Errorf("the injection in base64: rules %v, want none", got)
 	}
-	declared := aegolith.Config{Routes: []aegolith.Route{{Method: http.MethodGet, Path: "/x",
-		Query: map[string]aegolith.Field{"q": {Type: aegolith.TypeBase64}}}}}
-	if got := inspect(t, declared, query(encoded)); !slices.Contains(got, "AEG-SQLI-001") {
-		t.Errorf("the injection in a declared base64 field: rules %v", got)
+	declared := func(typ string) aegolith.Config {
+		return aegolith.Config{Routes: []aegolith.Route{{Method: http.MethodGet, Path: "/x",
+			Query: map[string]aegolith.Field{"q": {Type: typ}}}}}
+	}
+	std := url.QueryEscape(base64.StdEncoding.EncodeToString([]byte(injection)))
+	for typ, value := range map[string]string{aegolith.TypeBase64: std, aegolith.TypeBase64URL: encoded} {
+		if got := inspect(t, declared(typ), query(value)); !slices.Contains(got, "AEG-SQLI-001") {
+			t.Errorf("the injection in a declared %s field: rules %v", typ, got)
+		}
 	}
 }

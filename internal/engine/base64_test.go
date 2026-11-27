@@ -70,40 +70,29 @@ func dataEngine(t *testing.T, mode model.Mode, typ string, excl ...Exclusion) *E
 	})
 }
 
-func TestBase64FieldIsDecodedAndScanned(t *testing.T) {
-	e := dataEngine(t, model.ModeEnforce, policy.TypeBase64)
-	encoded := base64.StdEncoding.EncodeToString([]byte(sqlAttack))
-	for _, loc := range dataLocations {
-		t.Run(loc.name, func(t *testing.T) {
-			d := e.Inspect(loc.request(t, encoded))
-			if d.Action != model.ActionBlock || !hasMatch(d, "AEG-SQLI-001", loc.field) {
-				t.Fatalf("want block with AEG-SQLI-001 on %s: %+v", loc.field, d)
-			}
-		})
-	}
+// base64Types are the two base64 field types, each with the encodings its
+// alphabet has and values that only the other alphabet, or neither, reads.
+var base64Types = []struct {
+	typ             string
+	padded, raw     *base64.Encoding
+	foreign, unread []string
+}{
+	{policy.TypeBase64, base64.StdEncoding, base64.RawStdEncoding,
+		[]string{"-_8", "aGVs-A", "aGVs_A"}, []string{"not base64!!", "aGVs bG8=", "+_8", "aGVsbG8=="}},
+	{policy.TypeBase64URL, base64.URLEncoding, base64.RawURLEncoding,
+		[]string{"+/8=", "aGVs+A", "aGVs/A"}, []string{"not base64!!", "aGVs bG8=", "+_8", "aGVsbG8=="}},
 }
 
-func TestBase64FieldLegitimateText(t *testing.T) {
-	e := dataEngine(t, model.ModeEnforce, policy.TypeBase64)
-	notes := []string{
-		"Leave at the desk.\nCall first, thanks.",
-		// Encodes to bytes where the two alphabets differ.
-		"Café menu — où? >>> 3 items ~ merci ÿÿ",
-	}
-	encodings := map[string]*base64.Encoding{
-		"padded": base64.StdEncoding, "unpadded": base64.RawStdEncoding,
-		"url-safe": base64.URLEncoding, "url-safe unpadded": base64.RawURLEncoding,
-	}
-	if s := base64.StdEncoding.EncodeToString([]byte(notes[1])); !strings.ContainsAny(s, "+/") {
-		t.Fatalf("the second note does not tell the alphabets apart: %s", s)
-	}
-	for name, enc := range encodings {
-		for _, note := range notes {
+func TestBase64FieldIsDecodedAndScanned(t *testing.T) {
+	for _, bt := range base64Types {
+		e := dataEngine(t, model.ModeEnforce, bt.typ)
+		for name, enc := range map[string]*base64.Encoding{"padded": bt.padded, "unpadded": bt.raw} {
+			encoded := enc.EncodeToString([]byte(sqlAttack))
 			for _, loc := range dataLocations {
-				t.Run(name+"/"+loc.name, func(t *testing.T) {
-					d := e.Inspect(loc.request(t, enc.EncodeToString([]byte(note))))
-					if d.Action != model.ActionAllow || len(d.Matches) != 0 {
-						t.Fatalf("want allow without matches: %+v", d)
+				t.Run(bt.typ+"/"+name+"/"+loc.name, func(t *testing.T) {
+					d := e.Inspect(loc.request(t, encoded))
+					if d.Action != model.ActionBlock || !hasMatch(d, "AEG-SQLI-001", loc.field) {
+						t.Fatalf("want block with AEG-SQLI-001 on %s: %+v", loc.field, d)
 					}
 				})
 			}
@@ -111,19 +100,58 @@ func TestBase64FieldLegitimateText(t *testing.T) {
 	}
 }
 
-func TestBase64FieldInvalidValue(t *testing.T) {
-	e := dataEngine(t, model.ModeEnforce, policy.TypeBase64)
-	for _, v := range []string{"not base64!!", "aGVs bG8=", "+_8", "aGVsbG8=="} {
-		for _, loc := range dataLocations {
-			t.Run(loc.name, func(t *testing.T) {
-				d := e.Inspect(loc.request(t, v))
-				if d.Action != model.ActionBlock || !hasMatch(d, "AEG-SCHEMA-001", loc.field) {
-					t.Fatalf("%q: want block with AEG-SCHEMA-001 on %s: %+v", v, loc.field, d)
+func TestBase64FieldLegitimateText(t *testing.T) {
+	notes := []string{
+		"Leave at the desk.\nCall first, thanks.",
+		// Encodes to bytes where the two alphabets differ.
+		"Café menu — où? >>> 3 items ~ merci ÿÿ",
+	}
+	if s := base64.StdEncoding.EncodeToString([]byte(notes[1])); !strings.ContainsAny(s, "+/") {
+		t.Fatalf("the second note does not tell the alphabets apart: %s", s)
+	}
+	for _, bt := range base64Types {
+		e := dataEngine(t, model.ModeEnforce, bt.typ)
+		for name, enc := range map[string]*base64.Encoding{"padded": bt.padded, "unpadded": bt.raw} {
+			for _, note := range notes {
+				for _, loc := range dataLocations {
+					t.Run(bt.typ+"/"+name+"/"+loc.name, func(t *testing.T) {
+						d := e.Inspect(loc.request(t, enc.EncodeToString([]byte(note))))
+						if d.Action != model.ActionAllow || len(d.Matches) != 0 {
+							t.Fatalf("want allow without matches: %+v", d)
+						}
+					})
 				}
-			})
+			}
+		}
+	}
+}
+
+func TestBase64FieldInvalidValue(t *testing.T) {
+	for _, bt := range base64Types {
+		e := dataEngine(t, model.ModeEnforce, bt.typ)
+		for _, v := range slices.Concat(bt.unread, bt.foreign) {
+			for _, loc := range dataLocations {
+				t.Run(bt.typ+"/"+loc.name, func(t *testing.T) {
+					d := e.Inspect(loc.request(t, v))
+					if d.Action != model.ActionBlock || !hasMatch(d, "AEG-SCHEMA-001", loc.field) {
+						t.Fatalf("%q: want block with AEG-SCHEMA-001 on %s: %+v", v, loc.field, d)
+					}
+				})
+			}
+		}
+		for _, body := range []string{`{"data":1234}`, `{"data":true}`, `{"data":["aGVs"]}`} {
+			d := e.Inspect(post("application/json", []byte(body)))
+			if d.Action != model.ActionBlock || len(d.Matches) != 1 || d.Matches[0].RuleID != "AEG-SCHEMA-001" {
+				t.Errorf("%s %s: want AEG-SCHEMA-001: %+v", bt.typ, body, d)
+			}
+		}
+		// A null is an absent optional field, as for every type.
+		if d := e.Inspect(post("application/json", []byte(`{"data":null}`))); len(d.Matches) != 0 {
+			t.Errorf("%s null: %+v", bt.typ, d)
 		}
 	}
 	// An unencoded '+' in a query string or form body means a space.
+	e := dataEngine(t, model.ModeEnforce, policy.TypeBase64)
 	for _, r := range []*model.Request{
 		{Method: "POST", RawPath: "/x", RawQuery: "data=+/8=", Header: http.Header{}},
 		post("application/x-www-form-urlencoded", []byte("data=+/8=")),
@@ -132,15 +160,27 @@ func TestBase64FieldInvalidValue(t *testing.T) {
 			t.Errorf("unencoded '+': want AEG-SCHEMA-001: %+v", d)
 		}
 	}
-	for _, body := range []string{`{"data":1234}`, `{"data":true}`, `{"data":["aGVs"]}`} {
-		d := e.Inspect(post("application/json", []byte(body)))
-		if d.Action != model.ActionBlock || len(d.Matches) != 1 || d.Matches[0].RuleID != "AEG-SCHEMA-001" {
-			t.Errorf("%s: want AEG-SCHEMA-001: %+v", body, d)
-		}
+}
+
+// A standard-alphabet decoder that skips unknown bytes (Python's b64decode
+// by default, Ruby's decode64) drops '-' and '_'. A base64 field must refuse
+// them, or such a handler reads text the detectors never saw.
+func TestBase64RefusesURLSafeBytesThatALenientDecoderDrops(t *testing.T) {
+	const text = sqlAttack + "  " // two blanks: the encoding needs no '='
+	std := base64.StdEncoding.EncodeToString([]byte(text))
+	v := std[:1] + "_" + std[1:] + "___"
+	lenient, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(v, "_", ""))
+	if err != nil || string(lenient) != text || strings.ContainsAny(v, "+/=") {
+		t.Fatalf("the value does not hide the attack: %q reads as %q, %v", v, lenient, err)
 	}
-	// A null is an absent optional field, as for every type.
-	if d := e.Inspect(post("application/json", []byte(`{"data":null}`))); len(d.Matches) != 0 {
-		t.Errorf("null: %+v", d)
+	e := dataEngine(t, model.ModeEnforce, policy.TypeBase64)
+	for _, loc := range dataLocations {
+		t.Run(loc.name, func(t *testing.T) {
+			d := e.Inspect(loc.request(t, v))
+			if d.Action != model.ActionBlock || !hasMatch(d, "AEG-SCHEMA-001", loc.field) {
+				t.Fatalf("want block with AEG-SCHEMA-001 on %s: %+v", loc.field, d)
+			}
+		})
 	}
 }
 
@@ -160,22 +200,27 @@ func TestStringFieldIsNotDecoded(t *testing.T) {
 }
 
 func TestBase64ExclusionApplies(t *testing.T) {
-	e := dataEngine(t, model.ModeEnforce, policy.TypeBase64,
-		Exclusion{Rule: "AEG-SQLI-*", Route: "POST /x", Field: "body.data"})
-	encoded := base64.StdEncoding.EncodeToString([]byte(sqlAttack))
-	d := e.Inspect(dataLocations[2].request(t, encoded))
-	if d.Action != model.ActionAllow || len(d.Matches) != 0 {
-		t.Fatalf("want allow without matches: %+v", d)
-	}
-	// The exclusion names one field: the same value elsewhere still blocks.
-	if d := e.Inspect(dataLocations[1].request(t, encoded)); d.Action != model.ActionBlock {
-		t.Fatalf("query.data: want block: %+v", d)
+	for _, bt := range base64Types {
+		t.Run(bt.typ, func(t *testing.T) {
+			e := dataEngine(t, model.ModeEnforce, bt.typ,
+				Exclusion{Rule: "AEG-SQLI-*", Route: "POST /x", Field: "body.data"})
+			encoded := bt.padded.EncodeToString([]byte(sqlAttack))
+			d := e.Inspect(dataLocations[2].request(t, encoded))
+			if d.Action != model.ActionAllow || len(d.Matches) != 0 {
+				t.Fatalf("want allow without matches: %+v", d)
+			}
+			// The exclusion names one field: the same value elsewhere
+			// still blocks.
+			if d := e.Inspect(dataLocations[1].request(t, encoded)); d.Action != model.ActionBlock {
+				t.Fatalf("query.data: want block: %+v", d)
+			}
+		})
 	}
 }
 
-// TestBase64FieldJudgedLikeText holds the invariant of the type: in every
-// location, the matches on a base64 field are those on a text field that was
-// sent the decoded value.
+// TestBase64FieldJudgedLikeText holds the invariant of both types: in every
+// location, the matches on a base64 or base64url field are those on a text
+// field that was sent the decoded value.
 func TestBase64FieldJudgedLikeText(t *testing.T) {
 	type verdict struct {
 		rule   string
@@ -192,11 +237,9 @@ func TestBase64FieldJudgedLikeText(t *testing.T) {
 		return out
 	}
 	text := dataEngine(t, model.ModeMonitor, policy.TypeText)
-	b64 := dataEngine(t, model.ModeMonitor, policy.TypeBase64)
 	enforceText := dataEngine(t, model.ModeEnforce, policy.TypeText)
-	enforceB64 := dataEngine(t, model.ModeEnforce, policy.TypeBase64)
 	seen := map[string]bool{} // rules the text side raised, over all cases
-	for name, v := range map[string]string{
+	values := map[string]string{
 		"sql":                sqlAttack,
 		"markup":             `<script>alert(document.cookie)</script>`,
 		"command line":       "notes\ncat /etc/passwd",
@@ -210,31 +253,36 @@ func TestBase64FieldJudgedLikeText(t *testing.T) {
 		"over max_value_len": strings.Repeat("a ", 6000) + sqlAttack,
 		"plain note":         "Leave at the desk.\nCall first, thanks.",
 		"empty":              "",
-	} {
-		for _, loc := range dataLocations {
-			t.Run(name+"/"+loc.name, func(t *testing.T) {
-				encoded := base64.RawURLEncoding.EncodeToString([]byte(v))
-				if loc.name == "path" && v == "" {
-					t.Skip("an empty path segment does not match the route")
-				}
-				want := on(text.Inspect(loc.request(t, v)), loc.field)
-				for _, w := range want {
-					seen[w.rule] = true
-				}
-				if got := on(b64.Inspect(loc.request(t, encoded)), loc.field); !slices.Equal(got, want) {
-					t.Errorf("monitor: base64 %+v, text %+v", got, want)
-				}
-				// Enforce stops at the first blocking match, so order counts.
-				// A line break or double encoding in the path is refused by
-				// protocol before the field is read, on the text side only.
-				if loc.name == "path" && strings.ContainsAny(v, "\n%") {
-					return
-				}
-				want = on(enforceText.Inspect(loc.request(t, v)), loc.field)
-				if got := on(enforceB64.Inspect(loc.request(t, encoded)), loc.field); !slices.Equal(got, want) {
-					t.Errorf("enforce: base64 %+v, text %+v", got, want)
-				}
-			})
+	}
+	for _, bt := range base64Types {
+		b64 := dataEngine(t, model.ModeMonitor, bt.typ)
+		enforceB64 := dataEngine(t, model.ModeEnforce, bt.typ)
+		for name, v := range values {
+			for _, loc := range dataLocations {
+				t.Run(bt.typ+"/"+name+"/"+loc.name, func(t *testing.T) {
+					encoded := bt.raw.EncodeToString([]byte(v))
+					if loc.name == "path" && v == "" {
+						t.Skip("an empty path segment does not match the route")
+					}
+					want := on(text.Inspect(loc.request(t, v)), loc.field)
+					for _, w := range want {
+						seen[w.rule] = true
+					}
+					if got := on(b64.Inspect(loc.request(t, encoded)), loc.field); !slices.Equal(got, want) {
+						t.Errorf("monitor: base64 %+v, text %+v", got, want)
+					}
+					// Enforce stops at the first blocking match, so order counts.
+					// A line break or double encoding in the path is refused by
+					// protocol before the field is read, on the text side only.
+					if loc.name == "path" && strings.ContainsAny(v, "\n%") {
+						return
+					}
+					want = on(enforceText.Inspect(loc.request(t, v)), loc.field)
+					if got := on(enforceB64.Inspect(loc.request(t, encoded)), loc.field); !slices.Equal(got, want) {
+						t.Errorf("enforce: base64 %+v, text %+v", got, want)
+					}
+				})
+			}
 		}
 	}
 	// Equal empty results would prove nothing.

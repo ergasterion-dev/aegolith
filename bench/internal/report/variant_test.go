@@ -124,11 +124,11 @@ func TestBase64ShareInSourceNote(t *testing.T) {
 	note := func(in *Input) string {
 		return unwrapped(section(t, Report{Meta: Meta{Sources: sources, Input: in}}.Markdown(), "## Sources"))
 	}
-	contains(t, note(&in), "Aegolith decodes base64 only in a field a route declares base64", "Base64 or Base64Flat",
+	contains(t, note(&in), "Aegolith decodes base64 only in a field a route declares base64 or base64url", "Base64 or Base64Flat",
 		"40.0% (2 of 5) of the attack case lines read from this source use one of these two encoders.")
 	for _, without := range []*Input{nil, {}} {
 		s := note(without)
-		contains(t, s, "Aegolith decodes base64 only in a field a route declares base64")
+		contains(t, s, "Aegolith decodes base64 only in a field a route declares base64 or base64url")
 		if strings.Contains(s, "attack case lines read from this source") {
 			t.Errorf("a share is given without its lines:\n%s", s)
 		}

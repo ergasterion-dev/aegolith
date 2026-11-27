@@ -33,7 +33,7 @@ Catch more attacks without blocking more legitimate requests, and show it with t
 | Approach | Trade-off | Verdict |
 |---|---|---|
 | No decoding | No risk, the attacks stay missed | rejected |
-| A `base64` field type | Fits route typing, no guessing; does not change a run without a policy | **chosen** |
+| `base64` and `base64url` field types | Fits route typing, no guessing; does not change a run without a policy | **chosen** |
 | Decode anything that looks like base64 | More detections without a policy; latency, and false positives on tokens and identifiers that the current test traffic cannot measure | rejected |
 
 ### Bodies of other content types
@@ -64,9 +64,11 @@ In enforce mode a refused content type still blocks before the body is read, so 
 
 Accepted miss: with `AEG-PROTO-002` switched off or excluded, a body declared as a binary type is not inspected even if the handler parses it.
 
-### `base64` field type
+### `base64` and `base64url` field types
 
-- Accepts standard or URL-safe base64, padded or unpadded, with CR and LF ignored. Mixed alphabets, other whitespace and wrong padding are `AEG-SCHEMA-001`.
+- `base64` accepts the standard alphabet (`+`, `/`) only, `base64url` the URL-safe alphabet (`-`, `_`) only. Each policy field states the alphabet its handler decodes; the handler of a `base64url` field must decode with a URL-safe decoder.
+- One type for both alphabets was rejected: standard decoders that skip unknown characters (Python `base64.b64decode` by default, Ruby `Base64.decode64`) drop `-` and `_`, so a value judged as URL-safe could hide an attack from the firewall that such a handler reads. Scanning a second reading of each value was rejected too: it turns legitimate URL-safe values into binary noise. Each value is decoded once.
+- Both types: padded or unpadded, with CR and LF ignored. The other alphabet, other whitespace and wrong padding are `AEG-SCHEMA-001`.
 - `max_len` bounds the encoded value.
 - The decoded value is judged exactly like a `text` value in the same location.
 - Meant for base64-encoded text. Binary content would be scanned as text.

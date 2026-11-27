@@ -454,19 +454,22 @@ func TestValidateLinearTime(t *testing.T) {
 	if Validate(s, strings.Repeat("a", 1<<16), true) {
 		t.Error("pattern should not match")
 	}
-	// A 1 MiB value of digits is valid base64, so it has its own inputs:
-	// one refused at the last byte, and runs of padding and line breaks.
-	b64 := FieldSpec{Type: "base64"}
-	if !Validate(b64, big, true) {
-		t.Error("base64 rejected 1 MiB of alphabet bytes")
-	}
-	for name, v := range map[string]string{
-		"bad last byte": big + "*",
-		"padding run":   "aGVs" + strings.Repeat("=", 1<<20),
-		"broken run":    "a" + strings.Repeat("\r\n", 1<<19),
-	} {
-		if Validate(b64, v, true) {
-			t.Errorf("base64 accepted %s", name)
+	// A 1 MiB value of digits is valid base64, so those types have their
+	// own inputs: one refused at the last byte, and runs of padding and
+	// line breaks.
+	for _, typ := range []string{"base64", "base64url"} {
+		b64 := FieldSpec{Type: typ}
+		if !Validate(b64, big, true) {
+			t.Errorf("%s rejected 1 MiB of alphabet bytes", typ)
+		}
+		for name, v := range map[string]string{
+			"bad last byte": big + "*",
+			"padding run":   "aGVs" + strings.Repeat("=", 1<<20),
+			"broken run":    "a" + strings.Repeat("\r\n", 1<<19),
+		} {
+			if Validate(b64, v, true) {
+				t.Errorf("%s accepted %s", typ, name)
+			}
 		}
 	}
 }

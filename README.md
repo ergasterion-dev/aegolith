@@ -180,7 +180,7 @@ flowchart TD
     T -- "no" --> X["AEG-SCHEMA-001"]
     T -- "yes: uuid, uuid_lenient, int,<br/>number, bool, enum, phone" --> K["Not scanned:<br/>it cannot carry an injection"]
     T -- "yes: string, email,<br/>text, url" --> S
-    T -- "yes: base64" --> D["Decoded"]
+    T -- "yes: base64, base64url" --> D["Decoded"]
     D --> S
 ```
 
@@ -332,7 +332,8 @@ Both this file and the Go example above are compiled and loaded by the tests in 
 | `email` | An email address | Yes |
 | `text` | Free text, optional `max_len` | Yes, full detector set |
 | `url` | An absolute http(s) URL | Yes, plus the SSRF rules |
-| `base64` | Base64, standard or URL-safe, optional `max_len` on the encoded value (see below) | Yes, the decoded value, as `text` |
+| `base64` | Base64 in the standard alphabet (`+` `/`), optional `max_len` on the encoded value (see below) | Yes, the decoded value, as `text` |
+| `base64url` | Base64 in the URL-safe alphabet (`-` `_`), otherwise as `base64` | Yes, the decoded value, as `text` |
 
 Field paths, in exclusions and in match results: `path.<param>`, `query.<name>`, `body.<json.path>` (arrays as `items[]`), `form.<name>`, `header.<lowercase name>`, `cookie.<name>`. A route key is `"METHOD /template"`, as declared.
 
@@ -344,15 +345,17 @@ Field paths, in exclusions and in match results: `path.<param>`, `query.<name>`,
 </details>
 
 <details>
-<summary><b>When to use <code>base64</code></b></summary>
+<summary><b>When to use <code>base64</code> and <code>base64url</code></b></summary>
 
-Use `base64` (`aegolith.TypeBase64`) for a field in which a client sends text as base64 and the handler decodes it: `{ "type": "base64", "max_len": 8000 }`. Declared as `string` or `text`, such a field is scanned as the encoded text, so an attack inside it passes. Declared as `base64`, the value is decoded and judged exactly like a `text` value in the same place, under the same field name in matches and exclusions; the encoded text is not scanned.
+Use them for a field in which a client sends text as base64 and the handler decodes it: `{ "type": "base64", "max_len": 8000 }`. Declared as `string` or `text`, such a field is scanned as the encoded text, so an attack inside it passes. Declared as `base64` or `base64url`, the value is decoded and judged exactly like a `text` value in the same place, under the same field name in matches and exclusions; the encoded text is not scanned.
 
-- Accepted: the standard (`+` `/`) or the URL-safe (`-` `_`) alphabet, never both; padding optional, but correct when present; CR and LF ignored; the empty string. Anything else, other whitespace included, is `AEG-SCHEMA-001`, and so is a JSON number or boolean.
+**Declare the alphabet the handler decodes.** `base64` (`aegolith.TypeBase64`) takes the standard alphabet (`+` `/`) only, `base64url` (`aegolith.TypeBase64URL`) the URL-safe alphabet (`-` `_`) only. On a `base64url` field the handler must decode with a URL-safe decoder: some standard decoders (Python's `base64.b64decode` by default, Ruby's `Base64.decode64`) skip `-` and `_` instead of failing, so they would read other text than Aegolith judged.
+
+- Accepted: the type's alphabet; padding optional, but correct when present; CR and LF ignored; the empty string. Anything else, the other alphabet and other whitespace included, is `AEG-SCHEMA-001`, and so is a JSON number or boolean.
 - `max_len` bounds the encoded value, CR and LF included, not the decoded one.
-- In a query string or urlencoded form a bare `+` means a space, so the client must send it as `%2B` (or use the URL-safe alphabet). In a path parameter a `/` must be sent as `%2F`.
+- For `base64` in a query string or urlencoded form, a bare `+` means a space, so the client must send it as `%2B`; in a path parameter a `/` must be sent as `%2F`. `base64url` needs neither.
 - Only declared fields are decoded, and once: base64 inside the decoded text stays encoded.
-- It is meant for text. Binary content (an image, a compressed file) is scanned as text too and can block, for example as `AEG-LFI-001` for a NUL byte; leave such a field `string`.
+- They are meant for text. Binary content (an image, a compressed file) is scanned as text too and can block, for example as `AEG-LFI-001` for a NUL byte; leave such a field `string`.
 
 </details>
 

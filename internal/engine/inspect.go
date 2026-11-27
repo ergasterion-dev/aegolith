@@ -195,8 +195,9 @@ func (s *state) capped(v string) string {
 //     scanned once (scanKey): at most 3x. Form, multipart, XML and text
 //     values are not expanded: at most 2x, plus 1x for a form pair whose
 //     key ends with the quote its value starts with (the whole pair is
-//     checked again): at most 3x. A base64 field is charged for its
-//     decoded value only, at most 3/4 of the encoded one: at most 1.5x;
+//     checked again): at most 3x. A base64 or base64url field is charged
+//     for its decoded value only, at most 3/4 of the encoded one: at most
+//     1.5x;
 //   - a byte of any other input (path, query, cookies, scanned headers) is
 //     charged at most 3x (2x for a value; key bytes and the whole-pair
 //     check of a quote-split pair add at most 1x each).

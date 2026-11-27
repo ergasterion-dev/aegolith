@@ -110,10 +110,16 @@ const (
 	// parses the id that leniently; TypeUUID stays canonical-only.
 	TypeUUIDLenient = policy.TypeUUIDLenient
 
-	// TypeBase64 ("base64") is text sent as base64, standard or URL-safe,
-	// padded or not, CR and LF ignored. The detectors judge the decoded
-	// value as they judge a TypeText value; MaxLen bounds the encoded one.
+	// TypeBase64 ("base64") is text sent as base64 in the standard alphabet
+	// ('+' and '/'), padded or not, CR and LF ignored. The detectors judge
+	// the decoded value as they judge a TypeText value; MaxLen bounds the
+	// encoded one.
 	TypeBase64 = policy.TypeBase64
+
+	// TypeBase64URL ("base64url") is TypeBase64 in the URL-safe alphabet
+	// ('-' and '_'). Declare it only where the handler decodes with a
+	// URL-safe decoder.
+	TypeBase64URL = policy.TypeBase64URL
 )
 
 // DefaultLimits returns the default inspection limits: 1 MiB body, JSON
