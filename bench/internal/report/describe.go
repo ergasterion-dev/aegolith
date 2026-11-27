@@ -17,7 +17,7 @@ the development nor the held-out set, and so not in the headline.`,
 set to log at least one rule ID, whatever paranoia level (1 to 4) that rule belongs
 to: the importer does not filter by level, and protocol checks are included
 (category protocol; a missing Accept header is one example). "near-miss" is a test
-that only forbids rule IDs. The CRS headline therefore asks for more than a
+that only forbids rule IDs. The CRS rates therefore ask for more than a
 paranoia-level-1 view would, which this bench does not compute. Which part of a
 request is its payload is decided by a heuristic; a case where it names none is
 split by its case ID.`,
@@ -76,9 +76,8 @@ func (in Input) markdown(b *strings.Builder) {
 	for _, c := range in.Conflicts {
 		conflictLines, conflictRequests = conflictLines+c.Lines, conflictRequests+c.Requests
 	}
-	fmt.Fprintf(b, `A case line is one request as an importer wrote it. %d case lines were read.
-%d distinct requests are counted in the configurations below, identical requests
-being merged. %d lines (%d requests) are left out because the lines that send the
+	fmt.Fprintf(b, `A case line is one request, as import or remote wrote it. %d case lines were read.
+%d distinct requests are counted, identical requests being merged. %d lines (%d requests) are left out because the lines that send the
 same request disagree on what to expect. A skipped case is a file, test, stage or
 combination of a source that the importer did not turn into a case line.
 

@@ -79,8 +79,8 @@ func TestCountInput(t *testing.T) {
 
 	md := Report{Meta: Meta{Input: &in}}.Markdown()
 	s := section(t, md, "## Input")
-	contains(t, s,
-		"9 case lines were read.",
+	contains(t, unwrapped(s),
+		"as import or remote wrote it", "9 case lines were read.",
 		"2 distinct requests are counted",
 		"6 lines (3 requests) are left out",
 		"| alpha | 7 | 4 | 1 | 2 | 2 | 5 | 3 |",
@@ -120,7 +120,7 @@ func TestEnvironmentAndSourceNotes(t *testing.T) {
 	contains(t, unwrapped(s), "| Source | Repository | Commit | Licence | Included | Note |",
 		"| crs | host/org/crs | c0ffee | Apache-2.0 | yes | pinned |",
 		"paranoia level", "the importer does not filter by level", "category protocol",
-		"split by its case ID", "heuristic")
+		"split by its case ID", "heuristic", "The CRS rates therefore ask for more")
 	if strings.Contains(s, "false-positive") {
 		t.Errorf("a source that is not included is described:\n%s", s)
 	}

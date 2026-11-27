@@ -15,7 +15,7 @@ make bench-load DURATION=1h RPS=2000        # load: writes bench/out/load/report
 
 You need Go 1.25 or later, bash, git and, to fetch the third-party sets, jq and network access to github.com. Both targets run [`scripts/run-local.sh`](scripts/run-local.sh), which
 
-1. builds `aegobench` with the commit recorded in it (a build from a tree with uncommitted changes says so in the report),
+1. builds `aegobench` with the commit recorded in it (the report says when the tree had uncommitted changes, and "unknown" for a tree without git history),
 2. fetches the two pinned third-party sets into `bench/.sources/`, running nothing it fetches,
 3. imports the sources into `out/cases/`,
 4. starts a target on a free loopback port and runs against it. `bench-waf` does this twice, without a policy and with [`testdata/corpus/example-api-policy.json`](../testdata/corpus/example-api-policy.json), each time with a fresh target and fresh logs under `out/runs/`. `bench-load` starts one enforce target and writes into `out/load/`,
@@ -51,7 +51,7 @@ The third-party sets are pinned by commit in [`sources.json`](sources.json): the
 
 **What "attack" means differs by source.**
 
-- **CRS:** a test that requires the rule set to log at least one rule ID. That includes rules of every paranoia level up to 4, because the importer does not filter by level, and protocol checks, such as a test that expects a request without an `Accept` header to be flagged (in release v4.31.0, 553 of the 5,054 imported lines, attack and near-miss together, are category `protocol`). The CRS headline is therefore expected to be lower than a paranoia-level-1 view would be; the bench computes no such view. A test that only forbids rule IDs is near-miss.
+- **CRS:** a test that requires the rule set to log at least one rule ID. That includes rules of every paranoia level up to 4, because the importer does not filter by level, and protocol checks, such as a test that expects a request without an `Accept` header to be flagged (in release v4.31.0, 553 of the 5,054 imported lines, attack and near-miss together, are category `protocol`). CRS detection rates are therefore expected to be lower than a paranoia-level-1 view would give; the bench computes no such view. A test that only forbids rule IDs is near-miss.
 - **CRS payloads** are identified by a heuristic. In v4.31.0, 1,762 of the 5,054 lines have no identifiable payload and are split into held-out and development by case ID. Such a case has no stable set across source versions.
 - **GoTestWAF:** one case per payload, encoder and placeholder. A test set whose name holds `false` is legitimate; everything else is an attack.
 - **Conflicts:** requests whose sources, or lines of one source, disagree on what to expect are left out, and the report counts them.
