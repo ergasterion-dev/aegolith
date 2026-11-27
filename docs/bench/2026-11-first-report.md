@@ -1,7 +1,7 @@
 # Aegolith WAF bench report
 
-- Aegolith commit: 3eb4e1050c2235792fd33cea5b90f8d86defe0be
-- Created: 2026-11-27T10:54:35Z
+- Aegolith commit: 5521b6277b98017f82bd3ca5a089c1dcf7af4f8a
+- Created: 2026-11-27T11:40:00Z
 
 ## Run environment
 
@@ -19,8 +19,8 @@
 | git | git version 2.52.0 |
 | jq | jq-1.8.1 |
 | bash | 3.2.57(1)-release |
-| Load average at start (1, 5, 15 min) | 34.54 40.39 43.32 |
-| Load average at end (1, 5, 15 min) | 35.58 39.61 42.87 |
+| Load average at start (1, 5, 15 min) | 41.61 39.90 43.73 |
+| Load average at end (1, 5, 15 min) | 40.65 40.00 43.58 |
 | Command | bench/scripts/run-local.sh waf |
 | Sources | baseline crs gotestwaf generated-legit |
 | Configuration no-policy | enforce mode, no policy file |
@@ -55,16 +55,19 @@ which look for an attack in what a request says. The other four parts hold the
 cases without a content rule, route rules aside. Protocol only (AEG-PROTO-\*):
 checks of the method, content type, body size, control characters, raw path and
 transfer encoding, the limits of an inspection and a body that cannot be parsed.
-Schema only (AEG-SCHEMA-\*): a declared field of the wrong type, or a field that
-is not declared. Scanner only (AEG-SCANNER-\*): a scanner's User-Agent, or a probe
+Schema only (AEG-SCHEMA-\*): a declared field that fails its declaration (its
+type, length, range, enum values or pattern), or a field that is not declared.
+Scanner only (AEG-SCANNER-\*): a scanner's User-Agent, or a probe
 or backup path. Anything else: more than one of these three, a block by a route
 rule alone, or a block without a rule.
 
-In enforce mode the first blocking match ends the inspection, and the checks of
-the method, content type, body size and path come before any value is read. So a
-detection by protocol rules only does not say that no content rule would have
-matched it, and the content rule figures say what the content rules did in this
-configuration, not what they would do if those refusals were switched off.
+In enforce mode the first blocking match ends the inspection. The protocol checks
+(the method, content type, body size and path among them) come first, then the
+scanner checks of the User-Agent and of probe and backup paths, and only then are
+the values of the request read. So a detection by protocol rules only or by
+scanner rules only does not say that no content rule would have matched it, and
+the content rule figures say what the content rules did in this configuration,
+not what they would do if those refusals were switched off.
 
 ## Sources
 
@@ -72,10 +75,10 @@ configuration, not what they would do if those refusals were switched off.
 |---|---|---|---|---|---|
 | baseline | this repository | not recorded | Apache-2.0 | yes | Part of the project; its case lines record no version. |
 | crs | github.com/coreruleset/coreruleset | af4996c059bb1bdfc269f685b5c816d33027f242 | Apache-2.0 | yes | Release v4.31.0. LICENSE is the Apache License 2.0; fetched for use as test input, not redistributed. |
-| csic-2010 | not recorded | not recorded | not recorded | no | Candidate for legitimate traffic: the HTTP DATASET CSIC 2010 of the Spanish National Research Council (normal and anomalous requests to one shop application). Left out: its terms of use were not verified (no network access when the legitimate set was built), it is not a git repository and no version is pinned. Legitimate traffic is generated instead (aegobench import --source generated-legit). |
+| csic-2010 | not recorded | not recorded | not recorded | no | Candidate for legitimate traffic: the HTTP DATASET CSIC 2010. Unverified: the description that follows was written without network access and was not checked against the data set (said to be from the Spanish National Research Council, with normal and anomalous requests to one shop application). Left out: its terms of use were not verified (no network access when the legitimate set was built), it is not a git repository and no version is pinned. Legitimate traffic is generated instead (aegobench import --source generated-legit). |
 | generated-legit | this repository | not recorded | Apache-2.0 | yes | Part of the project; its case lines record no version. Generated with seed 1, 5000 lines. |
 | gotestwaf | github.com/wallarm/gotestwaf | 5daeba073823a57e79ba922beef0c2d92a8dd776 | MIT | yes | Release v0.5.11. LICENSE is the MIT License; fetched for use as test input, not redistributed. |
-| openappsec-waf-comparison | github.com/openappsec/waf-comparison-project | not recorded | not recorded | no | Candidate for legitimate traffic: the legitimate request set of the open-appsec WAF comparison project, which that project downloads separately from its repository. Left out: neither the licence of the repository nor the terms of the data set were verified (no network access when the legitimate set was built), and no commit is pinned. |
+| openappsec-waf-comparison | github.com/openappsec/waf-comparison-project | not recorded | not recorded | no | Candidate for legitimate traffic: the legitimate request set of the open-appsec WAF comparison project. Unverified: the repository path above and this description were written without network access and were not checked (the set is said to be downloaded separately from the repository). Left out: neither the licence of the repository nor the terms of the data set were verified (no network access when the legitimate set was built), and no commit is pinned. |
 
 ### What the cases of each source are
 
@@ -107,7 +110,8 @@ payload sent with the Base64 or Base64Flat encoder, it reads the encoded text.
 A case line is one request, as import or remote wrote it. 11295 case lines were read.
 10874 distinct requests are counted, identical requests being merged. 88 lines (43 requests) are left out because the lines that send the
 same request disagree on what to expect. A skipped case is a file, test, stage or
-combination of a source that the importer did not turn into a case line.
+combination of a source, or the YAML documents after the first of a file, that the
+importer did not turn into a case line.
 
 | Source | Case lines | Attack | Legit | Near-miss | Without a payload | Left out as conflicting | Skipped by the importer |
 |---|---|---|---|---|---|---|---|
