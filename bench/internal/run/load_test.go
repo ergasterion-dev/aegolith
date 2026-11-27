@@ -58,18 +58,17 @@ func TestLoadRespectsRate(t *testing.T) {
 	t.Parallel()
 	var seen counter
 	base := serveTest(t, seen.handle)
-	res, err := Load(context.Background(), NewLoadClient(testTimeout, 16), LoadOptions{
-		Base: base, Cases: loadCases(5), RPS: 100, Workers: 16, Duration: 2 * time.Second, AttackShare: 0.1, Seed: 1,
+	// As many workers as the schedule has places, so that none can be dropped
+	// however busy the machine is.
+	res, err := Load(context.Background(), NewLoadClient(testTimeout, 200), LoadOptions{
+		Base: base, Cases: loadCases(5), RPS: 100, Workers: 200, Duration: 2 * time.Second, AttackShare: 0.1, Seed: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent < 150 || res.Sent > 220 {
-		t.Errorf("sent %d requests in 2 s at 100 per second, want 150 to 220", res.Sent)
-	}
-	// The schedule has exactly 200 places: each was sent or is counted as dropped.
-	if res.Sent+res.Dropped != 200 {
-		t.Errorf("sent %d + dropped %d, want the 200 of the schedule", res.Sent, res.Dropped)
+	// 2 s at 100 per second is a schedule of exactly 200 places.
+	if res.Sent != 200 || res.Dropped != 0 {
+		t.Errorf("sent %d, dropped %d, want the 200 of the schedule sent", res.Sent, res.Dropped)
 	}
 	if got := seen.of("attack") + seen.of("legit"); got != res.Sent {
 		t.Errorf("the target saw %d requests, the result says %d", got, res.Sent)
@@ -86,7 +85,7 @@ func TestLoadRespectsRate(t *testing.T) {
 	if res.P50US <= 0 || res.P50US > res.P90US || res.P90US > res.P99US || res.P99US > res.MaxUS {
 		t.Errorf("percentiles %d, %d, %d, max %d are not in order", res.P50US, res.P90US, res.P99US, res.MaxUS)
 	}
-	if res.RPS != 100 || res.Workers != 16 || res.AttackShare != 0.1 || res.Seed != 1 ||
+	if res.RPS != 100 || res.Workers != 200 || res.AttackShare != 0.1 || res.Seed != 1 ||
 		res.AttackCases != 5 || res.LegitCases != 5 {
 		t.Errorf("result does not say what was asked: %+v", res)
 	}

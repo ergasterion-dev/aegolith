@@ -518,8 +518,8 @@ func TestNumberSlotsDoNotNeedAWideInt(t *testing.T) {
 	var _ int64 = lo
 	r := &rng{state: 1}
 	var b strings.Builder
-	var nearMiss bool
-	if !expand(r, &b, "⟦#4500000000-4599999999⟧", 0, &nearMiss) {
+	var used draw
+	if !expand(r, &b, "⟦#4500000000-4599999999⟧", 0, &used) {
 		t.Fatal("the slot did not expand")
 	}
 	if got := b.String(); len(got) != 10 || got < "4500000000" || got > "4599999999" {

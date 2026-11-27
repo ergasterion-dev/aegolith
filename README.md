@@ -53,7 +53,7 @@ before it runs attack detectors, and runs those detectors only where the input i
 - [What's new in alpha.6](#whats-new-in-alpha6)
 - [Corpus results](#corpus-results)
 - [Performance](#performance)
-- [WAF bench (in progress)](#waf-bench-in-progress)
+- [WAF bench](#waf-bench)
 - [Status and roadmap](#status-and-roadmap)
   - [Known gaps](#known-gaps)
 - [Contributing](#contributing) · [Security](#security) · [License](#license)
@@ -492,7 +492,7 @@ Every rule that the code can emit. Rule IDs are `AEG-<CATEGORY>-<NNN>` and are m
 | **Speed** | Slower than alpha.5 on identical requests: search GET and cart POST benchmarks 14 to 21%, worst-case bodies 4 to 6%, median p99 latency 11 to 24% (release measurements). See [Performance](#performance). |
 
 > [!NOTE]
-> **On `main` but not in the tag.** After the core tag, `main` gained documentation (a known gap found after tagging, declared templates that end in `/`, [listed below](#known-gaps); tighter adapter notes; comments in `internal/engine/inputs.go`), one adapter test (`adapters/fiberv2/scanner_route_test.go`) and the adapter's pin to core alpha.6 in its `go.mod`. No core Go code that runs changed; the adapter tag `adapters/fiberv2/v0.1.0-alpha.6` includes all of this. After both tags, `main` gained the [WAF bench](#waf-bench-in-progress), a separate module in `bench/` that is not part of any release, and `make build`, `test`, `test-quick` and `vet` now also cover it.
+> **On `main` but not in the tag.** After the core tag, `main` gained documentation (a known gap found after tagging, declared templates that end in `/`, [listed below](#known-gaps); tighter adapter notes; comments in `internal/engine/inputs.go`), one adapter test (`adapters/fiberv2/scanner_route_test.go`) and the adapter's pin to core alpha.6 in its `go.mod`. No core Go code that runs changed; the adapter tag `adapters/fiberv2/v0.1.0-alpha.6` includes all of this. After both tags, `main` gained the [WAF bench](#waf-bench), a separate module in `bench/` that is not part of any release, and `make build`, `test`, `test-quick` and `vet` now also cover it.
 
 ## Corpus results
 
@@ -532,7 +532,7 @@ Both gates also require **0 false positives**. Output of `make corpus` (`go test
 | misc / xpath injection | missed | missed | libinjection does not flag it and there is no XPath detector in v0.1. |
 | log4shell / obfuscated jndi | missed | blocked | The lookup is in `X-Api-Version`, which is scanned only when listed in `inspect_headers`. The generic configuration scans `User-Agent` and `Referer` only. |
 
-**The corpus came from the same team that tuned the rules, so these numbers show the rules fit it, not that they will fit your traffic.** That is why monitor mode comes first. The corpus README also lists the [accepted recall trade-offs](testdata/corpus/README.md#accepted-recall-trade-offs-not-in-the-corpus) that the corpus does not exercise. Independent results will come from the [WAF bench](#waf-bench-in-progress), which is not finished.
+**The corpus came from the same team that tuned the rules, so these numbers show the rules fit it, not that they will fit your traffic.** That is why monitor mode comes first. The corpus README also lists the [accepted recall trade-offs](testdata/corpus/README.md#accepted-recall-trade-offs-not-in-the-corpus) that the corpus does not exercise. Measurements against sets the project did not write are the job of the [WAF bench](#waf-bench).
 
 ## Performance
 
@@ -654,63 +654,21 @@ go tool pprof -top -nodefraction=0 -focus=libinjection-go cpu.out
 
 </details>
 
-## WAF bench (in progress)
+## WAF bench
 
-The corpus above was written by the people who tuned the rules. The WAF bench in [`bench/`](bench) is meant to measure Aegolith against attack sets the project did not write, over HTTP, and to publish reproducible reports. The [design](docs/superpowers/specs/2026-11-26-waf-bench-design.md) and the [plan](docs/superpowers/plans/2026-11-26-waf-bench.md) are in the repository.
+The corpus above was written by the people who tuned the rules. The WAF bench in [`bench/`](bench) measures Aegolith over HTTP against attack sets the project did not write, the OWASP Core Rule Set regression tests (v4.31.0, Apache-2.0) and GoTestWAF (v0.5.11, MIT), pinned by commit in [`bench/sources.json`](bench/sources.json), and against legitimate requests that this repository generates. Its numbers are separate from the corpus results above and from [Performance](#performance).
 
 > [!IMPORTANT]
-> **No independent results are published yet.** The two third-party sets, the OWASP Core Rule Set regression tests (v4.31.0, Apache-2.0) and GoTestWAF (v0.5.11, MIT), are pinned by commit in [`bench/sources.json`](bench/sources.json). Both can be imported into case lines; no run against either set has been published.
+> **No report is published yet.**
 
-| Part | State |
-|---|---|
-| Case model, baseline importer (the project corpus) | Done |
-| Target server (net/http middleware, monitor or enforce, optional policy), access and decision logs | Done |
-| Detection runner (loopback targets only), report and comparison with an earlier report | Done |
-| Source pinning, fetch script, rewriting callback hosts to `callback.invalid` | Done |
-| CRS regression test importer (stages that cannot be sent as one HTTP/1.1 request are skipped and counted) | Done |
-| GoTestWAF importer (one case per payload, encoder and placeholder, built as the tool builds its requests; gRPC and GraphQL cases are skipped and counted) | Done |
-| Generated legitimate traffic (names, addresses, reviews, support messages, prices, texts with URLs, punctuation-heavy prose, pasted code, other languages; seeded and reproducible; texts in the shape of an attack are labelled near-miss) | Done |
-| A public set of recorded legitimate traffic | Not included: no licence verified (candidates are listed in `bench/sources.json`) |
-| Load phase (loopback targets only): a seeded mix of legitimate and attack requests at a fixed rate; client round-trip percentiles, errors, dropped requests, the firewall's own latency from the decision log, the target's heap | Done |
-| Guarded remote mode, one-command `make` targets, first report | Not started |
-
-The commands that exist now, run from `bench/` (the target runs in a second terminal; `bench/out/` is git-ignored):
+**Held-out.** A case from any source but the project corpus, generated traffic included, is *held out* if the SHA-256 of any of its decoded payloads (of its case ID if it has none), unsalted, falls in a fixed 30% range. The bench's headline numbers are those of the held-out cases; detectors are not to be tuned on them, and they are counted, never listed. This is a reporting discipline, not a secret: anyone can compute which cases are held out.
 
 ```sh
-cd bench
-go run ./cmd/aegobench help
-
-# 1. Convert the project corpus into case lines
-go run ./cmd/aegobench import --source baseline --corpus ../testdata/corpus --out out/baseline.jsonl
-
-# 1b. Optional: fetch the pinned third-party sets and convert them
-./scripts/fetch-sources.sh
-go run ./cmd/aegobench import --source crs --root .sources/crs --out out/crs.jsonl --skipped out/crs-skipped.jsonl
-go run ./cmd/aegobench import --source gotestwaf --root .sources/gotestwaf --out out/gotestwaf.jsonl --skipped out/gotestwaf-skipped.jsonl
-
-# 1c. Optional: generate legitimate traffic (the same seed and size give the same file)
-go run ./cmd/aegobench import --source generated-legit --seed 1 --n 5000 --out out/legit.jsonl
-
-# 2. In a second terminal: the firewall-wrapped target (127.0.0.1:8088, admin on :8089)
-go run ./cmd/aegobench target --mode enforce --policy ../testdata/corpus/example-api-policy.json \
-  --access out/access.jsonl --decisions out/decisions.jsonl
-
-# 3. Send every case once and join the answers with the target's logs
-go run ./cmd/aegobench detect --cases out/baseline.jsonl --base http://127.0.0.1:8088 \
-  --access out/access.jsonl --decisions out/decisions.jsonl --out out/results.jsonl
-
-# 4. Optional: 60 s of load, one request in ten an attack (Ctrl-C writes the partial result)
-go run ./cmd/aegobench load --cases out/baseline.jsonl --base http://127.0.0.1:8088 --admin http://127.0.0.1:8089 \
-  --rps 500 --duration 60s --attack-share 0.1 --decisions out/decisions.jsonl --out out/load.json
-
-# 5. Write out/report/report.md and report.json (add --previous to compare, --load to include step 4)
-go run ./cmd/aegobench report --cases out/baseline.jsonl --results api-aware=out/results.jsonl \
-  --load out/load.json --out out/report
+make bench-waf                              # detection report in bench/out/report.md (fetches the pinned sets)
+make bench-load DURATION=1h RPS=2000        # load report in bench/out/load/report.md
 ```
 
-`bench/scripts/fetch-sources.sh` fetches the two pinned sources into `bench/.sources/` (it needs git, jq and network access, and runs nothing it fetches). `detect` and `load` refuse any host but a loopback one; remote mode is not built.
-
-`load` sends at fixed times whatever the target does: a request that is due while all `--workers` are busy is dropped and counted, never queued, so a slow target shows as dropped requests and a lower sending rate. Its latency is the client's round trip (HTTP on both sides plus the connection), not the firewall's decision latency, which it reads from the decision log for the requests that left a record there. It does not send a case's own `Connection` header, uses no near-miss cases and writes no detection results. On one machine the generator and the target share the processors, so its numbers describe that machine at that moment.
+[`bench/README.md`](bench/README.md) says what each number means and what it does not: what counts as an attack in each set, the limits of the generated traffic (it cannot prove a real-world false positive rate), what the load figures cover, and the guarded remote mode for a deployment you own.
 
 ## Status and roadmap
 
@@ -728,7 +686,7 @@ Aegolith v0.1 is **alpha**. What that means:
 - [x] Corpus gates, fuzz tests, benchmarks and a latency budget
 - [x] Architecture and threat-model documents
 - [x] First tagged release
-- [ ] WAF bench with third-party attack sets and published reports ([in progress](#waf-bench-in-progress))
+- [ ] WAF bench with third-party attack sets and published reports ([tooling in `bench/`](#waf-bench))
 - [ ] v0.2: generate route policies from Go structs or OpenAPI
 - [ ] v0.2: Fiber v3, Gin and Echo adapters (Chi and Gorilla already work through `net/http`)
 - [ ] v0.2: optional Coraza-backed engine for a few risky routes

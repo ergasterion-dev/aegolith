@@ -21,13 +21,19 @@ type Meta struct {
 	Commit  string // the Aegolith commit
 	Created time.Time
 	Sources []SourceInfo
+	// Environment describes the machine, the tools and the settings of the run.
+	Environment []Field `json:",omitempty"`
+	// Input counts the case lines the report was made from.
+	Input *Input `json:",omitempty"`
+	// Generated describes the generated legitimate requests among them.
+	Generated *Generated `json:",omitempty"`
 }
 
 // SourceInfo describes one source of cases. An empty field was not recorded.
 type SourceInfo struct {
-	Name, Commit, License string
-	Included              bool
-	Note                  string
+	Name, Repo, Commit, License string
+	Included                    bool
+	Note                        string
 }
 
 // Counts is the number of cases per outcome. Sent counts every case but those
@@ -60,6 +66,9 @@ type Config struct {
 	// sets.
 	FlaggedLegit []Listed
 	Missed       []Listed
+	// NotSentReasons counts, over all splits and expectations, why cases were
+	// not sent.
+	NotSentReasons []ReasonCount `json:",omitempty"`
 }
 
 // Listed names one case. SourceCaseID is empty when each name the case has is
@@ -98,10 +107,14 @@ func BuildConfig(name string, cs []cases.Case, rs []run.Result) Config {
 	out := Config{Name: name}
 	rows := map[rowKey]Counts{}
 	payloads := map[string]placements{}
+	notSent := map[string]int{}
 	for _, c := range merged {
 		r, ok := results[c.ID]
 		if !ok {
-			r.Outcome = run.NotSent
+			r.Outcome, r.Reason = run.NotSent, "no result for the case"
+		}
+		if r.Outcome == run.NotSent {
+			notSent[cmp.Or(r.Reason, notRecorded)]++
 		}
 		split := cases.Split(c)
 		one := countOf(r.Outcome)
@@ -142,6 +155,7 @@ func BuildConfig(name string, cs []cases.Case, rs []run.Result) Config {
 			Source: k.source, Category: k.category, Split: k.split, Expected: k.expected, Counts: rows[k],
 		})
 	}
+	out.NotSentReasons = reasonCounts(notSent)
 	out.Payloads = len(payloads)
 	for _, seen := range payloads {
 		if seen.any {

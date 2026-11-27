@@ -5,6 +5,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -22,17 +23,22 @@ const notRecorded = "not recorded"
 // explanation tells a reader how to read the numbers.
 const explanation = `One case is one distinct request. Rates are over the cases the firewall judged
 (blocked, flagged, route-only or passed); rejected, unknown and not-sent cases
-are left out of them. Flagged means allowed with a content rule matching in
-monitor mode. Route-only means that only route rules matched in monitor mode,
-which is not counted as a detection. A near-miss resembles an attack without
-being one and never enters the false positive rate.
+are left out of them. Blocked means the firewall blocked the request. Flagged
+means the request was allowed although a rule other than a route rule matched
+without blocking: a rule whose action is monitor (in enforce mode too), or any
+rule in monitor mode. Flagged counts as detected, and so as a false positive on a
+legitimate request. Route-only means that only route rules matched without
+blocking, which is not counted as a detection. Rejected means the server answered
+before the firewall saw the request. A near-miss resembles an attack without
+being counted as one; it never enters the false positive rate.
 
-Headline numbers use the held-out set. A third-party case is held out if an
-unsalted hash of any of its decoded payloads (of its case ID if it has none)
-falls in a fixed 30% range; the other third-party cases are the development
-set. This is a reporting discipline, not a secret: anyone can compute which
-cases are held out. Held-out cases are counted and never listed. Cases that
-only the project's own corpus (baseline) provides are in neither set.
+Headline numbers use the held-out set. A case of any source but the project's own
+corpus (baseline), the generated traffic included, is held out if the SHA-256 of
+any of its decoded payloads (of its case ID if it has none), unsalted, falls in a
+fixed 30% range; the others are the development set. This is a reporting
+discipline, not a secret: anyone can compute which cases are held out. This report
+counts held-out cases and never lists them. Cases that only baseline provides are
+in neither set.
 `
 
 // Markdown renders the report.
@@ -41,20 +47,17 @@ func (r Report) Markdown() string {
 	b.WriteString("# Aegolith WAF bench report\n\n")
 	fmt.Fprintf(&b, "- Aegolith commit: %s\n- Created: %s\n\n",
 		cell(orNotRecorded(r.Meta.Commit)), created(r.Meta.Created))
+	if len(r.Meta.Environment) > 0 {
+		environmentMarkdown(&b, r.Meta.Environment)
+	}
 	b.WriteString(explanation)
 
-	b.WriteString("\n## Sources\n\n")
-	if len(r.Meta.Sources) == 0 {
-		b.WriteString("None recorded.\n")
-	} else {
-		header(&b, "Source", "Commit", "Licence", "Included", "Note")
-		for _, s := range r.Meta.Sources {
-			included := "no"
-			if s.Included {
-				included = "yes"
-			}
-			row(&b, s.Name, orNotRecorded(s.Commit), orNotRecorded(s.License), included, s.Note)
-		}
+	sourcesMarkdown(&b, r.Meta.Sources)
+	if r.Meta.Input != nil {
+		r.Meta.Input.markdown(&b)
+	}
+	if r.Meta.Generated != nil {
+		r.Meta.Generated.markdown(&b)
 	}
 	for _, c := range r.Configs {
 		c.markdown(&b)
@@ -69,8 +72,8 @@ func (r Report) Markdown() string {
 func loadMarkdown(b *strings.Builder, l run.LoadResult) {
 	b.WriteString("\n## Load\n\n")
 	b.WriteString(`A mix of legitimate and attack requests sent at a fixed rate, to see how the
-target holds up. It gives no outcome per case and enters none of the rates
-above. A request is sent at its scheduled time or dropped, never queued.
+target holds up. It gives no outcome per case and enters no detection or false
+positive rate. A request is sent at its scheduled time or dropped, never queued.
 `)
 	if l.Interrupted {
 		b.WriteString("\n**The run was interrupted: these are the figures of the part that ran.**\n")
@@ -193,12 +196,30 @@ func (c Config) markdown(b *strings.Builder) {
 		described(legit.detected(), legit.judged(), "legitimate request"))
 	fmt.Fprintf(b, "- Attacks outside the rates: %s\n", outside(attacks))
 	fmt.Fprintf(b, "- Legitimate requests outside the rates: %s\n", outside(legit))
+	b.WriteString("\nThe false positive total depends on which legitimate requests the sources hold " +
+		"and in what proportion: read the rates by source and category below.\n")
 
 	b.WriteString("\n### Totals (each case counted once)\n\n")
 	countTable(b, []string{"Split", "Expected"}, c.grouped(true, func(r Row) []string {
 		return []string{r.Split, string(r.Expected)}
 	}))
+	if len(c.NotSentReasons) > 0 {
+		b.WriteString("\n### Why cases were not sent\n\n")
+		b.WriteString("Over all splits and expectations. A case that was not sent says nothing about " +
+			"the firewall and is in no rate.\n\n")
+		header(b, "Reason", "Cases")
+		for _, r := range c.NotSentReasons {
+			row(b, r.Reason, strconv.Itoa(r.Count))
+		}
+	}
 	b.WriteString("\nA case with several sources is counted under each of them below.\n")
+	b.WriteString("\n### False positives by source and category\n\n")
+	b.WriteString("Legitimate requests blocked or flagged, of those judged. \"All splits\" includes " +
+		"baseline.\n\n")
+	c.rateTable(b, cases.Legit)
+	b.WriteString("\n### Near-miss requests blocked or flagged, by source and category\n\n")
+	b.WriteString("Near-misses are in no false positive rate and no detection rate.\n\n")
+	c.rateTable(b, cases.NearMiss)
 	b.WriteString("\n### By source\n\n")
 	countTable(b, []string{"Source", "Split", "Expected"}, c.grouped(false, func(r Row) []string {
 		return []string{r.Source, r.Split, string(r.Expected)}
@@ -221,6 +242,76 @@ func (c Config) markdown(b *strings.Builder) {
 	listTable(b, c.Missed)
 	b.WriteString("\n### Flagged legitimate requests (development and baseline)\n\n")
 	listTable(b, c.FlaggedLegit)
+}
+
+// splits are the columns of a table of rates, before the one over all splits.
+var splits = []string{cases.SplitHeldOut, cases.SplitDev}
+
+// rateTable writes, for the cases with one expectation, the share blocked or
+// flagged of each source and category, of each source and of all, held out, in
+// development and over all splits.
+func (c Config) rateTable(b *strings.Builder, expected cases.Expected) {
+	const every = "(all categories)"
+	type line struct {
+		source, category string
+		counts           map[string]Counts // by split, "" for all
+	}
+	var lines []*line
+	add := func(source, category, split string, n Counts) {
+		i := slices.IndexFunc(lines, func(l *line) bool { return l.source == source && l.category == category })
+		if i < 0 {
+			i = len(lines)
+			lines = append(lines, &line{source, category, map[string]Counts{}})
+		}
+		for _, key := range []string{split, ""} {
+			sum := lines[i].counts[key]
+			sum.add(n)
+			lines[i].counts[key] = sum
+		}
+	}
+	// The rows are sorted by source, then category.
+	for _, r := range c.Rows {
+		if r.Source != TotalSource && r.Expected == expected {
+			add(r.Source, r.Category, r.Split, r.Counts)
+		}
+	}
+	if len(lines) == 0 {
+		b.WriteString("No cases.\n")
+		return
+	}
+	var sources []string
+	for _, l := range lines {
+		sources = append(sources, l.source)
+	}
+	ordered := lines
+	lines = nil
+	// Each source's categories, then its own total.
+	for _, source := range slices.Compact(sources) {
+		for _, l := range ordered {
+			if l.source == source {
+				lines = append(lines, l)
+			}
+		}
+		for _, r := range c.Rows {
+			if r.Source == source && r.Expected == expected {
+				add(source, every, r.Split, r.Counts)
+			}
+		}
+	}
+	for _, r := range c.Rows {
+		if r.Source == TotalSource && r.Expected == expected {
+			add("(all sources)", every, r.Split, r.Counts)
+		}
+	}
+	header(b, "Source", "Category", "Held-out", "Development", "All splits")
+	for _, l := range lines {
+		cells := []string{l.source, l.category}
+		for _, split := range append(slices.Clone(splits), "") {
+			n := l.counts[split]
+			cells = append(cells, fraction(n.detected(), n.judged()))
+		}
+		row(b, cells...)
+	}
 }
 
 // heldOut returns the held-out total of the cases with one expectation.

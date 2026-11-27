@@ -183,12 +183,25 @@ func GenerateExact(seed int64, n int) ([]cases.Line, error) {
 	return lines, nil
 }
 
-// item is a generated line, the template its text came from and whether a
-// near-miss entry went into the text.
+// item is a generated line, the template its text came from, whether a
+// near-miss entry went into the text and the entries that did.
 type item struct {
 	line     cases.Line
 	template string
 	nearMiss bool
+	entries  []entryRef
+}
+
+// entryRef names one entry of a word list.
+type entryRef struct {
+	list  string
+	index int
+}
+
+// draw notes what went into one text.
+type draw struct {
+	nearMiss bool
+	entries  []entryRef
 }
 
 // generate is Generate over the given categories. exhausted reports that it
@@ -207,27 +220,29 @@ func generate(categories []category, seed int64, n int) (items []item, exhausted
 		if c == nil || len(c.templates) == 0 {
 			return items, true
 		}
-		template, text, isNearMiss, ok := newText(r, c, seen)
+		template, text, used, ok := newText(r, c, seen)
 		if !ok {
 			return items, true
 		}
 		expected := cases.Legit
-		if isNearMiss {
+		if used.nearMiss {
 			expected = cases.NearMiss
 		}
-		items = append(items, item{line: request(r, c, text, expected), template: template, nearMiss: isNearMiss})
+		items = append(items, item{
+			line: request(r, c, text, expected), template: template, nearMiss: used.nearMiss, entries: used.entries,
+		})
 	}
 	return items, false
 }
 
-// newText draws texts of c until one is new, and records it in seen.
-// nearMiss reports that a marked entry went into the text.
-func newText(r *rng, c *category, seen map[string]bool) (template, text string, nearMiss, ok bool) {
+// newText draws texts of c until one is new, and records it in seen. used
+// says what went into that text.
+func newText(r *rng, c *category, seen map[string]bool) (template, text string, used draw, ok bool) {
 	for range maxDraws {
 		template = c.templates[r.intn(len(c.templates))]
 		var b strings.Builder
-		nearMiss = false
-		if !expand(r, &b, template, 0, &nearMiss) {
+		used = draw{}
+		if !expand(r, &b, template, 0, &used) {
 			continue
 		}
 		text = strings.TrimSpace(b.String())
@@ -236,15 +251,16 @@ func newText(r *rng, c *category, seen map[string]bool) (template, text string, 
 			continue
 		}
 		seen[key] = true
-		return template, text, nearMiss, true
+		return template, text, used, true
 	}
-	return "", "", false, false
+	return "", "", draw{}, false
 }
 
-// expand writes s to b with its slots filled, and sets nearMiss when s or an
-// entry that fills one of its slots is marked. It fails on a slot that does
-// not exist or nests too deep; the tests keep the material free of both.
-func expand(r *rng, b *strings.Builder, s string, depth int, nearMiss *bool) bool {
+// expand writes s to b with its slots filled, and notes in used the entries
+// that fill them and whether s or one of them is marked as a near-miss. It
+// fails on a slot that does not exist or nests too deep; the tests keep the
+// material free of both.
+func expand(r *rng, b *strings.Builder, s string, depth int, used *draw) bool {
 	if depth > maxDepth {
 		return false
 	}
@@ -260,7 +276,7 @@ func expand(r *rng, b *strings.Builder, s string, depth int, nearMiss *bool) boo
 		}
 		switch {
 		case slotOpen+name+slotClose == nearMissMark:
-			*nearMiss = true
+			used.nearMiss = true
 		case strings.HasPrefix(name, "#"):
 			lo, hi, ok := numberRange(name)
 			if !ok {
@@ -269,7 +285,12 @@ func expand(r *rng, b *strings.Builder, s string, depth int, nearMiss *bool) boo
 			b.WriteString(strconv.FormatInt(lo+int64(r.below(uint64(hi-lo)+1)), 10))
 		default:
 			list := slots[name]
-			if len(list) == 0 || !expand(r, b, list[r.intn(len(list))], depth+1, nearMiss) {
+			if len(list) == 0 {
+				return false
+			}
+			i := r.intn(len(list))
+			used.entries = append(used.entries, entryRef{name, i})
+			if !expand(r, b, list[i], depth+1, used) {
 				return false
 			}
 		}

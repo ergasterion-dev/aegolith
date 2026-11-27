@@ -28,9 +28,10 @@ internal/policy/              route table and typed field validation
 internal/engine/              pipeline, scan budget, exclusions, decisions
 httpwaf/                      net/http middleware and the slog hook
 adapters/fiberv2/             Fiber v2 middleware (separate module, own go.mod)
+bench/                        WAF bench (separate module, own go.mod): cmd/aegobench, internal/, scripts/, sources.json; see bench/README.md
 testdata/corpus/              attack and legitimate request corpus (attacks.jsonl, legit.jsonl, policy, gen.sh)
 scripts/                      pre-commit hook, fuzz-quick.sh (discovers and runs every Fuzz target)
-docs/                         architecture.md, threat-model.md; docs/superpowers has the spec and plans
+docs/                         architecture.md, threat-model.md, bench/ (published bench reports); docs/superpowers has the spec and plans
 ```
 
 Tests: `corpus_test.go` (the two corpus gates), `bench_test.go` (benchmarks and the latency budget), `timing_test.go`, `fuzz_test.go`.
@@ -39,11 +40,13 @@ Tests: `corpus_test.go` (the two corpus gates), `bench_test.go` (benchmarks and 
 
 | Target | What it does |
 |---|---|
-| `make build` | `go build ./...` (CGO off) in the core and the adapter |
-| `make test` | `go test -race ./...` then plain `go test ./...`, in both modules (both runs are needed: some growth-ratio checks are skipped under `-race`) |
-| `make test-quick` | plain `go test ./...` in both modules (what the pre-commit hook runs) |
+| `make build` | `go build ./...` in the core (CGO off), the adapter and the bench |
+| `make test` | `go test -race ./...` then plain `go test ./...`, in all three modules (core, adapter, bench; both runs are needed: some growth-ratio checks are skipped under `-race`) |
+| `make test-quick` | plain `go test ./...` in all three modules (what the pre-commit hook runs) |
 | `make vet`, `make fmt`, `make fmt-check` | `go vet`; `gofmt -w` or check on tracked and untracked Go files |
-| `make bench` | `go test -run '^$' -bench . -benchmem ./...` in both modules |
+| `make bench` | `go test -run '^$' -bench . -benchmem ./...` in the core and the adapter (Go benchmarks, not the WAF bench) |
+| `make bench-waf` | WAF bench detection run: fetches the pinned sources (network), runs against a local target, writes `bench/out/report.md` |
+| `make bench-load` | WAF bench load run against a local target (`DURATION=1h RPS=2000` by default), writes `bench/out/load/report.md` |
 | `make perf` | latency budget with `AEGOLITH_PERF=1` (p99 < 50 us); never under `-race` |
 | `make fuzz-quick` | every Fuzz target for `FUZZTIME` (default 10s) via `scripts/fuzz-quick.sh` |
 | `make corpus` | `go test -run Corpus -v .`: per-category tables, misses, false positives |

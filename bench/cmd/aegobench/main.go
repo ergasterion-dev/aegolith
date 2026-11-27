@@ -629,14 +629,27 @@ func writeResults(path string, results []runner.Result) error {
 // readCases reads the case files and merges identical requests. conflicting
 // counts the cases left out because the sources disagree on what to expect.
 func readCases(paths []string) (merged []cases.Case, conflicting int, err error) {
-	var all []cases.Case
+	all, err := readCaseFiles(paths)
+	if err != nil {
+		return nil, 0, err
+	}
+	return mergeCases(all)
+}
+
+// readCaseFiles reads the cases of every line of the files, as written.
+func readCaseFiles(paths []string) (all []cases.Case, err error) {
 	for _, path := range paths {
 		cs, err := readCaseFile(path)
 		if err != nil {
-			return nil, 0, fmt.Errorf("reading %s: %w", path, err)
+			return nil, fmt.Errorf("reading %s: %w", path, err)
 		}
 		all = append(all, cs...)
 	}
+	return all, nil
+}
+
+// mergeCases merges identical requests, as readCases does.
+func mergeCases(all []cases.Case) (merged []cases.Case, conflicting int, err error) {
 	merged, conflicts := cases.Merge(all)
 	if len(merged) == 0 {
 		return nil, 0, errors.New("the case files hold no cases to use")

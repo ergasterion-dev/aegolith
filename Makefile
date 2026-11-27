@@ -4,11 +4,14 @@ ADAPTERS := adapters/fiberv2
 # benchmarks, not this).
 BENCHDIR := bench
 FUZZTIME ?= 10s
+# Length and rate of "make bench-load".
+DURATION ?= 1h
+RPS ?= 2000
 # Go files gofmt covers: tracked plus untracked files git does not ignore
 # ("." would also walk scratch directories such as .superpowers/).
 GOFILES := git ls-files --cached --others --exclude-standard -z '*.go'
 
-.PHONY: build test test-quick vet fmt fmt-check bench fuzz-quick corpus perf ci
+.PHONY: build test test-quick vet fmt fmt-check bench bench-waf bench-load fuzz-quick corpus perf ci
 
 build:
 	CGO_ENABLED=0 $(GO) build ./...
@@ -43,6 +46,16 @@ fmt-check:
 bench:
 	$(GO) test -run '^$$' -bench . -benchmem ./...
 	@if [ -d $(ADAPTERS) ]; then cd $(ADAPTERS) && $(GO) test -run '^$$' -bench . -benchmem ./...; fi
+
+# The WAF bench with one command; see bench/README.md. bench-waf fetches the
+# pinned third-party test sources (network), detects against a local target and
+# writes bench/out/report.md. bench-load sends a fixed rate for DURATION and
+# writes bench/out/load/report.md.
+bench-waf:
+	GO='$(GO)' ./bench/scripts/run-local.sh waf
+
+bench-load:
+	GO='$(GO)' DURATION='$(DURATION)' RPS='$(RPS)' ./bench/scripts/run-local.sh load
 
 # Runs every Fuzz target in every package that declares one (discovered by
 # scripts/fuzz-quick.sh) for FUZZTIME each, and fails if none is found or a
