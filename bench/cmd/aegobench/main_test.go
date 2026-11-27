@@ -439,3 +439,85 @@ func TestTargetRejectsBadUsage(t *testing.T) {
 		})
 	}
 }
+
+func TestImportGeneratedLegitWritesCasesPerCategory(t *testing.T) {
+	t.Parallel()
+	out := filepath.Join(t.TempDir(), "legit.jsonl")
+	var stdout, stderr bytes.Buffer
+	args := []string{"import", "--source", "generated-legit", "--seed", "7", "--n", "40", "--out", out}
+	if err := run(args, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := cases.ReadLines(bytes.NewReader(first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range lines {
+		if _, err := cases.FromLine(l); err != nil {
+			t.Error(err)
+		}
+	}
+	want := "wrote 40 cases from generated-legit (0 attack, 40 legit, 0 near-miss) to " + out + "\n" +
+		"by category:\n" +
+		"      4  addresses\n" +
+		"      8  code-like-prose\n" +
+		"      4  names\n" +
+		"      4  other-languages\n" +
+		"      4  prices-and-quantities\n" +
+		"      6  reviews\n" +
+		"      6  support-messages\n" +
+		"      4  urls-in-text\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("summary:\n%s\nwant:\n%s", got, want)
+	}
+	if len(lines) != 40 || stderr.Len() != 0 {
+		t.Errorf("%d lines, stderr %q", len(lines), stderr.String())
+	}
+
+	// The same seed and size write the same file; another seed does not.
+	again := filepath.Join(filepath.Dir(out), "again.jsonl")
+	args[len(args)-1] = again
+	if err := run(args, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if second, err := os.ReadFile(again); err != nil || !bytes.Equal(first, second) {
+		t.Errorf("a second run wrote a different file (error %v)", err)
+	}
+	if err := run([]string{"import", "--source", "generated-legit", "--seed", "8", "--n", "40", "--out", again}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if other, err := os.ReadFile(again); err != nil || bytes.Equal(first, other) {
+		t.Errorf("another seed wrote the same file (error %v)", err)
+	}
+}
+
+func TestImportGeneratedLegitNeedsASizeItCanReach(t *testing.T) {
+	t.Parallel()
+	out := filepath.Join(t.TempDir(), "legit.jsonl")
+	var stdout, stderr bytes.Buffer
+	for _, n := range []string{"", "0", "-3"} {
+		args := []string{"import", "--source", "generated-legit", "--out", out}
+		if n != "" {
+			args = append(args, "--n", n)
+		}
+		if err := run(args, &stdout, &stderr); !errors.Is(err, errUsage) {
+			t.Errorf("--n %q: error %v, want a usage error", n, err)
+		}
+	}
+	// More than the material holds: an error that says how many there are,
+	// and no file with fewer cases than were asked for.
+	err := run([]string{"import", "--source", "generated-legit", "--n", "5000000", "--out", out}, &stdout, &stderr)
+	if err == nil || errors.Is(err, errUsage) || !strings.Contains(err.Error(), "distinct cases") {
+		t.Errorf("error %v, want one that says how many distinct cases there are", err)
+	}
+	if _, statErr := os.Stat(out); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the output exists after failed imports: %v", statErr)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout after failed imports: %q", stdout.String())
+	}
+}

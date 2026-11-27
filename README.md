@@ -669,7 +669,8 @@ The corpus above was written by the people who tuned the rules. The WAF bench in
 | Source pinning, fetch script, rewriting callback hosts to `callback.invalid` | Done |
 | CRS regression test importer (stages that cannot be sent as one HTTP/1.1 request are skipped and counted) | Done |
 | GoTestWAF importer (one case per payload, encoder and placeholder, built as the tool builds its requests; gRPC and GraphQL cases are skipped and counted) | Done |
-| A large legitimate-traffic set | Not started |
+| Generated legitimate traffic (names, addresses, reviews, support messages, prices, texts with URLs, code-like prose, other languages; seeded and reproducible) | Done |
+| A public set of recorded legitimate traffic | Not included: no licence verified (candidates are listed in `bench/sources.json`) |
 | Load phase, guarded remote mode, one-command `make` targets, first report | Not started |
 
 The commands that exist now, run from `bench/` (the target runs in a second terminal; `bench/out/` is git-ignored):
@@ -685,6 +686,9 @@ go run ./cmd/aegobench import --source baseline --corpus ../testdata/corpus --ou
 ./scripts/fetch-sources.sh
 go run ./cmd/aegobench import --source crs --root .sources/crs --out out/crs.jsonl --skipped out/crs-skipped.jsonl
 go run ./cmd/aegobench import --source gotestwaf --root .sources/gotestwaf --out out/gotestwaf.jsonl --skipped out/gotestwaf-skipped.jsonl
+
+# 1c. Optional: generate legitimate traffic (the same seed and size give the same file)
+go run ./cmd/aegobench import --source generated-legit --seed 1 --n 5000 --out out/legit.jsonl
 
 # 2. In a second terminal: the firewall-wrapped target (127.0.0.1:8088, admin on :8089)
 go run ./cmd/aegobench target --mode enforce --policy ../testdata/corpus/example-api-policy.json \

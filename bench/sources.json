@@ -14,5 +14,21 @@
     "license": "MIT",
     "included": true,
     "note": "Release v0.5.11. LICENSE is the MIT License; fetched for use as test input, not redistributed."
+  },
+  {
+    "name": "csic-2010",
+    "repo": "",
+    "commit": "",
+    "license": "",
+    "included": false,
+    "note": "Candidate for legitimate traffic: the HTTP DATASET CSIC 2010 of the Spanish National Research Council (normal and anomalous requests to one shop application). Left out: its terms of use were not verified (no network access when the legitimate set was built), it is not a git repository and no version is pinned. Legitimate traffic is generated instead (aegobench import --source generated-legit)."
+  },
+  {
+    "name": "openappsec-waf-comparison",
+    "repo": "github.com/openappsec/waf-comparison-project",
+    "commit": "",
+    "license": "",
+    "included": false,
+    "note": "Candidate for legitimate traffic: the legitimate request set of the open-appsec WAF comparison project, which that project downloads separately from its repository. Left out: neither the licence of the repository nor the terms of the data set were verified (no network access when the legitimate set was built), and no commit is pinned."
   }
 ]

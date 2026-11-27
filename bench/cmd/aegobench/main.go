@@ -33,6 +33,7 @@ import (
 	"github.com/ergasterion-dev/aegolith/bench/internal/sources/baseline"
 	"github.com/ergasterion-dev/aegolith/bench/internal/sources/crs"
 	"github.com/ergasterion-dev/aegolith/bench/internal/sources/gotestwaf"
+	"github.com/ergasterion-dev/aegolith/bench/internal/sources/legit"
 	"github.com/ergasterion-dev/aegolith/bench/internal/target"
 )
 
@@ -115,9 +116,11 @@ func parseFlags(fs *flag.FlagSet, args []string) (help bool, err error) {
 func runImport(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("aegobench import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	source := fs.String("source", "", `source to import: "baseline", "crs" or "gotestwaf"`)
+	source := fs.String("source", "", `source to import: "baseline", "crs", "gotestwaf" or "generated-legit"`)
 	corpus := fs.String("corpus", "", "corpus directory (source baseline)")
 	root := fs.String("root", "", "fetched source tree (sources crs and gotestwaf)")
+	seed := fs.Int64("seed", 1, "seed of the generated cases (source generated-legit)")
+	n := fs.Int("n", 0, "number of cases to generate (source generated-legit)")
 	out := fs.String("out", "", "case file to write")
 	skippedPath := fs.String("skipped", "", "file to write every skipped source case and its reason to (optional)")
 	if help, err := parseFlags(fs, args); help || err != nil {
@@ -149,6 +152,16 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("%w: --root is required for source %s", errUsage, *source)
 		}
 		lines, skipped, err = gotestwaf.Import(*root)
+	case legit.Source:
+		if *n < 1 {
+			return fmt.Errorf("%w: --n must be at least 1 for source %s", errUsage, *source)
+		}
+		lines = legit.Generate(*seed, *n)
+		// A smaller set than the one asked for would be taken for it.
+		if len(lines) < *n {
+			return fmt.Errorf("source %s has only %d distinct cases for seed %d, not the %d asked for",
+				*source, len(lines), *seed, *n)
+		}
 	default:
 		return fmt.Errorf("%w: unknown source %q", errUsage, *source)
 	}
@@ -170,10 +183,33 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 	}
 	_, err = fmt.Fprintf(stdout, "wrote %d cases from %s (%d attack, %d legit, %d near-miss) to %s\n",
 		len(lines), *source, count[cases.Attack], count[cases.Legit], count[cases.NearMiss], *out)
-	if err != nil || len(skipped) == 0 {
+	if err != nil {
 		return err
 	}
+	if *source == legit.Source {
+		return printCategories(stdout, lines)
+	}
+	if len(skipped) == 0 {
+		return nil
+	}
 	return printSkips(stdout, skipped)
+}
+
+// printCategories prints how many cases each category has, by name.
+func printCategories(w io.Writer, lines []cases.Line) error {
+	count := map[string]int{}
+	for _, l := range lines {
+		count[l.Category]++
+	}
+	if _, err := fmt.Fprintln(w, "by category:"); err != nil {
+		return err
+	}
+	for _, category := range slices.Sorted(maps.Keys(count)) {
+		if _, err := fmt.Fprintf(w, "%7d  %s\n", count[category], category); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeSkipFile replaces path with one JSON line per skipped source case.
