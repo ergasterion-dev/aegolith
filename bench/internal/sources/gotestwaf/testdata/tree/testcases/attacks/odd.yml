@@ -1,0 +1,10 @@
+payload:
+  - "<script>alert(1)</script>"
+encoder:
+  - Plain
+  - Rot13
+placeholder:
+  - XMLBody
+  - Teleport
+  - gRPC
+type: Fixture

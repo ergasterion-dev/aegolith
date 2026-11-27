@@ -32,6 +32,7 @@ import (
 	runner "github.com/ergasterion-dev/aegolith/bench/internal/run"
 	"github.com/ergasterion-dev/aegolith/bench/internal/sources/baseline"
 	"github.com/ergasterion-dev/aegolith/bench/internal/sources/crs"
+	"github.com/ergasterion-dev/aegolith/bench/internal/sources/gotestwaf"
 	"github.com/ergasterion-dev/aegolith/bench/internal/target"
 )
 
@@ -114,9 +115,9 @@ func parseFlags(fs *flag.FlagSet, args []string) (help bool, err error) {
 func runImport(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("aegobench import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	source := fs.String("source", "", `source to import: "baseline" or "crs"`)
+	source := fs.String("source", "", `source to import: "baseline", "crs" or "gotestwaf"`)
 	corpus := fs.String("corpus", "", "corpus directory (source baseline)")
-	root := fs.String("root", "", "fetched source tree (source crs)")
+	root := fs.String("root", "", "fetched source tree (sources crs and gotestwaf)")
 	out := fs.String("out", "", "case file to write")
 	skippedPath := fs.String("skipped", "", "file to write every skipped source case and its reason to (optional)")
 	if help, err := parseFlags(fs, args); help || err != nil {
@@ -143,6 +144,11 @@ func runImport(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("%w: --root is required for source %s", errUsage, *source)
 		}
 		lines, skipped, err = crs.Import(*root)
+	case gotestwaf.Source:
+		if *root == "" {
+			return fmt.Errorf("%w: --root is required for source %s", errUsage, *source)
+		}
+		lines, skipped, err = gotestwaf.Import(*root)
 	default:
 		return fmt.Errorf("%w: unknown source %q", errUsage, *source)
 	}

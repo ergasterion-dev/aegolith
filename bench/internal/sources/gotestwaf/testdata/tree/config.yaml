@@ -1,0 +1,8 @@
+# Hand-written for the importer's tests, in the shape of the tool's
+# configuration file.
+headers:
+  Connection: close
+  User-Agent: fixture-agent/1.0
+  Accept: "*/*"
+  Upgrade-Insecure-Requests: 1
+  Accept-Encoding: gzip, deflate

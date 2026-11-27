@@ -1,0 +1,17 @@
+payload:
+  - "id=1 union select 1"
+encoder:
+  - Plain
+placeholder:
+  - RawRequest:
+      method: PUT
+      path: /items/{{payload}}/edit
+      headers:
+        Content-Type: text/plain
+        X-Note: "note {{payload}}"
+      body: "value={{payload}}"
+  - GraphQL:
+      method: GET
+  - GraphQL:
+      method: POST
+type: Fixture

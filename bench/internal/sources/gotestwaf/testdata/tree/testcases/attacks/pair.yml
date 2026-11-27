@@ -1,0 +1,10 @@
+payload:
+  - "' or 1=1 --"
+  - "<img src=http://collector.example.net/x.png>"
+encoder:
+  - Plain
+  - Base64
+placeholder:
+  - URLParam
+  - JSONBody
+type: Fixture

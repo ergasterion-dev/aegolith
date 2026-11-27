@@ -659,7 +659,7 @@ go tool pprof -top -nodefraction=0 -focus=libinjection-go cpu.out
 The corpus above was written by the people who tuned the rules. The WAF bench in [`bench/`](bench) is meant to measure Aegolith against attack sets the project did not write, over HTTP, and to publish reproducible reports. The [design](docs/superpowers/specs/2026-11-26-waf-bench-design.md) and the [plan](docs/superpowers/plans/2026-11-26-waf-bench.md) are in the repository.
 
 > [!IMPORTANT]
-> **No independent results are published yet.** The two third-party sets, the OWASP Core Rule Set regression tests (v4.31.0, Apache-2.0) and GoTestWAF (v0.5.11, MIT), are pinned by commit in [`bench/sources.json`](bench/sources.json). The CRS tests can be imported; GoTestWAF has no importer yet, and no run against either set has been published.
+> **No independent results are published yet.** The two third-party sets, the OWASP Core Rule Set regression tests (v4.31.0, Apache-2.0) and GoTestWAF (v0.5.11, MIT), are pinned by commit in [`bench/sources.json`](bench/sources.json). Both can be imported into case lines; no run against either set has been published.
 
 | Part | State |
 |---|---|
@@ -668,7 +668,8 @@ The corpus above was written by the people who tuned the rules. The WAF bench in
 | Detection runner (loopback targets only), report and comparison with an earlier report | Done |
 | Source pinning, fetch script, rewriting callback hosts to `callback.invalid` | Done |
 | CRS regression test importer (stages that cannot be sent as one HTTP/1.1 request are skipped and counted) | Done |
-| GoTestWAF importer, a large legitimate-traffic set | Not started |
+| GoTestWAF importer (one case per payload, encoder and placeholder, built as the tool builds its requests; gRPC cases are skipped and counted) | Done |
+| A large legitimate-traffic set | Not started |
 | Load phase, guarded remote mode, one-command `make` targets, first report | Not started |
 
 The commands that exist now, run from `bench/` (the target runs in a second terminal; `bench/out/` is git-ignored):
@@ -680,9 +681,10 @@ go run ./cmd/aegobench help
 # 1. Convert the project corpus into case lines
 go run ./cmd/aegobench import --source baseline --corpus ../testdata/corpus --out out/baseline.jsonl
 
-# 1b. Optional: fetch the pinned third-party sets and convert the CRS regression tests
+# 1b. Optional: fetch the pinned third-party sets and convert them
 ./scripts/fetch-sources.sh
 go run ./cmd/aegobench import --source crs --root .sources/crs --out out/crs.jsonl --skipped out/crs-skipped.jsonl
+go run ./cmd/aegobench import --source gotestwaf --root .sources/gotestwaf --out out/gotestwaf.jsonl --skipped out/gotestwaf-skipped.jsonl
 
 # 2. In a second terminal: the firewall-wrapped target (127.0.0.1:8088, admin on :8089)
 go run ./cmd/aegobench target --mode enforce --policy ../testdata/corpus/example-api-policy.json \

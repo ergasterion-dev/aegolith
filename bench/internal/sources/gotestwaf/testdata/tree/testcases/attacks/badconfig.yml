@@ -1,0 +1,7 @@
+payload:
+  - "x"
+encoder:
+  - Plain
+placeholder:
+  - RawRequest:
+      path: /no-method

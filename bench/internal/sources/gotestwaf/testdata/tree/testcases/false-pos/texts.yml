@@ -1,0 +1,9 @@
+payload:
+  - curl and divergence in vector calculus
+  - "select a table for two; union rules apply"
+encoder:
+  - URL
+placeholder:
+  - URLParam
+  - HTMLForm
+  - HTMLMultipartForm

@@ -115,6 +115,65 @@ func TestImportCRSWritesCasesAndCountsSkips(t *testing.T) {
 	}
 }
 
+func TestImportGoTestWAFWritesCasesAndCountsSkips(t *testing.T) {
+	t.Parallel()
+	out := filepath.Join(t.TempDir(), "gotestwaf.jsonl")
+	skipped := filepath.Join(filepath.Dir(out), "skipped.jsonl")
+	var stdout, stderr bytes.Buffer
+	args := []string{
+		"import", "--source", "gotestwaf", "--root", "../../internal/sources/gotestwaf/testdata/tree",
+		"--out", out, "--skipped", skipped,
+	}
+	if err := run(args, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	audit, err := os.ReadFile(skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditLines := strings.Split(strings.TrimSuffix(string(audit), "\n"), "\n")
+	if want := `{"case_id":"attacks/odd/1/Rot13/XMLBody","reason":"encoder is not one of the tool's"}`; !slices.Contains(auditLines, want) {
+		t.Errorf("the skip file lacks %s:\n%s", want, audit)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	lines, err := cases.ReadLines(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range lines {
+		if _, err := cases.FromLine(l); err != nil {
+			t.Error(err)
+		}
+	}
+	want := "wrote 18 cases from gotestwaf (12 attack, 6 legit, 0 near-miss) to " + out + "\n" +
+		"skipped 8:\n" +
+		"      3  encoder is not one of the tool's\n" +
+		"      1  file holds no payload, no encoder or no placeholder\n" +
+		"      1  file is not YAML in the shape of a test case\n" +
+		"      1  gRPC placeholder: the tool makes a gRPC call, not a plain HTTP request\n" +
+		"      1  placeholder is not one of the tool's\n" +
+		"      1  the tool cannot load this file: RawRequest needs a method that is a string\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("summary:\n%s\nwant:\n%s", got, want)
+	}
+	if len(lines) != 18 || len(auditLines) != 8 || stderr.Len() != 0 {
+		t.Errorf("%d lines, %d skips, stderr %q", len(lines), len(auditLines), stderr.String())
+	}
+
+	err = run([]string{"import", "--source", "gotestwaf", "--out", out}, &stdout, &stderr)
+	if !errors.Is(err, errUsage) {
+		t.Errorf("error %v, want a usage error without --root", err)
+	}
+	err = run([]string{"import", "--source", "gotestwaf", "--root", t.TempDir(), "--out", out}, &stdout, &stderr)
+	if err == nil || errors.Is(err, errUsage) {
+		t.Errorf("error %v, want a failed import for an empty tree", err)
+	}
+}
+
 func TestImportCRSNeedsARoot(t *testing.T) {
 	t.Parallel()
 	out := filepath.Join(t.TempDir(), "crs.jsonl")
