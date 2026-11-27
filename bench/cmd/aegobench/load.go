@@ -65,7 +65,7 @@ func parseLoad(args []string, stderr io.Writer) (o loadOptions, help bool, err e
 	// As for detect: other hosts are for remote mode. The value is not
 	// repeated.
 	for name, u := range targets {
-		if !isLoopback(u.Hostname()) {
+		if !runner.IsLoopback(u.Hostname()) {
 			return o, false, fmt.Errorf("%w: %s must name a loopback host: localhost, 127.0.0.0/8 or ::1", errUsage, name)
 		}
 	}

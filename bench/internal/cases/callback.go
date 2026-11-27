@@ -744,3 +744,80 @@ func parseIPv4(name string) (readings []netip.Addr, parts int) {
 	}
 	return readings, len(fields)
 }
+
+// NamesPublicHost reports whether s could name a host that is not provably
+// local, anywhere in it and not only in a URL: RewriteCallbacks would change
+// it, or a view of it that RewriteCallbacks reads (with the same layers of
+// encoding and lookups removed) holds a bare name or address that looks
+// public. That covers a name with a top-level domain (also in a mail address
+// or after a command), a public IPv4 address in any notation inet_aton reads,
+// with or without a port, and a public IPv6 address, bracketed or bare.
+//
+// It refuses much that is not a host, such as document.cookie, table.column
+// or a large number, which reads as an IPv4 address. Known limits, by design:
+// a host assembled when the payload runs (concatenated strings, variables,
+// character codes), one inside base64 or another encoding RewriteCallbacks
+// does not read, a host split by spaces or line breaks, and a name with a
+// top-level domain of one letter or one that looks like a file extension.
+func NamesPublicHost(s string) bool {
+	if RewriteCallbacks(s) != s {
+		return true
+	}
+	v := view{text: s, src: make([]span, len(s))}
+	for layer := 0; ; layer++ {
+		if bareHost(v.text) {
+			return true
+		}
+		if layer >= maxDecodeLayers {
+			return false
+		}
+		next, _, _ := v.decode()
+		if next.text == v.text {
+			return false
+		}
+		v = next
+	}
+}
+
+// bareHost reports whether text holds a name or address that looks public.
+// Names end at any punctuation but ".", "-" and "_", so a lookup's braces and
+// colons split it.
+func bareHost(text string) bool {
+	sc := scanner{view: view{text: text}}
+	for i := 0; i < len(text); {
+		if text[i] == '[' {
+			if k := strings.IndexByte(text[i:min(len(text), i+maxNameBytes)], ']'); k > 0 && looksPublic(text[i:i+k+1]) {
+				return true
+			}
+		}
+		if end := addressToken(text, i); end > i {
+			if addr, err := netip.ParseAddr(strings.TrimRight(text[i:end], ":.")); err == nil && addr.Is6() && !localAddr(addr) {
+				return true
+			}
+		}
+		end := sc.name(i, len(text))
+		if end == i {
+			i++
+			continue
+		}
+		if looksPublic(strings.TrimLeft(text[i:end], ".")) {
+			return true
+		}
+		i = end
+	}
+	return false
+}
+
+// addressToken returns the end of the run of ASCII letters, digits, ":" and
+// "." starting at i, or i if the run does not start there.
+func addressToken(text string, i int) int {
+	isAddrByte := func(c byte) bool { return isLetter(c) || '0' <= c && c <= '9' || c == ':' || c == '.' }
+	if i > 0 && isAddrByte(text[i-1]) {
+		return i
+	}
+	end := i
+	for end < len(text) && isAddrByte(text[end]) {
+		end++
+	}
+	return end
+}

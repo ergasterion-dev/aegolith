@@ -17,7 +17,6 @@ import (
 	"maps"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -45,6 +44,8 @@ commands:
   target    serve the firewall-wrapped server that cases are sent to
   detect    send every case to the target once and record each outcome
   load      send a mix of cases at a fixed rate and measure latency and memory
+  remote    send placed cases to a deployment you own, under a target file's limits
+  join      judge the results of remote from the target's access and decision logs
   report    count the outcomes and compare them with an earlier report
   help      show this text
 
@@ -88,6 +89,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		ctx, stop := signalContext()
 		defer stop()
 		return runLoad(ctx, args[1:], stdout, stderr)
+	case "remote":
+		ctx, stop := signalContext()
+		defer stop()
+		return runRemote(ctx, args[1:], stdout, stderr)
+	case "join":
+		return runJoin(args[1:], stdout, stderr)
 	case "report":
 		return runReport(args[1:], stdout, stderr)
 	default:
@@ -528,7 +535,7 @@ func parseDetect(args []string, stderr io.Writer) (o detectOptions, help bool, e
 	}
 	// Other hosts are for remote mode, which has the limits that sending to
 	// them needs. The value is not repeated.
-	if !isLoopback(o.base.Hostname()) {
+	if !runner.IsLoopback(o.base.Hostname()) {
 		return o, false, fmt.Errorf("%w: --base must name a loopback host: localhost, 127.0.0.0/8 or ::1", errUsage)
 	}
 	if o.rps < 1 {
@@ -555,16 +562,6 @@ func parseBase(flagName, raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("%w: %s must be http://host[:port] or https://host[:port]", errUsage, flagName)
 	}
 	return u, nil
-}
-
-// isLoopback reports whether host is "localhost" or a loopback address. No
-// name is looked up.
-func isLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	addr, err := netip.ParseAddr(host)
-	return err == nil && addr.IsLoopback()
 }
 
 // sameFile reports whether the two paths name one existing file.
@@ -609,7 +606,15 @@ func runDetect(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 	results := runner.Join(sent, access, decisions)
-	err = writeFile(o.out, func(w io.Writer) error {
+	if err := writeResults(o.out, results); err != nil {
+		return fmt.Errorf("writing %s: %w", o.out, err)
+	}
+	return summarize(stdout, o.out, results, conflicting, badAccess, badDecisions)
+}
+
+// writeResults replaces path with one JSON line per result.
+func writeResults(path string, results []runner.Result) error {
+	return writeFile(path, func(w io.Writer) error {
 		buffered := bufio.NewWriter(w)
 		lines := json.NewEncoder(buffered)
 		for _, r := range results {
@@ -619,10 +624,6 @@ func runDetect(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		}
 		return buffered.Flush()
 	})
-	if err != nil {
-		return fmt.Errorf("writing %s: %w", o.out, err)
-	}
-	return summarize(stdout, o.out, results, conflicting, badAccess, badDecisions)
 }
 
 // readCases reads the case files and merges identical requests. conflicting

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -41,7 +42,9 @@ func refuse(reason string) error { return &NotSentError{Reason: reason} }
 // NewClient returns the client cases are sent with. It gives up on a request
 // after timeout, never follows a redirect, takes no proxy from the
 // environment, keeps no cookies, adds no Accept-Encoding and speaks only
-// HTTP/1, so that a request arrives as the case spells it.
+// HTTP/1, so that a request arrives as the case spells it. It dials the name
+// localhost only at loopback addresses, and verifies TLS certificates as
+// net/http does by default.
 func NewClient(timeout time.Duration) *http.Client {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
@@ -52,6 +55,7 @@ func NewClient(timeout time.Duration) *http.Client {
 		},
 		Transport: &http.Transport{
 			Protocols:             protocols,
+			DialContext:           pinnedDial(&net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}),
 			DisableCompression:    true,
 			MaxIdleConnsPerHost:   4,
 			IdleConnTimeout:       30 * time.Second,

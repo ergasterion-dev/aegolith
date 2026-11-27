@@ -1,0 +1,23 @@
+{
+  "base_url": "https://waf.example.test",
+  "request_id_prefix": "bench-",
+  "mode": "monitor",
+  "health_path": "/healthz",
+  "max_rps": 5,
+  "stop_statuses": [429],
+  "headers": {},
+  "allow": [
+    {
+      "method": "GET",
+      "path": "/api/v1/products/search",
+      "placements": ["query:q"],
+      "benign_status": [200]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/notes",
+      "placements": ["json:note", "header:X-Note"],
+      "benign_status": [200, 201]
+    }
+  ]
+}

@@ -48,6 +48,15 @@ func Detect(ctx context.Context, c *http.Client, base *url.URL, cs []cases.Case,
 	return out
 }
 
+// SendCase sends one case as Detect does, with requestID as its X-Request-Id,
+// and returns its result: Outcome is NotSent if the client cannot send the
+// case as given, and empty otherwise, for Join to set.
+func SendCase(ctx context.Context, c *http.Client, base *url.URL, one cases.Case, requestID string) Result {
+	r := Result{CaseID: one.ID, RequestID: requestID}
+	send(ctx, c, base, one, &r)
+	return r
+}
+
 // send sends one case and notes in r what came of it.
 func send(ctx context.Context, c *http.Client, base *url.URL, one cases.Case, r *Result) {
 	status, latency, err := Send(ctx, c, base, one, r.RequestID)
