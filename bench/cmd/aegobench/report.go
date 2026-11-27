@@ -218,6 +218,12 @@ func readLoadResult(path string) (*runner.LoadResult, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("trailing data after the JSON object")
 	}
+	// A file of another version has other fields: read as this one, those it
+	// lacks would be reported as zero.
+	if res.Format != runner.LoadResultFormat {
+		return nil, fmt.Errorf("the load result has format version %d and this program reads version %d: run load again",
+			res.Format, runner.LoadResultFormat)
+	}
 	counts := []int{res.Sent, res.TransportErrors, res.Attacks, res.Dropped, res.NotSent, res.Cancelled,
 		res.AttackCases, res.LegitCases, res.Excluded, res.Conflicting, res.MemPolls, res.MemPollFailures}
 	if res.RPS < 1 || res.Workers < 1 || res.Duration <= 0 || slices.ContainsFunc(counts, func(n int) bool { return n < 0 }) {

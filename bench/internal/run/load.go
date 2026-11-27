@@ -61,9 +61,18 @@ type LoadOptions struct {
 	memInterval time.Duration
 }
 
+// LoadResultFormat is the version of LoadResult as a file. It changes whenever
+// a field is added or changes its meaning: a field missing from an older file
+// would read as zero and be reported as measured.
+const LoadResultFormat = 2
+
 // LoadResult is what one load run measured. Its size does not depend on how
 // long the run was. It names no case and holds no per-case outcome.
 type LoadResult struct {
+	// Format is LoadResultFormat. A result with another value was written by
+	// another version of this program and must not be read as this struct.
+	Format int
+
 	// What was asked for.
 	RPS, Workers int
 	AttackShare  float64
@@ -111,8 +120,10 @@ type LoadResult struct {
 	// and the last. 0 means that reading failed or none was made.
 	HeapStart, HeapPeak, HeapEnd uint64
 	// MemAsked says that an admin URL was given. MemPolls counts the readings
-	// of the target's memory, MemPollFailures those of them that failed. A
-	// reading cut short by an interrupt is not counted.
+	// of the target's memory that came to an end, MemPollFailures those of
+	// them that failed. A reading still in progress when the schedule ends or
+	// the run is interrupted is abandoned and not counted, whether it would
+	// have succeeded or failed; the last reading, made after that, is counted.
 	MemAsked                  bool `json:",omitempty"`
 	MemPolls, MemPollFailures int
 
@@ -176,7 +187,8 @@ func Load(ctx context.Context, c *http.Client, o LoadOptions) (LoadResult, error
 		return LoadResult{}, err
 	}
 	res := LoadResult{
-		RPS: o.RPS, Workers: o.Workers, AttackShare: o.AttackShare, Seed: o.Seed,
+		Format: LoadResultFormat,
+		RPS:    o.RPS, Workers: o.Workers, AttackShare: o.AttackShare, Seed: o.Seed,
 		AttackCases: len(pools.attack), LegitCases: len(pools.legit), Excluded: pools.excluded,
 	}
 

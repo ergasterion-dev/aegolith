@@ -595,15 +595,18 @@ func TestLoadSectionSaysWhatIsMissing(t *testing.T) {
 		"5 requests were in flight",
 		"2 requests were refused by the client",
 		"Target heap: not read (no admin URL was given)",
-		"Firewall decision latency: p50 12 µs, p90 30 µs, p99 61 µs, max 4.10 ms over 3000 decision records, "+
-			"which cover 2990 of the 29986 answered requests",
+		"Firewall decision latency: p50 12 µs, p90 30 µs, p99 61 µs, max 4.10 ms over 3000 decision records "+
+			"from 2990 requests; 29986 requests were answered",
 		"21 of 30007 scheduled requests are not in these figures",
 		"2 records of requests blocked because inspection failed",
 		"7 records of other runs", "1 unreadable line",
 	)
 
-	l.MemAsked = true
-	contains(t, Report{Load: l}.Markdown(), "Target heap: not read (the run was interrupted before the first reading)")
+	// Readings without the flag are still readings.
+	l.MemPolls, l.HeapStart, l.HeapPeak, l.HeapEnd = 3, 1<<20, 1<<20, 1<<20
+	if md := (Report{Load: l}).Markdown(); strings.Contains(md, "no admin URL") || !strings.Contains(md, "3 readings") {
+		t.Errorf("a result with readings says that no admin URL was given:\n%s", md)
+	}
 
 	// Every scheduled request answered: nothing is missing from the percentiles.
 	l = loadResult()

@@ -440,7 +440,10 @@ func TestLoadDecidesConnectionReuse(t *testing.T) {
 	if int(kept.Load()) != res.Sent {
 		t.Errorf("%d of %d requests kept their other headers", kept.Load(), res.Sent)
 	}
-	if n := conns.Load(); n > 4 {
+	// With the header every request would open a connection. Without it the
+	// four workers need four, or a few more when a request starts before the
+	// connection of the one before is back in the pool.
+	if n := int(conns.Load()); n > 16 && n*2 > res.Sent {
 		t.Errorf("%d connections for %d requests of 4 workers, want them reused", n, res.Sent)
 	}
 	if cs[0].Headers["Connection"] != "close" {

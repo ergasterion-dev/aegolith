@@ -138,8 +138,8 @@ func decisionLatency(d *run.DecisionLatency, answered int) string {
 	if d.Records == 0 {
 		s = "no decision record of this run has a latency"
 	} else {
-		s = fmt.Sprintf("p50 %s, p90 %s, p99 %s, max %s over %d decision records, which cover %d of the %d "+
-			"answered requests",
+		s = fmt.Sprintf("p50 %s, p90 %s, p99 %s, max %s over %d decision records from %d requests; %d requests "+
+			"were answered",
 			micros(d.P50US), micros(d.P90US), micros(d.P99US), micros(d.MaxUS), d.Records, d.Requests, answered)
 	}
 	s += ". The firewall leaves a record only for a request it blocked, matched a rule on in monitor mode " +
@@ -150,11 +150,8 @@ func decisionLatency(d *run.DecisionLatency, answered int) string {
 
 // heap describes the readings of the target's heap during a load run.
 func heap(l run.LoadResult) string {
-	switch {
-	case !l.MemAsked:
+	if !l.MemAsked && l.MemPolls == 0 {
 		return "not read (no admin URL was given)"
-	case l.MemPolls == 0:
-		return "not read (the run was interrupted before the first reading)"
 	}
 	size := func(v uint64) string {
 		if v == 0 {

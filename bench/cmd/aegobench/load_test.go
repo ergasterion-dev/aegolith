@@ -62,6 +62,9 @@ func TestLoadThenReport(t *testing.T) {
 		t.Fatalf("%v\n%s", err, stderr.String())
 	}
 	res := readLoad(t, out)
+	if res.Format != runner.LoadResultFormat || !strings.Contains(readText(t, out), `"Format": 2`) {
+		t.Errorf("format = %d, want %d written to the file", res.Format, runner.LoadResultFormat)
+	}
 	if res.Sent+res.Dropped != 100 || res.Sent == 0 || res.TransportErrors != 0 || res.Interrupted {
 		t.Fatalf("result = %+v, want the 100 requests of the schedule", res)
 	}
@@ -297,9 +300,14 @@ func TestReportRejectsBadLoadFile(t *testing.T) {
 		"another object":   `{"Meta":{},"Configs":[]}`,
 		"an empty object":  `{}`,
 		"null":             `null`,
-		"trailing data":    `{"RPS":1,"Workers":1,"Duration":1000000000}{}`,
+		"trailing data":    `{"Format":2,"RPS":1,"Workers":1,"Duration":1000000000}{}`,
 		"a results line":   `{"case_id":"x","outcome":"passed"}`,
-		"a negative count": `{"RPS":1,"Workers":1,"Duration":1000000000,"Sent":-1}`,
+		"a negative count": `{"Format":2,"RPS":1,"Workers":1,"Duration":1000000000,"Sent":-1}`,
+		// Written before the format had a version: fields added since would
+		// read as zero and be reported as measured.
+		"no format version":      `{"RPS":1,"Workers":1,"Duration":1000000000,"Sent":5,"MemPolls":14,"HeapStart":100}`,
+		"another format version": `{"Format":1,"RPS":1,"Workers":1,"Duration":1000000000}`,
+		"a later format version": `{"Format":3,"RPS":1,"Workers":1,"Duration":1000000000}`,
 	} {
 		writeText(t, loadFile, content)
 		var stdout, stderr bytes.Buffer
@@ -308,12 +316,19 @@ func TestReportRejectsBadLoadFile(t *testing.T) {
 			t.Errorf("%s: no error", name)
 		} else if strings.Contains(err.Error(), "secret-value") {
 			t.Errorf("%s: the error repeats the file: %v", name, err)
+		} else if strings.Contains(name, "format version") && !strings.Contains(err.Error(), "run load again") {
+			t.Errorf("%s: err = %v, want it to say to run load again", name, err)
 		}
 		if files, _ := filepath.Glob(filepath.Join(out, "*")); len(files) != 0 {
 			t.Errorf("%s: a report was written: %v", name, files)
 		}
 	}
+	// The current format is read.
+	writeText(t, loadFile, `{"Format":2,"RPS":1,"Workers":1,"Duration":1000000000,"Sent":1}`)
 	var stdout, stderr bytes.Buffer
+	if err := runReport([]string{"--cases", caseFile, "--results", "a=" + results, "--out", out, "--load", loadFile}, &stdout, &stderr); err != nil {
+		t.Errorf("a load result of the current format: %v", err)
+	}
 	if err := runReport([]string{"--cases", caseFile, "--results", "a=" + results, "--out", dir, "--load", filepath.Join(dir, "report.json")},
 		&stdout, &stderr); err == nil {
 		t.Error("a missing load file is no error")
