@@ -20,7 +20,7 @@ Aegolith inspects the request (method, path, query, headers it knows how to read
 | Class | Rules | What it looks for |
 |---|---|---|
 | SQL injection, XSS | `AEG-SQLI-001`, `-002`, `AEG-XSS-001` | libinjection on every free-text value, plus a check for stacked statements that copy to or from a program, and SQL time-delay and exec tokens (`WAITFOR DELAY '`, `xp_cmdshell`, `pg_sleep(`, `DBMS_LOCK.SLEEP(`) |
-| OS command injection | `AEG-CMDI-001` | a shell operator followed by a command used as a shell is used, an absolute system path, reverse-shell and Shellshock markers |
+| OS command injection | `AEG-CMDI-001` | a shell operator followed by a command used as a shell is used, an absolute system path, reverse-shell and Shellshock markers, [here-strings, globbed system paths and chained Windows `FOR` loops](#command-injection-techniques-added-in-alpha7) |
 | Code injection | `AEG-CODEI-001`, `-002` | PHP open tags, eval of base64, Node `child_process`, Java serialized objects |
 | LDAP, template, JNDI, CRLF injection | `AEG-LDAP-001`, `AEG-SSTI-001`, `-002`, `AEG-JNDI-001`, `AEG-CRLF-001` | filter breakers, code in template expressions, server-side include directives, Log4Shell lookups (with nested obfuscation), header injection in values |
 | File and URL abuse | `AEG-LFI-*`, `AEG-RFI-001`, `AEG-SSRF-*`, `AEG-XXE-001` | traversal and system files, wrapper schemes, metadata and internal hosts, DOCTYPE entities (in a body typed as XML) |
@@ -233,6 +233,27 @@ Found while reviewing alpha.6 and left as they are. Each was checked against the
 - **Ruby calls without parentheses (`AEG-SSTI-001`).** A `#{ }` call with no `(` reads as plain words, so `#{system 'id'}`, `#{exec "id"}` and `#{system "id #{1}"}` are not flagged (alpha.5 missed them too).
 - **VCS names followed by `;` or `\` (`AEG-SCANNER-002`).** A whole segment is the name followed by the end, `/` or `.`, so `/.git;x`, `/x/.git;x/config`, `/.git%3Bx`, `/.git\config`, `/.git%5Cconfig`, `/.svn\entries` and `/.hg;a` are not flagged.
 - **A single dot in a parameter of a declared route.** `%2e` (and a literal `.`) in a parameter segment is excused like any other value: with `GET /api/v1/stores/:id/actuator/health` declared, `/api/v1/stores/%2e/actuator/health` is allowed. `AEG-PROTO-005` refuses only `..` forms. Both Go's `ServeMux` and Fiber send such a request to the declared handler: `ServeMux` hands `%2e` over as the parameter value `.`, and Fiber as `%2e` by default and as `.` with `UnescapePath`, so the handler must not treat that value as a path.
+
+### Command injection techniques added in alpha.7
+
+`AEG-CMDI-001` also flags three shapes that need no listed command after an operator. They are read wherever the command rule runs, on the value and on its percent-decoded form, and the prose readings of `&`, `;`, backticks and line breaks do not apply to them.
+
+- **Here-string.** A letter, digit or `_` directly before `<<<`, then optional blanks, an optional quote and a letter or `_`: `cat<<<uname`, ``;tac<<<id``, `rev<<< 'x'`. Clear: `miss you<<<3`, `x = <<<EOT`, `$sql=<<<SQL`, `<<<<<<< HEAD`, also glued to a word.
+- **Globbed system path.** A token that starts with `/` at the start of the value or after a space, a tab or one of ``;|&+`(,{'"=<>``, holds `?`, `*` or `[...]`, and matches, segment by segment as Bash would (`[!...]` and `[^...]` negate, a `/` inside brackets is dropped), one of `/etc`, `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/hosts`, `/etc/issue`, `/bin/{sh,bash,cat,ls,nc,id}`, `/usr/bin/{cat,id,whoami,wget,curl,nc,bash,sh}`, `/usr/sbin/bash`, `/dev/tcp`, `/proc/self/environ`. The token ends at a blank, a line break or one of the characters above, `)` or `}`. Its last segment must hold a letter written outside brackets or listed on its own in a class that is not negated, so `/???/?a?h` and `/e?c/pa[s]swd` match, while `/???`, `/usr/bin/*`, `/usr/bin/py*` and regular expressions such as `/[a-z]*` and `/[^/]*` are clear.
+- **Chained Windows `FOR` loop.** `&`, `|`, `;`, `&&` or `||`, blanks, `for` in any case, optional `/D`, `/L`, `/R` and `/F` switches (each with an optional quoted option string or a path), a `%` or `%%` variable of 1 to 16 letters, digits, `_`, `~`, `@`, `[` or `]`, `in`, `(...)` and the word `do`: `& for %q in (x) do y`. The same loop with no operator before it, as in a batch file, is clear.
+
+**False positives (accepted; exclude `AEG-CMDI-001` on a field that carries shell, PHP or batch text):**
+
+- a word glued to `<<<` and another word, as an arrow or in code: `Back<<<Home`, `great<<< see more`, PHP `echo<<<EOT`, C++ `operator<<<T>`;
+- a shell glob in a command or a note that covers a listed file: `ls /usr/bin/c*`, `ls /usr/bin/*sh`, a footnote star as in `/etc/hosts*`;
+- a short rooted pattern that happens to cover one: `/e*` or `/*c` (both match `/etc`), a `robots.txt` or route pattern such as `/*/id`, a regular expression string with a written letter such as `"/[a-z]tc*"`, and a root-relative link whose parameter name completes `etc`, such as `redirect=/?tc=accepted`;
+- a batch snippet that chains a loop to another command (`@echo off & for %%i in (*.log) do del %%i`), and one where the `;` of an HTML entity stands before `for`.
+
+**Missed (accepted):**
+
+- a here-string with a blank or a quote before `<<<` (`cat <<<uname`), or followed by a variable, a substitution or a path (`cat<<<$HOME`);
+- a glob whose last segment spells no letter (`/???/??`, `/???/??[a-z]`, `/???/??[!x]`); with a doubled slash, a backslash, `$` or a POSIX class (`/e?c//passwd`, `/e?c/p\asswd`, `/etc/[[:lower:]]asswd`, `/e?c/passwd$x`); after a line break, `:` or `}` (`cat${IFS}/e?c/passwd`); longer than 64 bytes; naming a file that is not listed; or a `/dev/tcp` glob with a host and port after it;
+- a `FOR` loop with no operator before it (a line break is not one), after `(` or `@`, with a path that holds blanks, with a switch other than the four, or past the length bounds: 512 bytes of `(...)`, 256 of a quoted option or path, 256 blanks in a row after `for`, four switches.
 
 ### The four corpus misses
 

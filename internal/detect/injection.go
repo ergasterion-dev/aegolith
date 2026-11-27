@@ -19,7 +19,8 @@ import (
 // CmdI reports whether v looks like OS command injection: a shell operator
 // (; | & ` $( or a line break) followed by a known command used the way a
 // shell is used, or an absolute system path, or a reverse-shell or
-// Shellshock marker.
+// Shellshock marker, or a here-string, a globbed system path or a chained
+// Windows FOR loop (see hasCmdTechnique).
 //
 // A literal line break in the value gets a stricter rule than other
 // operators (a bare command alone on a line, "Notes:\nls", is prose). A
@@ -584,7 +585,7 @@ func plainTokenBefore(s string, end int) bool {
 // stretch no other call walks (the line before a line break, the bytes up
 // to the next backtick), so a scan is linear in len(s).
 func isCmdI(s string, m cmdMode) bool {
-	if hasCmdMarker(s) {
+	if hasCmdMarker(s) || hasCmdTechnique(s) {
 		return true
 	}
 	firstBlank := strings.IndexAny(s, " \t")
