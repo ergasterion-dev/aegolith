@@ -60,6 +60,8 @@
 
 ### Task 2: `base64` field type
 
+> Superseded in part: the single type was split into `base64` and `base64url`; see the [spec](../specs/2026-11-27-aegolith-alpha7-design.md).
+
 **Files:**
 - Modify: `internal/policy/field.go`, `internal/engine/inputs.go` (`typed`), `aegolith.go` (export the constant beside `TypeUUIDLenient`)
 - Test: `internal/policy/base64_test.go`, `internal/engine/base64_test.go`
