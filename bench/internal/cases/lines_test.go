@@ -68,7 +68,7 @@ func TestNamesPublicHost(t *testing.T) {
 	t.Parallel()
 	public := []string{
 		"curl abc.oastify.com",
-		"/dev/tcp/51.15.142.164/80",
+		"/dev/tcp/198.51.100.7/80",
 		"ping 8.8.8.8",
 		"ping 8.8.8.8:53",
 		"www.google.com",
@@ -84,6 +84,44 @@ func TestNamesPublicHost(t *testing.T) {
 		"${lower:e}vil.com",
 		"nslookup bücher.example",
 		"ping 0x08080808",
+		// Short IPv4 forms inet_aton reads.
+		"ping 1.1",
+		"ping 9.9",
+		"ping 2.25",
+		"ping 2.2.2",
+		"ping 8.8.2056",
+		"ping 8.526344",
+		"ping 1.16843009",
+		"ping 1.0x10101",
+		"ping -c1 1.1",
+		"price 1.5 or 2.25",
+		"ping 169.254''.1.1",
+		// Hosts split by shell quoting and escaping.
+		"curl evil''.com",
+		"curl 'evil'.com",
+		`curl evil\.com`,
+		`curl evil"".com`,
+		"curl evil'.'com",
+		`curl evil"."com`,
+		"curl evil${x}.com",
+		"curl evil$x.com",
+		"curl evil$@.com",
+		"curl evil$*.com",
+		"curl evil``.com",
+		"curl evil$().com",
+		"curl `echo evil`.com",
+		"curl ev^il.com",
+		"curl $'evil'.com",
+		"curl evil\\\n.com",
+		"nslookup evil''.com",
+		"ping 8''.8.8.8",
+		"ping 1.1.1''.1",
+		"curl evil%27%27.com",
+		"curl ev%5Cil.com",
+		"curl ${x:-e}vil.com",
+		"ping${IFS}8''.8.8.8",
+		"curl evil$1.com",
+		"curl %22evil%22%2E%22com%22",
 	}
 	for _, s := range public {
 		if !NamesPublicHost(s) {
@@ -105,14 +143,39 @@ func TestNamesPublicHost(t *testing.T) {
 		"ping localhost",
 		"waf.example.test",
 		"cat /etc/hosts.conf",
-		"price 1.5 or 2.25",
 		"see index.html",
 		"arr[1]",
 		"version 10.2",
+		// Short forms that read as local addresses only.
+		"ping 10.1",
+		"ping 127.1",
+		"ping 192.168.1",
+		"ping 0.0",
+		// Shell quoting around local hosts.
+		"curl 'callback'.invalid",
+		"curl waf''.example.test",
+		"curl printer''.local",
+		// A split whose parts also read as local addresses. (A split that
+		// leaves a part like 169.254, itself a public short form, is
+		// refused.)
+		"ping 10.0.0''.1",
+		"ping 169.254.1''.1",
+		"ping 192.168.1''.1",
+		"${jndi:ldap://callback.invalid/a}",
+		"${jndi:ldap://${x}callback.invalid/a}",
+		`echo '${x}' "$@"`,
 	}
 	for _, s := range local {
 		if NamesPublicHost(s) {
 			t.Errorf("NamesPublicHost(%q) = true, want false", s)
 		}
+	}
+}
+
+func TestNamesPublicHostTruncatedShellSyntax(t *testing.T) {
+	t.Parallel()
+	for _, s := range []string{"$", "\\", "${", "${a", "${a:", "${a:-", "${a-b", "${}", "$(", "a$", "a\\", "${a}}", "${a:-}"} {
+		NamesPublicHost(s) // must not panic
+		NamesPublicHost("x " + s + " y")
 	}
 }

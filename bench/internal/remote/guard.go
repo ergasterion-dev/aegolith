@@ -12,6 +12,9 @@ import (
 const (
 	// HeartbeatMaxAge is how old the operator's heartbeat file may be.
 	HeartbeatMaxAge = 30 * time.Second
+	// HeartbeatMaxSkew is how far in the future the heartbeat file's
+	// modification time may be, for clock steps.
+	HeartbeatMaxSkew = 2 * time.Second
 	// HealthInterval is how often the target's health is checked.
 	HealthInterval = 5 * time.Second
 	// ControlEvery is the number of case requests to an entry after which
@@ -28,7 +31,8 @@ const (
 type Guard struct {
 	Target Target
 	// StopFile, when set, stops the run once it exists. HeartbeatFile, when
-	// set, must exist and be modified at most HeartbeatMaxAge ago.
+	// set, must be a regular file (or a symlink to one) modified at most
+	// HeartbeatMaxAge ago and at most HeartbeatMaxSkew ahead.
 	StopFile, HeartbeatFile string
 
 	failures   int // requests in a row ending in a redirect or no answer
@@ -76,10 +80,17 @@ func (g *Guard) External(now time.Time) (stop bool, reason string) {
 		}
 	}
 	if g.HeartbeatFile != "" {
+		// A symlink is followed, as a watcher may update its file through
+		// one; what it names must be a regular file.
 		info, err := os.Stat(g.HeartbeatFile)
 		switch {
 		case err != nil:
 			return true, "the heartbeat file is missing or cannot be read"
+		case !info.Mode().IsRegular():
+			return true, "the heartbeat file is not a regular file"
+		case info.ModTime().Sub(now) > HeartbeatMaxSkew:
+			// It would never go stale.
+			return true, "the heartbeat file was modified in the future"
 		case now.Sub(info.ModTime()) > HeartbeatMaxAge:
 			return true, fmt.Sprintf("the heartbeat file is older than %s", HeartbeatMaxAge)
 		}

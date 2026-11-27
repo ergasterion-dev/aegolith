@@ -745,38 +745,136 @@ func parseIPv4(name string) (readings []netip.Addr, parts int) {
 	return readings, len(fields)
 }
 
+// maxShellViews bounds the views NamesPublicHost looks at; past it, it
+// refuses.
+const maxShellViews = 64
+
 // NamesPublicHost reports whether s could name a host that is not provably
 // local, anywhere in it and not only in a URL: RewriteCallbacks would change
-// it, or a view of it that RewriteCallbacks reads (with the same layers of
-// encoding and lookups removed) holds a bare name or address that looks
-// public. That covers a name with a top-level domain (also in a mail address
-// or after a command), a public IPv4 address in any notation inet_aton reads,
-// with or without a port, and a public IPv6 address, bracketed or bare.
+// it, or a view of it holds a bare name or address that looks public. The
+// views are those RewriteCallbacks reads (the same layers of encoding and
+// lookups removed) and, for each of them, the text a shell would join (see
+// shellJoin), whose own layers are read in turn.
 //
-// It refuses much that is not a host, such as document.cookie, table.column
-// or a large number, which reads as an IPv4 address. Known limits, by design:
-// a host assembled when the payload runs (concatenated strings, variables,
-// character codes), one inside base64 or another encoding RewriteCallbacks
-// does not read, a host split by spaces or line breaks, and a name with a
-// top-level domain of one letter or one that looks like a file extension.
+// A bare name looks public if it has a top-level domain (also in a mail
+// address or after a command). An address is public if any reading of it is:
+// IPv4 in any notation inet_aton reads, including the short forms of two and
+// three parts (1.1 is 1.0.0.1), with or without a port, and IPv6, bracketed
+// or bare.
+//
+// It refuses much that is not a host, such as document.cookie, table.column,
+// a price or version like 2.25, or a large number, which reads as an IPv4
+// address. Known limits, by design: a host assembled when the payload runs
+// from anything but the shell syntax shellJoin removes (command output other
+// than in backticks, variables with values, arithmetic, brace expansion,
+// globs, concatenated strings or character codes of other languages), one
+// inside base64 or another encoding RewriteCallbacks does not read, a host
+// split by spaces or line breaks, and a name with a top-level domain of one
+// letter or one that looks like a file extension.
 func NamesPublicHost(s string) bool {
 	if RewriteCallbacks(s) != s {
 		return true
 	}
-	v := view{text: s, src: make([]span, len(s))}
-	for layer := 0; ; layer++ {
-		if bareHost(v.text) {
+	seen := map[string]bool{s: true}
+	queue := []string{s}
+	for len(queue) > 0 {
+		if len(seen) > maxShellViews {
 			return true
 		}
-		if layer >= maxDecodeLayers {
-			return false
+		text := queue[0]
+		queue = queue[1:]
+		v := view{text: text, src: make([]span, len(text))}
+		for layer := 0; ; layer++ {
+			if bareHost(v.text) {
+				return true
+			}
+			for _, sep := range []string{"", " "} {
+				if joined := shellJoin(v.text, sep); !seen[joined] {
+					seen[joined] = true
+					queue = append(queue, joined)
+				}
+			}
+			if layer >= maxDecodeLayers {
+				break
+			}
+			next, _, _ := v.decode()
+			if next.text == v.text {
+				break
+			}
+			v = next
 		}
-		next, _, _ := v.decode()
-		if next.text == v.text {
-			return false
-		}
-		v = next
 	}
+	return false
+}
+
+// shellJoin returns text with the shell syntax removed that can split a host
+// without changing what the command reads: quotes, backticks, a backslash
+// before a character (and a line continuation), cmd.exe carets, the $ of
+// $'...' and $"...", special parameters such as $@ and $*, variables ($name,
+// ${name}), which are taken as empty or as sep, the default of
+// ${name:-word} and ${name-word}, which is kept, and an empty $().
+func shellJoin(text, sep string) string {
+	var b strings.Builder
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case c == '\\':
+			if i+1 < len(text) && text[i+1] != '\n' {
+				b.WriteByte(text[i+1])
+			}
+			i++
+		case c == '\'' || c == '"' || c == '`' || c == '^':
+		case c == '$' && i+1 < len(text):
+			next := text[i+1]
+			switch {
+			case next == '\'' || next == '"':
+			case strings.IndexByte("@*#?$!-0123456789", next) >= 0:
+				b.WriteString(sep)
+				i++
+			case strings.HasPrefix(text[i:], "$()"):
+				i += 2
+			case next == '{':
+				end := strings.IndexByte(text[i:], '}')
+				name := shellName(text[i+2:])
+				body := text[i+2 : i+2+len(name)]
+				rest := text[i+2+len(name):]
+				switch {
+				case name == "" || end < 0:
+					b.WriteByte(c)
+				case rest[0] == '}':
+					b.WriteString(sep)
+					i += 2 + len(name)
+				case strings.HasPrefix(rest, ":-") || rest[0] == '-':
+					word := strings.TrimPrefix(strings.TrimPrefix(rest[:strings.IndexByte(rest, '}')], ":"), "-")
+					b.WriteString(word)
+					i += 2 + len(body) + strings.IndexByte(rest, '}')
+				default:
+					b.WriteByte(c)
+				}
+			default:
+				if name := shellName(text[i+1:]); name != "" {
+					b.WriteString(sep)
+					i += len(name)
+				} else {
+					b.WriteByte(c)
+				}
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// shellName returns the shell variable name that starts s, or "".
+func shellName(s string) string {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(isLetter(c) || c == '_' || i > 0 && '0' <= c && c <= '9') {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // bareHost reports whether text holds a name or address that looks public.
@@ -800,12 +898,47 @@ func bareHost(text string) bool {
 			i++
 			continue
 		}
-		if looksPublic(strings.TrimLeft(text[i:end], ".")) {
+		name := strings.TrimLeft(text[i:end], ".")
+		if looksPublic(name) || publicShortIPv4(name) {
 			return true
 		}
 		i = end
 	}
 	return false
+}
+
+// publicShortIPv4 reports whether name is an IPv4 address of two or three
+// parts any reading of which is public: inet_aton reads 1.1 as 1.0.0.1. Numbers
+// too large for their place have no reading here, but some parsers truncate or
+// wrap them, so they count as public too.
+func publicShortIPv4(name string) bool {
+	name = normalise(name)
+	readings, parts := parseIPv4(name)
+	if parts != 2 && parts != 3 {
+		return false
+	}
+	if len(readings) == 0 {
+		return allNumbers(name)
+	}
+	return slices.ContainsFunc(readings, func(a netip.Addr) bool { return !localAddr(a) })
+}
+
+// allNumbers reports whether every dot-separated part of name is a decimal,
+// octal or hexadecimal number.
+func allNumbers(name string) bool {
+	for _, f := range strings.Split(name, ".") {
+		digits, base := f, 10
+		if rest, ok := strings.CutPrefix(f, "0x"); ok {
+			digits, base = rest, 16
+		}
+		if digits == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(digits, base, 64); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // addressToken returns the end of the run of ASCII letters, digits, ":" and
