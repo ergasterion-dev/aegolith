@@ -515,8 +515,9 @@ func loadResult() *run.LoadResult {
 		IDPrefix: "load-abc-", Sent: 29990, TransportErrors: 4, Attacks: 3010, Dropped: 10,
 		ByStatus: map[int]int{403: 3000, 200: 26980, 400: 6},
 		P50US:    180, P90US: 420, P99US: 1500, MaxUS: 2_340_000, MaxLagUS: 950,
-		HeapStart: 3 << 20, HeapPeak: 9 << 20, HeapEnd: 5 << 20, MemPolls: 14, MemPollFailures: 1,
-		Duration: time.Minute, AchievedRPS: 499.8333,
+		HeapStart: 3 << 20, HeapPeak: 9 << 20, HeapEnd: 5 << 20, MemAsked: true, MemPolls: 14, MemPollFailures: 1,
+		Conflicting: 2,
+		Duration:    time.Minute, AchievedRPS: 499.8333,
 	}
 }
 
@@ -551,7 +552,10 @@ func TestLoadSection(t *testing.T) {
 		t.Fatalf("no load section in:\n%s", md)
 	}
 	contains(t, section,
-		"asked 500 requests per second, achieved 499.8 over 1m0s",
+		"asked 500 requests per second; 499.8 per second were sent and 499.8 per second answered over 1m0s",
+		"counts requests that ended in a transport error",
+		"and 2 because their sources disagree",
+		"14 of 30000 scheduled requests are not in these figures",
 		"64 workers",
 		"10.0% asked (seed 7)",
 		"3010 of 29990",
@@ -563,7 +567,7 @@ func TestLoadSection(t *testing.T) {
 		"p50 180 µs, p90 420 µs, p99 1.50 ms, max 2.34 s",
 		"not the firewall's decision latency",
 		"at most 0.8% above",
-		"950 µs",
+		"a request was sent at most 950 µs after its scheduled time",
 		"start 3.0 MiB, peak 9.0 MiB, end 5.0 MiB, growth +2.0 MiB",
 		"14 readings, 1 failed",
 		"Firewall decision latency: not read",
@@ -583,18 +587,30 @@ func TestLoadSectionSaysWhatIsMissing(t *testing.T) {
 	t.Parallel()
 	l := loadResult()
 	l.Interrupted, l.Cancelled, l.NotSent = true, 5, 2
-	l.HeapStart, l.HeapPeak, l.HeapEnd, l.MemPolls, l.MemPollFailures = 0, 0, 0, 0, 0
-	l.Decisions = &run.DecisionLatency{Records: 3000, Skipped: 2, Other: 7, Unreadable: 1, P50US: 12, P90US: 30, P99US: 61, MaxUS: 4100}
+	l.HeapStart, l.HeapPeak, l.HeapEnd, l.MemAsked, l.MemPolls, l.MemPollFailures = 0, 0, 0, false, 0, 0
+	l.Decisions = &run.DecisionLatency{Records: 3000, Requests: 2990, Skipped: 2, Other: 7, Unreadable: 1, P50US: 12, P90US: 30, P99US: 61, MaxUS: 4100}
 	md := Report{Load: l}.Markdown()
 	contains(t, md,
 		"The run was interrupted",
 		"5 requests were in flight",
 		"2 requests were refused by the client",
-		"Target heap: not read",
-		"Firewall decision latency: p50 12 µs, p90 30 µs, p99 61 µs, max 4.10 ms over 3000 decision records",
+		"Target heap: not read (no admin URL was given)",
+		"Firewall decision latency: p50 12 µs, p90 30 µs, p99 61 µs, max 4.10 ms over 3000 decision records, "+
+			"which cover 2990 of the 29986 answered requests",
+		"21 of 30007 scheduled requests are not in these figures",
 		"2 records of requests blocked because inspection failed",
 		"7 records of other runs", "1 unreadable line",
 	)
+
+	l.MemAsked = true
+	contains(t, Report{Load: l}.Markdown(), "Target heap: not read (the run was interrupted before the first reading)")
+
+	// Every scheduled request answered: nothing is missing from the percentiles.
+	l = loadResult()
+	l.Sent, l.Dropped, l.TransportErrors = 30000, 0, 0
+	if md := (Report{Load: l}).Markdown(); strings.Contains(md, "are not in these figures") {
+		t.Errorf("a run with every request answered says some are missing:\n%s", md)
+	}
 
 	// A heap that shrank, and a reading that failed.
 	l = loadResult()

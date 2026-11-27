@@ -74,8 +74,8 @@ func parseLoad(args []string, stderr io.Writer) (o loadOptions, help bool, err e
 		return o, false, fmt.Errorf("%w: --rps is required and must be 1 to %d", errUsage, runner.MaxLoadRPS)
 	case o.duration <= 0:
 		return o, false, fmt.Errorf("%w: --duration is required and must be above zero", errUsage)
-	case o.workers < 1:
-		return o, false, fmt.Errorf("%w: --workers must be at least 1", errUsage)
+	case o.workers < 1 || o.workers > runner.MaxLoadWorkers:
+		return o, false, fmt.Errorf("%w: --workers must be 1 to %d", errUsage, runner.MaxLoadWorkers)
 	case !(o.attackShare >= 0 && o.attackShare <= 1): // also refuses NaN
 		return o, false, fmt.Errorf("%w: --attack-share must be from 0 to 1", errUsage)
 	}
@@ -117,6 +117,7 @@ func runLoad(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
+	res.Conflicting = conflicting
 	// The target writes a decision before it answers, so the log is complete.
 	var logErr error
 	if o.decisions != "" {
@@ -136,7 +137,7 @@ func runLoad(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", o.out, err)
 	}
-	if err := summarizeLoad(stdout, o.out, res, conflicting); err != nil {
+	if err := summarizeLoad(stdout, o.out, res); err != nil {
 		return err
 	}
 	if res.Interrupted {
@@ -161,18 +162,18 @@ func readDecisionLatency(path, idPrefix string) (out *runner.DecisionLatency, er
 }
 
 // summarizeLoad prints the main figures of a load run.
-func summarizeLoad(w io.Writer, out string, res runner.LoadResult, conflicting int) error {
+func summarizeLoad(w io.Writer, out string, res runner.LoadResult) error {
 	interrupted := ""
 	if res.Interrupted {
 		interrupted = fmt.Sprintf("the run was interrupted with %d requests in flight\n", res.Cancelled)
 	}
-	_, err := fmt.Fprintf(w, "%ssent %d requests in %s (asked %d per second, achieved %.1f): "+
+	_, err := fmt.Fprintf(w, "%ssent %d requests in %s (asked %d per second, sent %.1f): "+
 		"%d transport errors, %d dropped because every worker was busy\n"+
 		"client round trip in microseconds: p50 %d, p90 %d, p99 %d, max %d\n"+
 		"left out %d conflicting cases and %d that cannot be sent\n"+
 		"wrote %s\n",
 		interrupted, res.Sent, res.Duration.Round(time.Millisecond), res.RPS, res.AchievedRPS,
 		res.TransportErrors, res.Dropped, res.P50US, res.P90US, res.P99US, res.MaxUS,
-		conflicting, res.Excluded, out)
+		res.Conflicting, res.Excluded, out)
 	return err
 }

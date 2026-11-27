@@ -18,6 +18,10 @@ const (
 	histBuckets = histExact + (histMaxBits-histSubBits-1)<<histSubBits
 )
 
+// PercentileError is the most a percentile of a load run can be above the true
+// one, as a share of it. See histogram.
+const PercentileError = 1.0 / (1 << histSubBits)
+
 // histogram counts non-negative values, microseconds here, in a fixed number
 // of buckets (3840, about 30 KiB), so that its size does not depend on how
 // many values it has seen.

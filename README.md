@@ -710,7 +710,7 @@ go run ./cmd/aegobench report --cases out/baseline.jsonl --results api-aware=out
 
 `bench/scripts/fetch-sources.sh` fetches the two pinned sources into `bench/.sources/` (it needs git, jq and network access, and runs nothing it fetches). `detect` and `load` refuse any host but a loopback one; remote mode is not built.
 
-`load` sends at fixed times whatever the target does: a request that is due while all `--workers` are busy is dropped and counted, never queued, so a slow target shows as dropped requests and a lower achieved rate. Its latency is the client's round trip (HTTP on both sides plus the connection), not the firewall's decision latency, which it reads from the decision log for the requests that left a record there. It does not send a case's own `Connection` header, uses no near-miss cases and writes no detection results. On one machine the generator and the target share the processors, so its numbers describe that machine at that moment.
+`load` sends at fixed times whatever the target does: a request that is due while all `--workers` are busy is dropped and counted, never queued, so a slow target shows as dropped requests and a lower sending rate. Its latency is the client's round trip (HTTP on both sides plus the connection), not the firewall's decision latency, which it reads from the decision log for the requests that left a record there. It does not send a case's own `Connection` header, uses no near-miss cases and writes no detection results. On one machine the generator and the target share the processors, so its numbers describe that machine at that moment.
 
 ## Status and roadmap
 

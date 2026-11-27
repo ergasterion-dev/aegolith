@@ -76,16 +76,24 @@ above. A request is sent at its scheduled time or dropped, never queued.
 		b.WriteString("\n**The run was interrupted: these are the figures of the part that ran.**\n")
 	}
 	answered := l.Sent - l.TransportErrors
-	fmt.Fprintf(b, "\n- Rate: asked %d requests per second, achieved %.1f over %s, with %d workers\n",
-		l.RPS, l.AchievedRPS, l.Duration.Round(time.Millisecond), l.Workers)
+	// Every scheduled request that the run reached ended in one of these.
+	scheduled := l.Sent + l.Dropped + l.Cancelled + l.NotSent
+	answeredRate := 0.0
+	if seconds := l.Duration.Seconds(); seconds > 0 {
+		answeredRate = float64(answered) / seconds
+	}
+	fmt.Fprintf(b, "\n- Rate: asked %d requests per second; %.1f per second were sent and %.1f per second answered "+
+		"over %s, with %d workers. The sending rate counts requests that ended in a transport error.\n",
+		l.RPS, l.AchievedRPS, answeredRate, l.Duration.Round(time.Millisecond), l.Workers)
 	fmt.Fprintf(b, "- Attack share: %.1f%% asked (seed %d); %d of %d sent requests (%s) were drawn from attack cases\n",
 		100*l.AttackShare, l.Seed, l.Attacks, l.Sent, percent(l.Attacks, l.Sent))
 	fmt.Fprintf(b, "- Cases: drawn from %d attack and %d legitimate cases; near-miss cases are never used; "+
-		"%d cases were left out before the run because the client cannot send them as given\n",
-		l.AttackCases, l.LegitCases, l.Excluded)
+		"%d cases were left out before the run because the client cannot send them as given and %d because "+
+		"their sources disagree on what to expect\n",
+		l.AttackCases, l.LegitCases, l.Excluded, l.Conflicting)
 	fmt.Fprintf(b, "- Sent: %d (%d answered, %d transport errors)\n", l.Sent, answered, l.TransportErrors)
 	fmt.Fprintf(b, "- Dropped: %d scheduled requests found every worker busy; nothing was sent for them, "+
-		"so they lower the achieved rate and have no latency\n", l.Dropped)
+		"so they lower the sending rate and have no latency\n", l.Dropped)
 	if l.Cancelled > 0 {
 		fmt.Fprintf(b, "- %d requests were in flight when the run was interrupted and are in no other count\n", l.Cancelled)
 	}
@@ -95,14 +103,19 @@ above. A request is sent at its scheduled time or dropped, never queued.
 	if answered > 0 {
 		fmt.Fprintf(b, "- Client round trip: p50 %s, p90 %s, p99 %s, max %s, from sending a request until its "+
 			"answer was read, over the %d answered requests. It includes the HTTP handling of both sides and the "+
-			"connection, so it is not the firewall's decision latency. A percentile is at most 0.8%% above the "+
-			"true value; the maximum is exact.\n",
-			micros(l.P50US), micros(l.P90US), micros(l.P99US), micros(l.MaxUS), answered)
+			"connection, so it is not the firewall's decision latency. A percentile is at most %.1f%% above the "+
+			"true value; the maximum is exact.",
+			micros(l.P50US), micros(l.P90US), micros(l.P99US), micros(l.MaxUS), answered, 100*run.PercentileError)
+		if missing := scheduled - answered; missing > 0 {
+			fmt.Fprintf(b, " %d of %d scheduled requests are not in these figures: they were dropped or had no answer.",
+				missing, scheduled)
+		}
+		b.WriteString("\n")
 	} else {
 		b.WriteString("- Client round trip: no request was answered\n")
 	}
-	fmt.Fprintf(b, "- Schedule: a request was sent or dropped at most %s after its scheduled time\n", micros(l.MaxLagUS))
-	fmt.Fprintf(b, "- Firewall decision latency: %s\n", decisionLatency(l.Decisions))
+	fmt.Fprintf(b, "- Schedule: a request was sent at most %s after its scheduled time\n", micros(l.MaxLagUS))
+	fmt.Fprintf(b, "- Firewall decision latency: %s\n", decisionLatency(l.Decisions, answered))
 	fmt.Fprintf(b, "- Target heap: %s\n", heap(l))
 
 	b.WriteString("\n")
@@ -117,7 +130,7 @@ above. A request is sent at its scheduled time or dropped, never queued.
 }
 
 // decisionLatency describes the firewall's own latency of a load run.
-func decisionLatency(d *run.DecisionLatency) string {
+func decisionLatency(d *run.DecisionLatency, answered int) string {
 	if d == nil {
 		return "not read (no decision log was given)"
 	}
@@ -125,19 +138,23 @@ func decisionLatency(d *run.DecisionLatency) string {
 	if d.Records == 0 {
 		s = "no decision record of this run has a latency"
 	} else {
-		s = fmt.Sprintf("p50 %s, p90 %s, p99 %s, max %s over %d decision records",
-			micros(d.P50US), micros(d.P90US), micros(d.P99US), micros(d.MaxUS), d.Records)
+		s = fmt.Sprintf("p50 %s, p90 %s, p99 %s, max %s over %d decision records, which cover %d of the %d "+
+			"answered requests",
+			micros(d.P50US), micros(d.P90US), micros(d.P99US), micros(d.MaxUS), d.Records, d.Requests, answered)
 	}
 	s += ". The firewall leaves a record only for a request it blocked, matched a rule on in monitor mode " +
-		"or failed on, so requests it passed are not in this figure"
+		"or failed on, so the requests it passed are not in this figure"
 	return s + fmt.Sprintf("; left out: %d records of requests blocked because inspection failed, which carry no "+
 		"latency, %d records of other runs, %d unreadable lines", d.Skipped, d.Other, d.Unreadable)
 }
 
 // heap describes the readings of the target's heap during a load run.
 func heap(l run.LoadResult) string {
-	if l.MemPolls == 0 {
+	switch {
+	case !l.MemAsked:
 		return "not read (no admin URL was given)"
+	case l.MemPolls == 0:
+		return "not read (the run was interrupted before the first reading)"
 	}
 	size := func(v uint64) string {
 		if v == 0 {

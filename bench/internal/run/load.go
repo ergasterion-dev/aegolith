@@ -23,6 +23,8 @@ const (
 	// MaxLoadRPS is the highest rate Load takes. It keeps the arithmetic of
 	// the schedule within an int64.
 	MaxLoadRPS = 1_000_000
+	// MaxLoadWorkers is the most requests Load keeps in flight.
+	MaxLoadWorkers = 1 << 16
 	// memPollInterval is how often the target's memory is read during a run.
 	memPollInterval = 5 * time.Second
 	// memPollTimeout bounds one reading of the target's memory.
@@ -70,6 +72,9 @@ type LoadResult struct {
 	// drawn from. Excluded counts the attack and legitimate cases left out of
 	// them before the run because the client cannot send them as given.
 	AttackCases, LegitCases, Excluded int
+	// Conflicting is for the caller that merged the cases: how many it left
+	// out because their sources disagree on what to expect. Load leaves it 0.
+	Conflicting int
 	// IDPrefix starts the X-Request-Id of every request of this run.
 	IDPrefix string
 
@@ -96,16 +101,19 @@ type LoadResult struct {
 	// the firewall's decision latency. The percentiles are at most 1/128
 	// above the true ones (see histogram); MaxUS is exact.
 	P50US, P90US, P99US, MaxUS int64
-	// MaxLagUS is the longest a place of the schedule was acted on after its
-	// time. It measures the generator, not the target.
+	// MaxLagUS is the longest a request was sent after its scheduled time,
+	// taken by its worker just before sending. It measures the generator, not
+	// the target.
 	MaxLagUS int64
 
 	// The target's heap in bytes (runtime.MemStats.HeapAlloc, which includes
 	// garbage not yet collected): at the first reading, the highest reading
 	// and the last. 0 means that reading failed or none was made.
 	HeapStart, HeapPeak, HeapEnd uint64
-	// MemPolls counts the readings of the target's memory, MemPollFailures
-	// those of them that failed.
+	// MemAsked says that an admin URL was given. MemPolls counts the readings
+	// of the target's memory, MemPollFailures those of them that failed. A
+	// reading cut short by an interrupt is not counted.
+	MemAsked                  bool `json:",omitempty"`
 	MemPolls, MemPollFailures int
 
 	// Duration is how long the schedule ran: the time asked for, or the time
@@ -174,6 +182,7 @@ func Load(ctx context.Context, c *http.Client, o LoadOptions) (LoadResult, error
 
 	var mem *memPoller
 	if o.AdminURL != nil {
+		res.MemAsked = true
 		mem = &memPoller{c: c, url: (&url.URL{Scheme: o.AdminURL.Scheme, Host: o.AdminURL.Host, Path: "/memstats"}).String()}
 		res.HeapStart = mem.poll(ctx, memPollTimeout)
 	}
@@ -210,6 +219,7 @@ func Load(ctx context.Context, c *http.Client, o LoadOptions) (LoadResult, error
 	}
 
 	finished := true
+schedule:
 	for place := range total {
 		at := start.Add(placeOffset(place, int64(o.RPS)))
 		if !until(at) {
@@ -219,17 +229,24 @@ func Load(ctx context.Context, c *http.Client, o LoadOptions) (LoadResult, error
 		// Drawn for a dropped place too: which case a place gets must not
 		// depend on how fast the target is.
 		one, attack := pick.next()
-		res.MaxLagUS = max(res.MaxLagUS, time.Since(at).Microseconds())
 		select {
 		case free <- struct{}{}:
 		default:
 			res.Dropped++
 			continue
 		}
+		// A worker that became free because the run was cancelled sends
+		// nothing more.
+		if ctx.Err() != nil {
+			<-free
+			finished = false
+			break schedule
+		}
 		inFlight.Add(1)
 		go func() {
 			defer inFlight.Done()
 			defer func() { <-free }()
+			stats.starting(time.Since(at))
 			status, latency, err := Send(ctx, c, o.Base, one, idPrefix+strconv.FormatInt(place, 10))
 			stats.record(status, latency, err, attack, ctx.Err() != nil)
 		}()
@@ -270,8 +287,8 @@ func checkLoad(o LoadOptions) (total int64, err error) {
 		return 0, errors.New("load: the admin URL is not http or https with a host")
 	case o.RPS < 1 || o.RPS > MaxLoadRPS:
 		return 0, fmt.Errorf("load: the rate must be 1 to %d requests per second", MaxLoadRPS)
-	case o.Workers < 1:
-		return 0, errors.New("load: at least one worker is needed")
+	case o.Workers < 1 || o.Workers > MaxLoadWorkers:
+		return 0, fmt.Errorf("load: the number of workers must be 1 to %d", MaxLoadWorkers)
 	case o.Duration <= 0:
 		return 0, errors.New("load: the duration must be above zero")
 	case !(o.AttackShare >= 0 && o.AttackShare <= 1): // also refuses NaN
@@ -384,11 +401,19 @@ func (p *picker) next() (c cases.Case, attack bool) {
 type loadStats struct {
 	mu                                       sync.Mutex
 	sent, errors, attacks, notSent, canceled int
+	lagUS                                    int64
 	byStatus                                 map[int]int
 	hist                                     histogram
 }
 
 func newLoadStats() *loadStats { return &loadStats{byStatus: map[int]int{}} }
+
+// starting notes how long after its scheduled time a request is sent.
+func (s *loadStats) starting(lag time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lagUS = max(s.lagUS, lag.Microseconds())
+}
 
 // record counts the end of one request. cancelled says that the run had been
 // cancelled by then, which is taken as the cause of an error.
@@ -423,7 +448,7 @@ func (s *loadStats) into(res *LoadResult) {
 	res.NotSent, res.Cancelled = s.notSent, s.canceled
 	res.ByStatus = s.byStatus
 	res.P50US, res.P90US, res.P99US = s.hist.percentile(50), s.hist.percentile(90), s.hist.percentile(99)
-	res.MaxUS = s.hist.max
+	res.MaxUS, res.MaxLagUS = s.hist.max, s.lagUS
 }
 
 // memPoller reads the target's heap. It is used by one goroutine at a time.
@@ -502,8 +527,9 @@ func (m *memPoller) read(ctx context.Context) (uint64, error) {
 // on: a request it passed has none, so this is not the latency of all
 // requests.
 type DecisionLatency struct {
-	// Records is the number of decision records the figures are over.
-	Records int
+	// Records is the number of decision records the figures are over,
+	// Requests the number of requests they belong to.
+	Records, Requests int
 	// Skipped counts the records of requests blocked because inspecting them
 	// failed: they carry no latency.
 	Skipped int
@@ -525,6 +551,7 @@ func ReadDecisionLatency(r io.Reader, idPrefix string) (DecisionLatency, error) 
 	out := DecisionLatency{Unreadable: unreadable}
 	var hist histogram
 	for id, ds := range decisions {
+		timed := false
 		for _, d := range ds {
 			switch {
 			case !strings.HasPrefix(id, idPrefix):
@@ -533,8 +560,12 @@ func ReadDecisionLatency(r io.Reader, idPrefix string) (DecisionLatency, error) 
 				out.Skipped++
 			default:
 				out.Records++
+				timed = true
 				hist.add(d.LatencyUS)
 			}
+		}
+		if timed {
+			out.Requests++
 		}
 	}
 	out.P50US, out.P90US, out.P99US = hist.percentile(50), hist.percentile(90), hist.percentile(99)

@@ -219,7 +219,7 @@ func readLoadResult(path string) (*runner.LoadResult, error) {
 		return nil, errors.New("trailing data after the JSON object")
 	}
 	counts := []int{res.Sent, res.TransportErrors, res.Attacks, res.Dropped, res.NotSent, res.Cancelled,
-		res.AttackCases, res.LegitCases, res.Excluded, res.MemPolls, res.MemPollFailures}
+		res.AttackCases, res.LegitCases, res.Excluded, res.Conflicting, res.MemPolls, res.MemPollFailures}
 	if res.RPS < 1 || res.Workers < 1 || res.Duration <= 0 || slices.ContainsFunc(counts, func(n int) bool { return n < 0 }) {
 		return nil, errors.New("not a load result: it has no rate, workers or duration, or a negative count")
 	}

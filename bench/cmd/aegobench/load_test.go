@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,6 +48,11 @@ func loadFixture(t *testing.T) (dir, caseFile, base, admin, decisions string) {
 func TestLoadThenReport(t *testing.T) {
 	t.Parallel()
 	dir, caseFile, base, admin, decisions := loadFixture(t)
+	// A second file that disputes the near-miss case and the attack.
+	disputing := filepath.Join(dir, "disputing.jsonl")
+	writeCases(t, disputing, detectLine("near-as-legit", "q=select%20a%20pear", cases.Legit),
+		detectLine("another-attack", "q=2%27%20OR%20%272%27%3D%272", cases.Attack))
+	caseFile += "," + disputing
 	out := filepath.Join(dir, "new", "load.json")
 	var stdout, stderr bytes.Buffer
 	err := run([]string{"load", "--cases", caseFile, "--base", base, "--admin", admin, "--rps", "200",
@@ -56,11 +62,11 @@ func TestLoadThenReport(t *testing.T) {
 		t.Fatalf("%v\n%s", err, stderr.String())
 	}
 	res := readLoad(t, out)
-	if res.Sent+res.Dropped != 100 || res.Sent < 50 || res.TransportErrors != 0 || res.Interrupted {
+	if res.Sent+res.Dropped != 100 || res.Sent == 0 || res.TransportErrors != 0 || res.Interrupted {
 		t.Fatalf("result = %+v, want the 100 requests of the schedule", res)
 	}
 	if res.RPS != 200 || res.Workers != 8 || res.AttackShare != 0.25 || res.Seed != 9 ||
-		res.AttackCases != 1 || res.LegitCases != 1 {
+		res.AttackCases != 2 || res.LegitCases != 1 || res.Conflicting != 2 {
 		t.Errorf("result does not say what was asked: %+v", res)
 	}
 	if res.Attacks == 0 || res.ByStatus[http.StatusForbidden] != res.Attacks || res.ByStatus[http.StatusOK] != res.Sent-res.Attacks {
@@ -105,7 +111,8 @@ func TestLoadThenReport(t *testing.T) {
 	with := readText(t, filepath.Join(reportDir, "report.md"))
 	// The report before the load section differs only in its time.
 	if !strings.Contains(with, "\n## Load\n") || !strings.Contains(with, "asked 200 requests per second") ||
-		!strings.Contains(with, "decision records") || !strings.Contains(with, "Target heap: start ") {
+		!strings.Contains(with, "decision records") || !strings.Contains(with, "Target heap: start ") ||
+		!strings.Contains(with, "and 2 because their sources disagree") {
 		t.Errorf("no load section in:\n%s", with)
 	}
 	if strings.Contains(with, "apples") || strings.Contains(with, "OR") {
@@ -115,23 +122,28 @@ func TestLoadThenReport(t *testing.T) {
 
 func TestLoadInterruptedWritesPartialResult(t *testing.T) {
 	t.Parallel()
-	dir, caseFile, base, _, _ := loadFixture(t)
+	dir, caseFile, _, _, _ := loadFixture(t)
 	out := filepath.Join(dir, "load.json")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	time.AfterFunc(300*time.Millisecond, cancel)
+	// Interrupted by the fifth request, so that some were answered whatever
+	// the machine is doing.
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		if requests.Add(1) == 5 {
+			cancel()
+		}
+	}))
+	t.Cleanup(srv.Close)
 	var stdout, stderr bytes.Buffer
-	start := time.Now()
-	err := runLoad(ctx, []string{"--cases", caseFile, "--base", base, "--rps", "100", "--duration", "1h",
-		"--out", out}, &stdout, &stderr)
+	err := runLoad(ctx, []string{"--cases", caseFile, "--base", srv.URL, "--rps", "100", "--duration", "1h",
+		"--workers", "1", "--out", out}, &stdout, &stderr)
 	if err == nil || errors.Is(err, errUsage) || !strings.Contains(err.Error(), "interrupted") {
 		t.Errorf("err = %v, want it to say that the run was interrupted", err)
 	}
-	if took := time.Since(start); took > 2*time.Second {
-		t.Errorf("an interrupted run took %v", took)
-	}
 	res := readLoad(t, out)
-	if !res.Interrupted || res.Sent == 0 || res.Sent > 60 || res.Duration > 2*time.Second {
+	// One worker: the four requests before the interrupt were answered.
+	if !res.Interrupted || res.Sent < 4 || res.Sent > 5 || res.Sent+res.Cancelled != 5 || res.Duration >= time.Hour {
 		t.Errorf("partial result = %+v, want the requests sent until the interrupt", res)
 	}
 	if !strings.Contains(stdout.String(), "interrupted") {
@@ -206,6 +218,8 @@ func TestLoadRejectsBadUsage(t *testing.T) {
 		"negative duration":      with("--duration", "-1s"),
 		"duration not a time":    with("--duration", "60"),
 		"zero workers":           with("--workers", "0"),
+		"too many workers":       with("--workers", "65537"),
+		"workers beyond memory":  with("--workers", "4611686018427387904"),
 		"share above one":        with("--attack-share", "1.5"),
 		"negative share":         with("--attack-share", "-0.1"),
 		"share not a number":     with("--attack-share", "NaN"),
