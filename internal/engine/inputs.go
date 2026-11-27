@@ -47,10 +47,10 @@ import (
 //     declared, the `:ep` handler answers `GET /actuator/health`).
 //  2. The same request as `HEAD` for a `GET` route, and in other letter
 //     case when routes fold case (`/API/V1/Stores/7/Actuator/Health`). A
-//     trailing slash the template does not have, and `%2F` in any case in
-//     a parameter or wildcard segment, excuse nothing: ServeMux, Fiber
-//     `StrictRouting` and Fiber `UnescapePath` can send those to another
-//     handler.
+//     trailing slash on only one of the template and the request, and
+//     `%2F` in any case in a parameter or wildcard segment, excuse
+//     nothing: ServeMux, Fiber `StrictRouting` and Fiber `UnescapePath`
+//     can send those to another handler.
 func (s *state) checkProbeAndAgent() {
 	if h, ok := detect.ProbePathExcept(s.path, s.declaredLiteral()); ok {
 		s.hit(h, model.LocPath, "path", s.path)
@@ -74,24 +74,15 @@ func (s *state) declaredLiteral() func(start, end int) bool {
 		return nil
 	}
 	// Two forms excuse nothing, because a common Go router may send them
-	// to another handler than the declared one: a trailing slash the
-	// template does not have (ServeMux, Fiber StrictRouting), and an
-	// encoded '/' in a parameter or wildcard segment (Fiber UnescapePath
-	// splits on it). They are not all such forms.
-	//
-	// Known gap, found after the v0.1.0-alpha.6 tag: a declared template
-	// that ends in `/`, requested without that slash, is excused: with
-	// `GET /actuator/health/` declared, `GET /actuator/health` is not
-	// flagged (alpha.5 flagged it), and another handler may answer it.
-	// Fiber with `StrictRouting` serves it with a later `/actuator/:ep`,
-	// `/actuator/*` or catch-all handler, if there is one, when the
-	// template has no parameter; Go's `ServeMux` serves it with a
-	// pattern that matches the slashless path itself, such as
-	// `/actuator/{ep}`. If another handler could answer that path,
-	// register the route and declare its template without the final
-	// slash.
-	raw := s.req.RawPath
-	if len(raw) > 1 && strings.HasSuffix(raw, "/") && !strings.HasSuffix(s.route.Route.Path, "/") {
+	// to another handler than the declared one: a final '/' on only one
+	// of the template and the request, added or dropped (ServeMux, Fiber
+	// StrictRouting), and an encoded '/' in a parameter or wildcard
+	// segment (Fiber UnescapePath splits on it). They are not all such
+	// forms. The path "/" has no final slash to add or drop.
+	raw, tmpl := s.req.RawPath, s.route.Route.Path
+	added := len(raw) > 1 && strings.HasSuffix(raw, "/") && !strings.HasSuffix(tmpl, "/")
+	dropped := len(tmpl) > 1 && strings.HasSuffix(tmpl, "/") && !strings.HasSuffix(raw, "/")
+	if added || dropped {
 		return nil
 	}
 	for i, seg := range policy.Segments(raw) {

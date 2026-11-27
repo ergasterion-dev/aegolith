@@ -185,9 +185,49 @@ func TestDeclaredRouteAcceptedMisses(t *testing.T) {
 	}
 }
 
+// TestSlashTemplateRequestedWithoutSlash: a template that ends in '/'
+// excuses its literal text only when the request ends in '/' too, since
+// ServeMux and Fiber StrictRouting can send the slashless form to another
+// handler. The template "/" is not affected.
+func TestSlashTemplateRequestedWithoutSlash(t *testing.T) {
+	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, UnknownRoute: model.ActionMonitor, Routes: []policy.Route{
+		{Method: "GET", Path: "/"},
+		{Method: "GET", Path: "/actuator/health/"},
+		{Method: "GET", Path: "/api/v1/hubs/:id/actuator/health/"},
+	}})
+	for _, base := range []string{"/actuator/health", "/api/v1/hubs/7/actuator/health"} {
+		for _, tc := range []struct {
+			method, path string
+			fold, probe  bool
+		}{
+			{"GET", base, false, true},
+			{"HEAD", base, false, true},
+			{"GET", strings.ToUpper(base), true, true},
+			{"GET", base + "/", false, false},
+			{"HEAD", base + "/", false, false},
+			{"GET", strings.ToUpper(base) + "/", true, false},
+		} {
+			ids := scannerRules(e.Inspect(&model.Request{Method: tc.method, RawPath: tc.path,
+				Header: http.Header{}, CaseInsensitiveRoutes: tc.fold}))
+			if got := len(ids) != 0; got != tc.probe {
+				t.Errorf("%s %q: scanner rules %v, want reported %t", tc.method, tc.path, ids, tc.probe)
+			}
+		}
+	}
+
+	s := &state{e: e, req: model.Request{Method: "GET", RawPath: "/"}, path: "/"}
+	s.matchRoute()
+	if !s.routed || s.declaredLiteral() == nil {
+		t.Errorf(`template "/", request "/": routed %t, excuse missing`, s.routed)
+	}
+	if ids := scannerRules(e.Inspect(&model.Request{Method: "GET", RawPath: "/", Header: http.Header{}})); len(ids) != 0 {
+		t.Errorf(`template "/", request "/": %v`, ids)
+	}
+}
+
 // TestDeclaredRouteNotExcused pins the forms that the accepted-miss list
-// says excuse nothing: a trailing slash the template lacks and %2F (any
-// case) in a parameter or wildcard segment.
+// says excuse nothing: a trailing slash on only one of the template and the
+// request, and %2F (any case) in a parameter or wildcard segment.
 func TestDeclaredRouteNotExcused(t *testing.T) {
 	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, UnknownRoute: model.ActionMonitor, Routes: []policy.Route{
 		{Method: "GET", Path: "/api/v1/stores/:id/actuator/health"},

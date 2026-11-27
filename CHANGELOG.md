@@ -19,6 +19,11 @@
 - Meant for base64-encoded text: binary content would be scanned as text and can block.
 - Nothing is decoded outside declared fields, so a configuration without these types decides as before.
 
+### A declared template that ends in `/` no longer excuses the path without it
+
+- With `GET /actuator/health/` declared, `GET /actuator/health` was not flagged by the scanner path rules (a gap in alpha.6, found after the tag; alpha.5 flagged it), although another handler may answer it. `AEG-SCANNER-002` and `AEG-SCANNER-003` report it again, also as `HEAD` and, when routes fold case, in another letter case. The form with the slash stays clear, and so does the template `/`.
+- **False positives to expect:** a client that drops the final slash of such a template, where the text is a probe name or a backup file, is flagged and, in enforce mode, blocked, also where the declared handler would serve the request (Fiber without `StrictRouting`, or with a parameter in the template) or `ServeMux` would redirect it to the declared form. If your clients send the form without the slash, declare the template without it (the form with the slash is then flagged). To allow both, exclude the rule on that route: `{"rule": "AEG-SCANNER-002", "route": "GET /actuator/health/", "field": "path"}` (the rule is then off for the path of that whole route, parameters included).
+
 ## v0.1.0-alpha.6
 
 2026-11-26. Fixes the false positives found by an external validation of alpha.5 (public attack payload lists and benign text) and closes several cheap recall gaps. Corpus: 230 attacks (226 blocked generic, 227 API-aware) and 195 legitimate requests, 0 false positives (was 137 and 130). **Read [Changes in alpha.6](docs/threat-model.md#changes-in-alpha6-and-what-they-cost) and [Known gaps found in the alpha.6 review](docs/threat-model.md#known-gaps-found-in-the-alpha6-review) before upgrading:** every cost and accepted miss is listed there.
@@ -59,7 +64,7 @@ Excluding `AEG-SQLI-001` or `AEG-SSTI-001` on a field leaves the new rules on; e
 
 ### Known gap found after the core tag
 
-- **Declared templates that end in `/` (new in alpha.6).** A declared template that ends in `/`, requested without that slash, is excused: with `GET /actuator/health/` declared, `GET /actuator/health` is not flagged (alpha.5 flagged it), and another handler may answer it. Fiber with `StrictRouting` serves it with a later `/actuator/:ep`, `/actuator/*` or catch-all handler, if there is one, when the template has no parameter; Go's `ServeMux` serves it with a pattern that matches the slashless path itself, such as `/actuator/{ep}`. If another handler could answer that path, register the route and declare its template without the final slash. See [Known gaps](docs/threat-model.md#known-gaps-found-in-the-alpha6-review).
+- **Declared templates that end in `/` (new in alpha.6).** A declared template that ends in `/`, requested without that slash, is excused: with `GET /actuator/health/` declared, `GET /actuator/health` is not flagged (alpha.5 flagged it), and another handler may answer it. Fiber with `StrictRouting` serves it with a later `/actuator/:ep`, `/actuator/*` or catch-all handler, if there is one, when the template has no parameter; Go's `ServeMux` serves it with a pattern that matches the slashless path itself, such as `/actuator/{ep}`. If another handler could answer that path, register the route and declare its template without the final slash. Fixed after the tag; see [Unreleased](#unreleased).
 
 ### Performance
 

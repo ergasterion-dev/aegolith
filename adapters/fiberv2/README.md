@@ -66,13 +66,18 @@ case-insensitive routing another letter case is excused too. Two forms excuse
 nothing, because Fiber settings change which handler serves them: a trailing
 slash the template does not have (without `StrictRouting` Fiber serves it
 with the same handler, so such a health check stays blocked) and `%2F` in a
-parameter or wildcard segment (`UnescapePath` splits on it). Not every such
-form is covered: a declared template that ends in `/`, requested without that
-slash, is excused, and with `StrictRouting` a template without parameters is
-then served by a later `:name`, `*` or catch-all handler, if there is one (see
-[known gaps](../../docs/threat-model.md#known-gaps-found-in-the-alpha6-review)).
-If that could happen, register the route and declare its template without the
-final slash. See the
+parameter or wildcard segment (`UnescapePath` splits on it).
+
+Core `v0.1.0-alpha.6` still excuses a declared template that ends in `/`,
+requested without that slash, and with `StrictRouting` a template without
+parameters is then served by a later `:name`, `*` or catch-all handler, if
+there is one. With that version, if that could happen, register the route and
+declare its template without the final slash. The fix on core `main` after
+alpha.6 ([changelog](../../CHANGELOG.md#unreleased)) reports that request too,
+also where Fiber serves it with the declared handler (without `StrictRouting`,
+or with a parameter in the template).
+
+See the
 [threat model](../../docs/threat-model.md#changes-in-alpha6-and-what-they-cost)
 for this and every other change in alpha.6.
 
