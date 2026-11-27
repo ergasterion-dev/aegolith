@@ -97,9 +97,14 @@ func TestMatchedPartsAddUpAndAreShown(t *testing.T) {
 	// The report says what the five parts are, and what they cannot show.
 	contains(t, unwrapped(md),
 		"SQLI, XSS, CMDI, CODEI, LDAP, SSTI, JNDI, CRLF, LFI, RFI, SSRF, XXE, NOSQL, PPOLL or SESSION",
-		"AEG-PROTO-*", "AEG-SCHEMA-*", "AEG-SCANNER-*",
+		`AEG-PROTO-\*`, `AEG-SCHEMA-\*`, `AEG-SCANNER-\*`,
 		"the first blocking match ends the inspection",
 		"does not say that no content rule would have matched")
+	// An asterisk left as it is would be read as the start of emphasis.
+	bare := strings.ReplaceAll(matchedExplanation(), `\*`, "")
+	if strings.Contains(bare, "*") {
+		t.Errorf("an asterisk is not escaped:\n%s", bare)
+	}
 	for _, name := range []string{"secret-attack", "secret-legit", "secret-payload"} {
 		if strings.Contains(md, name) {
 			t.Errorf("a held-out case is named (%q)", name)

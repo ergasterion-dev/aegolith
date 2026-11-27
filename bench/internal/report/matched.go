@@ -123,13 +123,14 @@ func matchedExplanation() string {
 	return fmt.Sprintf(`
 Each detection, of an attack or of a legitimate request, is also counted by what
 matched, from the rule IDs (AEG-family-number) of the case; the five parts add up
-to the detections. Content rule: at least one rule of the families %s or %s,
+to the detections. Content rule: at least one rule of the families
+%s or %s,
 which look for an attack in what a request says. The other four parts hold the
-cases without a content rule, route rules aside. Protocol only (AEG-PROTO-*):
+cases without a content rule, route rules aside. Protocol only (AEG-PROTO-\*):
 checks of the method, content type, body size, control characters, raw path and
 transfer encoding, the limits of an inspection and a body that cannot be parsed.
-Schema only (AEG-SCHEMA-*): a declared field of the wrong type, or a field that
-is not declared. Scanner only (AEG-SCANNER-*): a scanner's User-Agent, or a probe
+Schema only (AEG-SCHEMA-\*): a declared field of the wrong type, or a field that
+is not declared. Scanner only (AEG-SCANNER-\*): a scanner's User-Agent, or a probe
 or backup path. Anything else: more than one of these three, a block by a route
 rule alone, or a block without a rule.
 
