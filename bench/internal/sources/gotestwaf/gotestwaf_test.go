@@ -84,8 +84,7 @@ func TestImportFixtureTree(t *testing.T) {
 		"attacks/pair/2/Base64/JSONBody":          cases.Attack,
 		"attacks/odd/1/Plain/XMLBody":             cases.Attack,
 		"api/raw/1/Plain/RawRequest":              cases.Attack,
-		"api/raw/1/Plain/GraphQL#2":               cases.Attack,
-		"api/raw/1/Plain/GraphQL#3":               cases.Attack,
+		"api/soap/1/Plain/SOAPBody":               cases.Attack,
 		"false-pos/texts/1/URL/URLParam":          cases.Legit,
 		"false-pos/texts/1/URL/HTMLForm":          cases.Legit,
 		"false-pos/texts/1/URL/HTMLMultipartForm": cases.Legit,
@@ -111,6 +110,8 @@ func TestImportFixtureTree(t *testing.T) {
 	}
 
 	wantSkips := map[string]string{
+		"api/raw/1/Plain/GraphQL#2":    "GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check",
+		"api/raw/1/Plain/GraphQL#3":    "GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check",
 		"attacks/odd/1/Plain/Teleport": "placeholder is not one of the tool's",
 		"attacks/odd/1/Plain/gRPC":     "gRPC placeholder: the tool makes a gRPC call, not a plain HTTP request",
 		"attacks/odd/1/Rot13/XMLBody":  "encoder is not one of the tool's",
@@ -197,14 +198,12 @@ func TestImportFixtureRequests(t *testing.T) {
 		!maps.Equal(l.Headers, with(map[string]string{"Content-Type": "text/plain", "X-Note": "note id=1 union select 1"})) {
 		t.Errorf("RawRequest: %+v", l)
 	}
-	l = byID["api/raw/1/Plain/GraphQL#2"]
-	if l.Method != "GET" || l.Path != "/graphql" || l.RawQuery != "query=id=1 union select 1" || l.Placement != "query" {
-		t.Errorf("GraphQL GET: %+v", l)
-	}
-	l = byID["api/raw/1/Plain/GraphQL#3"]
-	if l.Method != "POST" || l.Path != "/graphql" || l.Body != "id=1 union select 1" || l.Placement != "body" ||
-		!maps.Equal(l.Headers, defaults) {
-		t.Errorf("GraphQL POST: %+v", l)
+	// The envelope and the SOAPAction value come from the tree.
+	l = byID["api/soap/1/Plain/SOAPBody"]
+	body := regexp.MustCompile("^<Envelope xmlns=\"urn:fixture:envelope\">\n\t<Body><(ab[0-9a-f]{10})><string>a&lt;b</string></(ab[0-9a-f]{10})></Body>\n</Envelope>$")
+	if m := body.FindStringSubmatch(l.Body); m == nil || m[1] != m[2] || l.Method != "POST" || l.Path != "/" ||
+		!maps.Equal(l.Headers, with(map[string]string{"Content-Type": "text/xml", "Soapaction": `"urn:fixture:action"`})) {
+		t.Errorf("SOAPBody: %+v", l)
 	}
 }
 
@@ -297,22 +296,8 @@ func place(p placeholder, payload string) (cases.Line, string) {
 	return req.line(testDefaults, p.name == "UserAgent")
 }
 
-const wantSOAP = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-	"<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\"\n" +
-	"\txmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n" +
-	"\t<soapenv:Header>\n" +
-	"\t\t<ns1:RequestHeader soapenv:actor=\"http://schemas.xmlsoap.org/soap/actor/next\"\n" +
-	"\t\t\tsoapenv:mustUnderstand=\"0\" xmlns:ns1=\"https://www.google.com/apis/ads/publisher/v202002\">\n" +
-	"\t\t</ns1:RequestHeader>\n" +
-	"\t</soapenv:Header>\n" +
-	"\t<soapenv:Body>\n" +
-	"\t\t<getAdUnitsByStatement xmlns=\"https://www.google.com/apis/ads/publisher/v202002\">\n" +
-	"\t\t\t<filterStatement>\n" +
-	"\t\t\t\t<abababababab><string>a b&amp;c</string></abababababab>\n" +
-	"\t\t\t</filterStatement>\n" +
-	"\t\t</getAdUnitsByStatement>\n" +
-	"\t</soapenv:Body>\n" +
-	"</soapenv:Envelope>"
+// testEnvelope is a SOAP envelope as the importer reads one from a tree.
+var testEnvelope = &soapEnvelope{parts: [4]string{"<e>\n\t<", ">", "</", ">\n</e>"}, action: `"urn:test:action"`}
 
 func TestPlaceholders(t *testing.T) {
 	t.Parallel()
@@ -340,16 +325,15 @@ func TestPlaceholders(t *testing.T) {
 			map[string]string{"Content-Type": "application/json"}}},
 		{placeholder{name: "RequestBody"}, want{"POST", "/", "", payload, "body", nil}},
 		// The value is encoded once more, as an XML element.
-		{placeholder{name: "SOAPBody"}, want{"POST", "/", "", wantSOAP, "body", map[string]string{
-			"Content-Type": "text/xml", "Soapaction": `"http://schemas.xmlsoap.org/soap/actor/next"`}}},
+		{placeholder{name: "SOAPBody", soap: testEnvelope}, want{"POST", "/", "",
+			"<e>\n\t<abababababab><string>a b&amp;c</string></abababababab>\n</e>", "body",
+			map[string]string{"Content-Type": "text/xml", "Soapaction": `"urn:test:action"`}}},
 		{placeholder{name: "URLParam"}, want{"GET", "/", "ababababab=a b&c", "", "query", nil}},
 		// The tool's HTTP client escapes a blank in a path, but not in a query.
 		{placeholder{name: "URLPath"}, want{"GET", "/a%20b&c", "", "", "path", nil}},
 		{placeholder{name: "UserAgent"}, want{"GET", "/", "", "", "header", map[string]string{"User-Agent": payload}}},
 		{placeholder{name: "XMLBody"}, want{"POST", "/", "", payload, "body",
 			map[string]string{"Content-Type": "application/xml"}}},
-		{placeholder{name: "GraphQL", method: "GET"}, want{"GET", "/graphql", "query=a b&c", "", "query", nil}},
-		{placeholder{name: "GraphQL", method: "POST"}, want{"POST", "/graphql", "", payload, "body", nil}},
 		{placeholder{name: "RawRequest", raw: &rawConfig{
 			method: "PATCH", path: "v1/{{payload}}?q={{payload}}", body: "<{{payload}}|{{payload}}>",
 			headers: []header{{"x-first", "{{payload}}"}, {"Content-Type", "text/plain"}},
@@ -359,14 +343,14 @@ func TestPlaceholders(t *testing.T) {
 	for _, tt := range tests {
 		l, reason := place(tt.p, payload)
 		if reason != "" {
-			t.Errorf("%s %s: skipped: %s", tt.p.name, tt.p.method, reason)
+			t.Errorf("%s: skipped: %s", tt.p.name, reason)
 			continue
 		}
 		headers := map[string]string{"Accept": "*/*", "Accept-Encoding": "br", "User-Agent": "agent/1"}
 		maps.Copy(headers, tt.want.headers)
 		got := want{l.Method, l.Path, l.RawQuery, l.Body, l.Placement, l.Headers}
 		if !reflect.DeepEqual(got, want{tt.want.method, tt.want.path, tt.want.query, tt.want.body, tt.want.placement, headers}) {
-			t.Errorf("%s %s:\n got %+v\nwant %+v with the defaults", tt.p.name, tt.p.method, got, tt.want)
+			t.Errorf("%s:\n got %+v\nwant %+v with the defaults", tt.p.name, got, tt.want)
 		}
 		if l.ContentType != "" || l.BodyBase64 != "" || len(l.Query) != 0 {
 			t.Errorf("%s: content type %q, body_base64 %q, query %v", tt.p.name, l.ContentType, l.BodyBase64, l.Query)
@@ -386,7 +370,8 @@ func TestPlaceholderSkips(t *testing.T) {
 		{placeholder{name: "Teleport"}, "x", "placeholder is not one of the tool's"},
 		{placeholder{name: "urlparam"}, "x", "placeholder is not one of the tool's"},
 		{placeholder{name: "RawRequest"}, "x", "placeholder is named without the configuration it needs"},
-		{placeholder{name: "GraphQL"}, "x", "placeholder is named without the configuration it needs"},
+		{placeholder{name: "GraphQL"}, "x", "GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check"},
+		{placeholder{name: "SOAPBody"}, "x", "SOAPBody placeholder: the tool's envelope cannot be read from the tree"},
 		// What the tool's HTTP client refuses to send.
 		{placeholder{name: "URLParam"}, "a\nb", "the tool's HTTP client rejects the URL of this request"},
 		{placeholder{name: "URLPath"}, "a\x7fb", "the tool's HTTP client rejects the URL of this request"},
@@ -430,7 +415,6 @@ func TestClientBehaviour(t *testing.T) {
 		// A fragment is not sent.
 		{placeholder{name: "URLParam"}, "a#b", "/", "ababababab=a"},
 		{placeholder{name: "URLPath"}, "a#b?c", "/a", ""},
-		{placeholder{name: "GraphQL", method: "GET"}, "{a}#b", "/graphql", "query={a}"},
 		// A question mark in a path starts the query.
 		{placeholder{name: "URLPath"}, "a?b=c d", "/a", "b=c d"},
 		// A path is escaped unless it is validly escaped already.
@@ -479,10 +463,23 @@ func TestClientBehaviour(t *testing.T) {
 		t.Errorf("no defaults: headers %q, reason %q", l.Headers, reason)
 	}
 
+	// An empty Accept-Encoding with no default to fill it.
+	req, _ = placeholder{name: "RawRequest", raw: &rawConfig{method: "GET", headers: []header{{"Accept-Encoding", ""}}}}.request("x", "x", testToken)
+	if _, reason = req.line(nil, false); reason != "the request sets an empty Accept-Encoding, next to which the tool's HTTP client sends its own" {
+		t.Errorf("empty Accept-Encoding: reason %q", reason)
+	}
+
 	// A body that is not valid UTF-8 is written as base64.
 	l, reason = place(placeholder{name: "RequestBody"}, "a\xffb")
 	if reason != "" || l.Body != "" || l.BodyBase64 != "Yf9i" {
 		t.Errorf("binary body: body %q, body_base64 %q, reason %q", l.Body, l.BodyBase64, reason)
+	}
+}
+
+func TestCheckRefusesALineThatIsNoCase(t *testing.T) {
+	t.Parallel()
+	if got := check(cases.Line{}); got != "the line is not a valid case" {
+		t.Errorf("reason %q", got)
 	}
 }
 
@@ -600,6 +597,14 @@ func TestImportOddFiles(t *testing.T) {
 		"testcases/s/length.yml":    head + "  - RawRequest:\n      method: GET\n      headers:\n        X-Count: 5\n",
 		"testcases/s/nobody.yml":    head + "  - RawRequest:\n      method: GET\n      body:\n",
 		"testcases/s/marker.yml":    head + "  - RawRequest:\n      method: GET\n      body: \"http://{{payload}}/\"\n",
+		"testcases/s/twice.yml":     head + "  - RawRequest:\n      method: GET\n      method: POST\n",
+		"testcases/s/header2.yml":   head + "  - RawRequest:\n      method: GET\n      headers:\n        X-A: a\n        X-A: b\n",
+		"testcases/s/path.yml":      head + "  - RawRequest:\n      method: GET\n      path: 5\n",
+		"testcases/s/headers.yml":   head + "  - RawRequest:\n      method: GET\n      headers: [a]\n",
+		"testcases/s/gql.yml":       head + "  - GraphQL:\n      method: GET\n  - GraphQL\n",
+		"testcases/s/odd name.yml":  oneCase,
+		"testcases/s/large.yml":     oneCase + "# " + strings.Repeat("x", 8<<20) + "\n",
+		"testcases/s/locked.yml":    oneCase,
 		"testcases/s/same.yml":      oneCase,
 		"testcases/s/same.yaml":     oneCase,
 		"testcases/s/ignored.yml":   head + "  - URLParam: {}\n  - RawRequest:\n      method: GET\n      extra: [1]\nextra: 1\n",
@@ -620,6 +625,14 @@ func TestImportOddFiles(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "testcases", "s", "same.yml"), filepath.Join(root, "testcases", "s", "link.yml")); err != nil {
 		t.Fatal(err)
 	}
+	locked := filepath.Join(root, "testcases", "s", "locked.yml")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := os.Open(locked); err == nil {
+		f.Close()
+		t.Skip("this user can read a file without permissions")
+	}
 	lines, skipped, err := Import(root)
 	if err != nil {
 		t.Fatal(err)
@@ -628,27 +641,36 @@ func TestImportOddFiles(t *testing.T) {
 
 	const cannotLoad = "the tool cannot load this file: "
 	wantSkips := map[string]string{
-		"s/list.yml":      "file is not YAML in the shape of a test case",
-		"s/scalars.yml":   "file is not YAML in the shape of a test case",
-		"s/nested.yml":    "file is not YAML in the shape of a test case",
-		"s/not-utf8.yml":  "file is not YAML in the shape of a test case",
-		"s/duplicate.yml": "file is not YAML in the shape of a test case",
-		"s/number.yml":    cannotLoad + "a placeholder is neither a name nor a mapping",
-		"s/twokeys.yml":   cannotLoad + "a placeholder mapping does not have exactly one name",
-		"s/noconfig.yml":  cannotLoad + "a placeholder's configuration is not a mapping",
-		"s/unknown.yml":   cannotLoad + "a configured placeholder is not one of the tool's",
-		"s/method.yml":    cannotLoad + "GraphQL needs the method GET or POST",
-		"s/yes.yml":       cannotLoad + "a RawRequest header is not a string",
-		"s/length.yml":    cannotLoad + "a RawRequest header is not a string",
-		"s/nobody.yml":    cannotLoad + "the RawRequest body is not a string",
-		"s/same.yml":      "another file has the same name with another extension",
-		"s/link.yml":      "link is not followed",
-		"s/empty.yml":     "file holds no payload, no encoder or no placeholder",
-		"s/null.yml":      "file holds no payload, no encoder or no placeholder",
-		"s/many.yml":      "file holds more than 10000 combinations of payload, encoder and placeholder",
+		"s/list.yml":       "file is not YAML in the shape of a test case",
+		"s/scalars.yml":    "file is not YAML in the shape of a test case",
+		"s/nested.yml":     "file is not YAML in the shape of a test case",
+		"s/not-utf8.yml":   "file is not YAML in the shape of a test case",
+		"s/duplicate.yml":  "file is not YAML in the shape of a test case",
+		"s/number.yml":     cannotLoad + "a placeholder is neither a name nor a mapping",
+		"s/twokeys.yml":    cannotLoad + "a placeholder mapping does not have exactly one name",
+		"s/noconfig.yml":   cannotLoad + "a placeholder's configuration is not a mapping",
+		"s/unknown.yml":    cannotLoad + "a configured placeholder is not one of the tool's",
+		"s/method.yml":     cannotLoad + "GraphQL needs the method GET or POST",
+		"s/yes.yml":        cannotLoad + "a RawRequest header is not a string",
+		"s/length.yml":     cannotLoad + "a RawRequest header is not a string",
+		"s/nobody.yml":     cannotLoad + "the RawRequest body is not a string",
+		"s/twice.yml":      "a placeholder's configuration names a key twice",
+		"s/header2.yml":    "a RawRequest names a header twice",
+		"s/path.yml":       cannotLoad + "the RawRequest path is not a string",
+		"s/headers.yml":    cannotLoad + "the RawRequest headers are not a mapping",
+		`"s/odd name.yml"`: "file path is not made of letters, digits, '.', '_' and '-'",
+		"s/large.yml":      "file is larger than 8 MiB",
+		"s/locked.yml":     "file cannot be read",
+		"s/same.yml":       "another file has the same name with another extension",
+		"s/link.yml":       "link is not followed",
+		"s/empty.yml":      "file holds no payload, no encoder or no placeholder",
+		"s/null.yml":       "file holds no payload, no encoder or no placeholder",
+		"s/many.yml":       "file holds more than 10000 combinations of payload, encoder and placeholder",
 
 		"s/marker/1/Plain/RawRequest":        "the request template and the payload together name a public host",
 		"s/merge.yml":                        "file uses a YAML merge key",
+		"s/gql/1/Plain/GraphQL#1":            "GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check",
+		"s/gql/1/Plain/GraphQL#2":            "GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check",
 		"s/repeated/1/Plain#1/placeholder#2": "placeholder is not one of the tool's",
 		"s/repeated/1/Plain#2/placeholder#2": "placeholder is not one of the tool's",
 	}
@@ -790,3 +812,55 @@ func TestImportSkipsALineTooLongToWrite(t *testing.T) {
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+// The SOAP envelope is read from the tool's source in the tree, as data.
+func TestImportReadsTheSOAPEnvelope(t *testing.T) {
+	t.Parallel()
+	const file = "internal/payload/placeholder/soapbody.go"
+	const add = "func f(req *http.Request) { req.Header.Add(\"SOAPAction\", `\"urn:x\"`) }\n"
+	source := func(constant, rest string) string {
+		return "package placeholder\n\nconst soapBodyPayloadWrapper = " + constant + "\n\n" + rest
+	}
+	const skipped = "SOAPBody placeholder: the tool's envelope cannot be read from the tree"
+	tests := map[string]struct{ source, wantBody, wantReason string }{
+		"read":             {source("`<a><%s>%s</%s></a>`", add), "<a><abX><string>p</string></abX></a>", ""},
+		"quoted":           {source(`"<%s>%s</%s>\n"`, add), "<abX><string>p</string></abX>\n", ""},
+		"in a group":       {"package p\n\nconst (\n\tother = 1\n\tsoapBodyPayloadWrapper = `<%s>%s</%s>`\n)\n\n" + add, "<abX><string>p</string></abX>", ""},
+		"no file":          {"", "", skipped},
+		"not Go":           {"<%s>%s</%s>", "", skipped},
+		"no constant":      {"package p\n\nconst other = `<%s>%s</%s>`\n\n" + add, "", skipped},
+		"a variable":       {"package p\n\nvar soapBodyPayloadWrapper = `<%s>%s</%s>`\n\n" + add, "", skipped},
+		"not a literal":    {source("`<%s>` + `%s</%s>`", add), "", skipped},
+		"not a string":     {source("3", add), "", skipped},
+		"two gaps":         {source("`<%s>%s`", add), "", skipped},
+		"four gaps":        {source("`<%s>%s</%s>%s`", add), "", skipped},
+		"another verb":     {source("`<%s>%s</%s>%d`", add), "", skipped},
+		"a percent sign":   {source("`<%s>%s</%s>100%%`", add), "", skipped},
+		"declared twice":   {source("`<%s>%s</%s>`", "const soapBodyPayloadWrapper = `<%s>%s</%s>`\n"+add), "", skipped},
+		"no action":        {source("`<%s>%s</%s>`", ""), "", skipped},
+		"two actions":      {source("`<%s>%s</%s>`", add+strings.Replace(add, "func f", "func g", 1)), "", skipped},
+		"computed action":  {source("`<%s>%s</%s>`", "func f(req *http.Request, v string) { req.Header.Add(\"SOAPAction\", v) }\n"), "", skipped},
+		"action is no add": {source("`<%s>%s</%s>`", "func f(req *http.Request) { req.Header.Set(\"SOAPAction\", `x`) }\n"), "", skipped},
+	}
+	for name, tt := range tests {
+		files := map[string]string{"testcases/s/a.yml": "payload: [p]\nencoder: [Plain]\nplaceholder: [SOAPBody, URLPath]\n"}
+		if tt.source != "" {
+			files[file] = tt.source
+		}
+		lines, skips, err := Import(writeTree(t, files))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		byID, reasons := index(t, lines, skips)
+		if _, ok := byID["s/a/1/Plain/URLPath"]; !ok {
+			t.Errorf("%s: the other placeholder was not imported", name)
+		}
+		l := byID["s/a/1/Plain/SOAPBody"]
+		body := regexp.MustCompile("ab[0-9a-f]{10}").ReplaceAllString(l.Body, "abX")
+		if reason := reasons["s/a/1/Plain/SOAPBody"]; reason != tt.wantReason || body != tt.wantBody ||
+			tt.wantReason == "" && l.Headers["Soapaction"] != `"urn:x"` {
+			t.Errorf("%s: body %q, action %q, reason %q; want %q, %q", name, body, l.Headers["Soapaction"], reason, tt.wantBody, tt.wantReason)
+		}
+	}
+}

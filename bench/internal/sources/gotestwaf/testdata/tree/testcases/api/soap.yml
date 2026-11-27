@@ -1,0 +1,7 @@
+payload:
+  - "a<b"
+encoder:
+  - Plain
+placeholder:
+  - SOAPBody
+type: Fixture

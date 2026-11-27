@@ -149,9 +149,10 @@ func TestImportGoTestWAFWritesCasesAndCountsSkips(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	want := "wrote 18 cases from gotestwaf (12 attack, 6 legit, 0 near-miss) to " + out + "\n" +
-		"skipped 8:\n" +
+	want := "wrote 17 cases from gotestwaf (11 attack, 6 legit, 0 near-miss) to " + out + "\n" +
+		"skipped 10:\n" +
 		"      3  encoder is not one of the tool's\n" +
+		"      2  GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check\n" +
 		"      1  file holds no payload, no encoder or no placeholder\n" +
 		"      1  file is not YAML in the shape of a test case\n" +
 		"      1  gRPC placeholder: the tool makes a gRPC call, not a plain HTTP request\n" +
@@ -160,7 +161,7 @@ func TestImportGoTestWAFWritesCasesAndCountsSkips(t *testing.T) {
 	if got := stdout.String(); got != want {
 		t.Errorf("summary:\n%s\nwant:\n%s", got, want)
 	}
-	if len(lines) != 18 || len(auditLines) != 8 || stderr.Len() != 0 {
+	if len(lines) != 17 || len(auditLines) != 10 || stderr.Len() != 0 {
 		t.Errorf("%d lines, %d skips, stderr %q", len(lines), len(auditLines), stderr.String())
 	}
 

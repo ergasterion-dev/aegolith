@@ -26,7 +26,7 @@ func encode(name, payload string) (encoded string, ok bool) {
 	case "JSUnicode":
 		return jsUnicode(payload), true
 	case "XMLEntity":
-		return xmlEntity(payload)
+		return xmlEntity(payload), true
 	}
 	return "", false
 }
@@ -56,10 +56,9 @@ func jsUnicode(s string) string {
 
 // xmlEntity writes s the way the tool does: as a Go string value marshalled
 // to XML, which is an element named "string" around the escaped text.
-func xmlEntity(s string) (string, bool) {
+func xmlEntity(s string) string {
 	var b strings.Builder
-	if err := xml.NewEncoder(&b).Encode(s); err != nil {
-		return "", false
-	}
-	return b.String(), true
+	// A string always marshals, and the builder never fails to write.
+	_ = xml.NewEncoder(&b).Encode(s)
+	return b.String()
 }

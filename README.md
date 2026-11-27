@@ -668,7 +668,7 @@ The corpus above was written by the people who tuned the rules. The WAF bench in
 | Detection runner (loopback targets only), report and comparison with an earlier report | Done |
 | Source pinning, fetch script, rewriting callback hosts to `callback.invalid` | Done |
 | CRS regression test importer (stages that cannot be sent as one HTTP/1.1 request are skipped and counted) | Done |
-| GoTestWAF importer (one case per payload, encoder and placeholder, built as the tool builds its requests; gRPC cases are skipped and counted) | Done |
+| GoTestWAF importer (one case per payload, encoder and placeholder, built as the tool builds its requests; gRPC and GraphQL cases are skipped and counted) | Done |
 | A large legitimate-traffic set | Not started |
 | Load phase, guarded remote mode, one-command `make` targets, first report | Not started |
 

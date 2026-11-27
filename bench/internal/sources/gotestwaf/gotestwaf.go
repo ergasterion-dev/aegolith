@@ -39,9 +39,9 @@
 //     the same number of bytes from a hash of the test set, the test case,
 //     the encoder, the placeholder and the payload. They are the same on
 //     every import.
-//   - The tool sends a GraphQL case to the endpoint its availability check
-//     finds on the target, and none if it finds no endpoint. The lines use
-//     /graphql, the first endpoint that check tries.
+//   - The tool sends a GraphQL case only to the endpoint that its check of
+//     the target finds, and none to a target that does not answer the check.
+//     No line can name that endpoint, so the GraphQL placeholder is skipped.
 //   - The gRPC placeholder is a gRPC call and is skipped.
 //   - A request that the tool's HTTP client refuses to send (a control
 //     character in the URL or in a header, a "%" in the path that starts no
@@ -50,9 +50,13 @@
 //     order, and adds X-Request-Id. It frames the body as the tool's client
 //     does: both are Go's net/http.
 //
-// The envelope of a SOAPBody request and its SOAPAction header are the
-// tool's and name public hosts as XML namespaces. They are sent as they are:
-// they are identifiers, not addresses that a request makes a server contact.
+// The envelope of a SOAPBody request and the value of its SOAPAction header
+// are the tool's text. They are not kept in this package: Import reads them
+// from the tool's source in the tree, which it parses as Go and never
+// compiles or runs (see readSOAP), and skips the SOAPBody placeholder if it
+// cannot. The envelope names public hosts as XML namespaces. They are sent
+// as they are, unlike a callback host in a payload: they are identifiers of
+// the template, not addresses that a request makes a server contact.
 package gotestwaf
 
 import (
@@ -100,7 +104,9 @@ const (
 const (
 	reasonLink     = "link is not followed"
 	reasonTooLarge = "file is larger than 8 MiB"
-	reasonFileName = "file name is not valid UTF-8"
+	reasonFileName = "file path is not made of letters, digits, '.', '_' and '-'"
+	reasonUnread   = "file cannot be read"
+	reasonInvalid  = "the line is not a valid case"
 	reasonSameName = "another file has the same name with another extension"
 	reasonShape    = "file is not YAML in the shape of a test case"
 	reasonMerge    = "file uses a YAML merge key"
@@ -144,6 +150,8 @@ var (
 	// plainLabel is an encoder or placeholder name that can be part of a
 	// case ID.
 	plainLabel = regexp.MustCompile(`^[A-Za-z0-9]{1,40}$`)
+	// plainPath is a file path that can be part of a case ID.
+	plainPath = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}(/[A-Za-z0-9._-]{1,64}){0,7}$`)
 )
 
 // category returns the category of a test case: "fp" for a legitimate one,
@@ -223,12 +231,13 @@ func Import(root string) (lines []cases.Line, skipped []cases.Skip, err error) {
 		return nil, nil, fmt.Errorf("no test case files under %s", casesDir)
 	}
 
-	im := importer{defaults: defaults, seen: map[string]bool{}}
+	im := importer{defaults: defaults, soap: readSOAP(fsys), seen: map[string]bool{}}
 	for _, e := range entries {
 		rel := strings.TrimPrefix(e.name, casesDir+"/")
 		switch {
-		case !utf8.ValidString(rel):
-			im.skip(strings.ToValidUTF8(rel, "?"), reasonFileName)
+		case !plainPath.MatchString(rel):
+			// Quoted, so that the path is one line of ASCII.
+			im.skip(strconv.QuoteToASCII(rel), reasonFileName)
 			continue
 		case e.link:
 			im.skip(rel, reasonLink)
@@ -236,7 +245,8 @@ func Import(root string) (lines []cases.Line, skipped []cases.Skip, err error) {
 		}
 		content, err := readFile(fsys, e.name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("reading a GoTestWAF test case file: %w", err)
+			im.skip(rel, reasonUnread)
+			continue
 		}
 		im.file(rel, content)
 	}
@@ -312,8 +322,10 @@ var decimal = regexp.MustCompile(`^(0|[1-9][0-9]{0,17})$`)
 
 type importer struct {
 	defaults []header
-	lines    []cases.Line
-	skipped  []cases.Skip
+	// soap is the SOAP envelope of the tree, nil if it cannot be read.
+	soap    *soapEnvelope
+	lines   []cases.Line
+	skipped []cases.Skip
 	// seen holds the file paths, without extension, that case IDs start with.
 	seen map[string]bool
 }
@@ -440,6 +452,7 @@ func (im *importer) file(rel string, content []byte) {
 	names := make([]string, len(placeholders))
 	for i, p := range placeholders {
 		names[i] = p.name
+		placeholders[i].soap = im.soap
 	}
 	switch {
 	case len(tc.payloads) == 0 || len(tc.encoders) == 0 || len(placeholders) == 0:
@@ -559,11 +572,7 @@ func (c combination) token(label string, n int) string {
 // check says why a line cannot be part of a case file, if it cannot.
 func check(line cases.Line) (reason string) {
 	if _, err := cases.FromLine(line); err != nil {
-		// Without the source and case ID that FromLine adds.
-		if cause := errors.Unwrap(err); cause != nil {
-			return cause.Error()
-		}
-		return "the line is not a valid case"
+		return reasonInvalid
 	}
 	size := len(line.Path) + len(line.RawQuery) + len(line.Body) + len(line.BodyBase64) + len(line.Payload) + len(line.PayloadBase64)
 	for _, value := range line.Headers {

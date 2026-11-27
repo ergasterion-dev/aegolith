@@ -5,11 +5,8 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"net/url"
-	"slices"
 	"strings"
 	"unicode/utf8"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/ergasterion-dev/aegolith/bench/internal/cases"
 )
@@ -17,8 +14,6 @@ import (
 const (
 	// marker is where a RawRequest takes the payload.
 	marker = "{{payload}}"
-	// graphQLPath is the first endpoint the tool's GraphQL check tries.
-	graphQLPath = "/graphql"
 	// targetRoot stands for the URL the tool is pointed at. Only what follows
 	// it reaches a line.
 	targetRoot = "http://target.invalid"
@@ -28,36 +23,13 @@ const (
 	boundaryBytes = 30
 )
 
-// soapEnvelope is the document the SOAPBody placeholder sends. The three
-// gaps take the element name, its content and the element name again.
-var soapEnvelope = [4]string{
-	`<?xml version="1.0" encoding="UTF-8"?>` + "\n" +
-		`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"` + "\n" +
-		"\t" + `xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` + "\n" +
-		"\t<soapenv:Header>\n" +
-		"\t\t" + `<ns1:RequestHeader soapenv:actor="http://schemas.xmlsoap.org/soap/actor/next"` + "\n" +
-		"\t\t\t" + `soapenv:mustUnderstand="0" xmlns:ns1="https://www.google.com/apis/ads/publisher/v202002">` + "\n" +
-		"\t\t</ns1:RequestHeader>\n" +
-		"\t</soapenv:Header>\n" +
-		"\t<soapenv:Body>\n" +
-		"\t\t" + `<getAdUnitsByStatement xmlns="https://www.google.com/apis/ads/publisher/v202002">` + "\n" +
-		"\t\t\t<filterStatement>\n" +
-		"\t\t\t\t<",
-	">",
-	"</",
-	">\n" +
-		"\t\t\t</filterStatement>\n" +
-		"\t\t</getAdUnitsByStatement>\n" +
-		"\t</soapenv:Body>\n" +
-		"</soapenv:Envelope>",
-}
-
 // Reasons for which a combination is skipped.
 const (
 	reasonGRPC         = "gRPC placeholder: the tool makes a gRPC call, not a plain HTTP request"
+	reasonGraphQL      = "GraphQL placeholder: the tool sends it only to a target that answers its GraphQL check"
+	reasonSOAP         = "SOAPBody placeholder: the tool's envelope cannot be read from the tree"
 	reasonPlaceholder  = "placeholder is not one of the tool's"
 	reasonNoConfig     = "placeholder is named without the configuration it needs"
-	reasonEncodeTwice  = "the placeholder's own encoding of the value fails"
 	reasonTemplateHost = "the request template and the payload together name a public host"
 	reasonMethod       = "the tool's HTTP client rejects the method of this request"
 	reasonURL          = "the tool's HTTP client rejects the URL of this request"
@@ -78,10 +50,11 @@ type header struct{ name, value string }
 // encoded payload goes in the request.
 type placeholder struct {
 	name string
-	// method is the configuration of a GraphQL placeholder.
-	method string
 	// raw is the configuration of a RawRequest placeholder.
 	raw *rawConfig
+	// soap is what a SOAPBody placeholder sends around the payload, nil if
+	// the tree does not say.
+	soap *soapEnvelope
 }
 
 // rawConfig is the request a RawRequest placeholder describes. Path, body and
@@ -132,32 +105,22 @@ func (p placeholder) request(payload, encoded string, token func(label string, n
 	case "HTMLForm":
 		return post("application/x-www-form-urlencoded", name()+"="+encoded, "body"), ""
 	case "HTMLMultipartForm":
-		contentType, body, ok := multipartForm(name(), encoded, token("boundary", boundaryBytes))
-		if !ok {
-			return req, reasonEncodeTwice
-		}
+		contentType, body := multipartForm(name(), encoded, token("boundary", boundaryBytes))
 		return post(contentType, body, "body"), ""
 	case "JSONRequest":
 		return post("application/json", `{"test": true, "`+name()+`": "`+jsUnicode(encoded)+`"}`, "json"), ""
 	case "SOAPBody":
-		element := "ab" + name()
-		content, ok := xmlEntity(encoded)
-		if !ok {
-			return req, reasonEncodeTwice
+		if p.soap == nil {
+			return req, reasonSOAP
 		}
-		req = post("text/xml", soapEnvelope[0]+element+soapEnvelope[1]+content+soapEnvelope[2]+element+soapEnvelope[3], "body")
-		req.headers = append([]header{{"SOAPAction", `"http://schemas.xmlsoap.org/soap/actor/next"`}}, req.headers...)
+		element, parts := "ab"+name(), p.soap.parts
+		req = post("text/xml", parts[0]+element+parts[1]+xmlEntity(encoded)+parts[2]+element+parts[3], "body")
+		req.headers = append([]header{{"SOAPAction", p.soap.action}}, req.headers...)
 		return req, ""
 	case "GraphQL":
-		switch p.method {
-		case "GET":
-			return request{method: "GET", target: graphQLPath + "?query=" + encoded, placement: "query"}, ""
-		case "POST":
-			req = post("", encoded, "body")
-			req.target = graphQLPath
-			return req, ""
-		}
-		return req, reasonNoConfig
+		// Its request needs an endpoint that only the tool's check of the
+		// target can name.
+		return req, reasonGraphQL
 	case "RawRequest":
 		if p.raw == nil {
 			return req, reasonNoConfig
@@ -169,24 +132,18 @@ func (p placeholder) request(payload, encoded string, token func(label string, n
 	return req, reasonPlaceholder
 }
 
-// multipartForm returns the body and Content-Type of a form with one field.
-func multipartForm(name, value, boundary string) (contentType, body string, ok bool) {
+// multipartForm returns the Content-Type and body of a form with one field.
+// name and boundary are hex digits. Nothing here can fail: the boundary is
+// a valid one and the builder never fails to write.
+func multipartForm(name, value, boundary string) (contentType, body string) {
 	var b strings.Builder
 	w := multipart.NewWriter(&b)
-	if err := w.SetBoundary(boundary); err != nil {
-		return "", "", false
+	_ = w.SetBoundary(boundary)
+	if field, err := w.CreateFormField(name); err == nil {
+		_, _ = field.Write([]byte(value))
 	}
-	field, err := w.CreateFormField(name)
-	if err != nil {
-		return "", "", false
-	}
-	if _, err := field.Write([]byte(value)); err != nil {
-		return "", "", false
-	}
-	if err := w.Close(); err != nil {
-		return "", "", false
-	}
-	return w.FormDataContentType(), b.String(), true
+	_ = w.Close()
+	return w.FormDataContentType(), b.String()
 }
 
 // request fills the marker in. The value is escaped as a path segment in the
@@ -335,164 +292,4 @@ func hasControlByte(s string) bool {
 		}
 	}
 	return false
-}
-
-// Reasons for which the tool cannot load a test case file. It reads all its
-// files at once and stops at the first of these.
-const (
-	cannotLoad         = "the tool cannot load this file: "
-	reasonKind         = cannotLoad + "a placeholder is neither a name nor a mapping"
-	reasonKeys         = cannotLoad + "a placeholder mapping does not have exactly one name"
-	reasonConfig       = cannotLoad + "a placeholder's configuration is not a mapping"
-	reasonConfigured   = cannotLoad + "a configured placeholder is not one of the tool's"
-	reasonGraphQL      = cannotLoad + "GraphQL needs the method GET or POST"
-	reasonRawMethod    = cannotLoad + "RawRequest needs a method that is a string"
-	reasonRawPath      = cannotLoad + "the RawRequest path is not a string"
-	reasonRawBody      = cannotLoad + "the RawRequest body is not a string"
-	reasonRawHeaders   = cannotLoad + "the RawRequest headers are not a mapping"
-	reasonRawHeader    = cannotLoad + "a RawRequest header is not a string"
-	reasonRepeatedKey  = "a placeholder's configuration names a key twice"
-	reasonRepeatedName = "a RawRequest names a header twice"
-)
-
-// known are the tool's placeholders.
-var known = []string{
-	"GraphQL", "gRPC", "Header", "HTMLForm", "HTMLMultipartForm", "JSONBody", "JSONRequest",
-	"RawRequest", "RequestBody", "SOAPBody", "URLParam", "URLPath", "UserAgent", "XMLBody",
-}
-
-// readPlaceholder reads one entry of a placeholder list: a name, or a
-// mapping of one name to that placeholder's configuration. A name is taken
-// as it is, known or not; the tool finds out when it sends.
-func readPlaceholder(n *yaml.Node) (p placeholder, reason string) {
-	n = resolve(n)
-	if name, ok := text(n); ok {
-		return placeholder{name: name}, ""
-	}
-	if n.Kind != yaml.MappingNode {
-		return p, reasonKind
-	}
-	if len(n.Content) != 2 {
-		return p, reasonKeys
-	}
-	name, ok := text(n.Content[0])
-	if !ok {
-		return p, reasonKeys
-	}
-	if !slices.Contains(known, name) {
-		return p, reasonConfigured
-	}
-	config, reason := readMapping(n.Content[1])
-	if reason != "" {
-		return p, reason
-	}
-	p.name = name
-	switch name {
-	case "GraphQL":
-		method, ok := text(config["method"])
-		if !ok || method != "GET" && method != "POST" {
-			return p, reasonGraphQL
-		}
-		p.method = method
-	case "RawRequest":
-		p.raw, reason = readRaw(config)
-	}
-	return p, reason
-}
-
-// readRaw reads the configuration of a RawRequest. Hosts in its templates
-// are replaced like hosts in a payload.
-func readRaw(config map[string]*yaml.Node) (c *rawConfig, reason string) {
-	c = &rawConfig{path: "/"}
-	var ok bool
-	if c.method, ok = text(config["method"]); !ok {
-		return nil, reasonRawMethod
-	}
-	if n, set := config["path"]; set {
-		if c.path, ok = text(n); !ok {
-			return nil, reasonRawPath
-		}
-		if c.path == "" {
-			c.path = "/"
-		}
-	}
-	if n, set := config["body"]; set {
-		if c.body, ok = text(n); !ok {
-			return nil, reasonRawBody
-		}
-	}
-	if n, set := config["headers"]; set {
-		n = resolve(n)
-		if n.Kind != yaml.MappingNode {
-			return nil, reasonRawHeaders
-		}
-		seen := map[string]bool{}
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			name, okName := text(n.Content[i])
-			value, okValue := text(n.Content[i+1])
-			if !okName || !okValue {
-				return nil, reasonRawHeader
-			}
-			if seen[name] {
-				return nil, reasonRepeatedName
-			}
-			seen[name] = true
-			c.headers = append(c.headers, header{name, value})
-		}
-	}
-
-	// The marker survives: only the bytes that spell a host change, and a
-	// brace spells none.
-	c.path, c.body = cases.RewriteCallbacks(c.path), cases.RewriteCallbacks(c.body)
-	for i, h := range c.headers {
-		c.headers[i].value = cases.RewriteCallbacks(h.value)
-	}
-	return c, ""
-}
-
-// readMapping reads a placeholder's configuration: a mapping with string
-// keys, each used once. The tool would use the last of two equal keys;
-// such a file is left out instead.
-func readMapping(n *yaml.Node) (map[string]*yaml.Node, string) {
-	n = resolve(n)
-	if n.Kind != yaml.MappingNode {
-		return nil, reasonConfig
-	}
-	out := make(map[string]*yaml.Node, len(n.Content)/2)
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		key, ok := text(n.Content[i])
-		if !ok {
-			return nil, reasonConfig
-		}
-		if _, ok := out[key]; ok {
-			return nil, reasonRepeatedKey
-		}
-		out[key] = n.Content[i+1]
-	}
-	return out, ""
-}
-
-// resolve follows an alias to the node it names.
-func resolve(n *yaml.Node) *yaml.Node {
-	if n != nil && n.Kind == yaml.AliasNode && n.Alias != nil {
-		return n.Alias
-	}
-	return n
-}
-
-// yaml11Words are plain scalars that the tool's YAML 1.1 reader takes for
-// booleans and this package's reader takes for strings.
-var yaml11Words = []string{"y", "Y", "yes", "Yes", "YES", "n", "N", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF"}
-
-// text returns the value of a scalar that the tool reads as a string. A
-// number, a boolean, a null or a binary value is not one.
-func text(n *yaml.Node) (string, bool) {
-	n = resolve(n)
-	if n == nil || n.Kind != yaml.ScalarNode || n.ShortTag() != "!!str" {
-		return "", false
-	}
-	if n.Style == 0 && slices.Contains(yaml11Words, n.Value) {
-		return "", false
-	}
-	return n.Value, true
 }
