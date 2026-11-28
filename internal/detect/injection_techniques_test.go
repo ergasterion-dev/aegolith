@@ -422,6 +422,55 @@ func TestPHPVariableCallsClear(t *testing.T) {
 	)
 }
 
+// TestPHPSuppressedCall: "@$name(" takes any argument only where PHP's error
+// suppression operator stands, at the start of the value or after white space
+// or one of ";({,=.". After any other byte, as in a password, the argument
+// must start with a quote or a variable.
+func TestPHPSuppressedCall(t *testing.T) {
+	for _, lead := range []string{"", " ", "\t", "\n", "\r", "\v", "\f", ";", "(", "{", ",", "=", "."} {
+		v := "k" + lead + "@$f(1)"
+		if lead == "" {
+			v = "@$f(1)"
+		}
+		checkPHPCall(t, true, v)
+	}
+	for _, lead := range []string{
+		"a", "Z", "7", "_", "!", "#", "$", "%", "^", "&", "*", ")", "}", "[", "]", "-", "+", "~", "`",
+		"'", `"`, "\\", "|", ":", "?", "/", "<", ">", "@", "é",
+	} {
+		checkPHPCall(t, false,
+			"k"+lead+"@$f(1)",
+			"k"+lead+"@$f(x)",
+			"k"+lead+"@$f()",
+			"k"+lead+"@$f(x);",
+		)
+		checkPHPCall(t, true,
+			"k"+lead+"@$f('x')",
+			"k"+lead+`@$f("x")`,
+			"k"+lead+"@$f($x)",
+		)
+	}
+	checkPHPCall(t, false,
+		// Passwords.
+		"!@$%^&*()",
+		"!@$Secret(2024)",
+		"my pass !@$Secret(2024)",
+		"#@$Ab(",
+		"#@$Ab(1)",
+		"Zq!@$w(rd)9",
+		"1!2@$Qwer(ty)",
+		"~!@$Pass(word)!",
+		"%40$%40 !@$_Under(9)",
+		"pw: !@$Aa(x); next",
+		// Prose with no call.
+		"cc (@$lead) please",
+		"ping @$lead (team lead) today",
+		"the @$-sign (at-dollar) key",
+		"offer: @$5(each) or @$ 7 (two)",
+		"buy 3 @$(price) each",
+	)
+}
+
 // --- LDAP ---
 
 // ldapShapes build one value of each attribute shape around attr.
@@ -609,6 +658,28 @@ func TestInjectionTechniqueAcceptedFalsePositives(t *testing.T) {
 		"Type 'exec'(without quotes)",
 		// Markdown: a link right after a word that starts with "$".
 		"see $HOME[1](#paths)",
+		// A mention or a password written like a suppressed call: at the
+		// start, or after a blank or one of ";({,=.".
+		" @$user(admin)",
+		"please ask @$lead(team) today",
+		"@$tr0ng(1)",
+		"Qw.@$er(ty)",
+		"k;@$Ab(1)",
+		"pw(@$Ab(1)",
+		"{@$Ab(1)}",
+		"a,@$Bc(d)",
+		"x=@$Ab(1)",
+		"line one\n@$Ab(1)",
+		// After any other byte, with a quote or a variable after the "(".
+		"!@$Ab('c",
+		"#@$Ab($cd",
+		// An indexed name takes any argument wherever the "@" stands.
+		"!@$Ab[1](2)",
+		"#@$Ab{1}(x)",
+		// "$$name" and "${" keep their own rules.
+		"!@${Ab}('c')",
+		"P@${ss}(1);",
+		"P@$$w0rd(1);",
 	)
 	checkLDAPTechnique(t, true,
 		// A filter pasted into a support message.
@@ -641,6 +712,10 @@ func TestInjectionTechniqueAcceptedMisses(t *testing.T) {
 		"trim(system)('x')",
 		"strval('system')(base64_decode(c))",
 		"x@$f(1)",
+		"!@$f(1)",
+		"if($a)@$f(1)",
+		"$a&&@$f(base64_decode(x));",
+		"!@$_f(x);",
 		"${f}(${a})",
 		"${f}(${a});",
 		"x.$$f('a')",

@@ -210,6 +210,13 @@ func quotedFuncName(s string, end int) (int, bool) {
 // s[i].
 func followsWord(s string, i int) bool { return i > 0 && isIdentByte(s[i-1]) }
 
+// isSuppressionPosition reports whether an "@" at s[at] stands where PHP's
+// error suppression operator does: at the start of s, or directly after white
+// space or one of ";({,=.". Password symbols, as in "!@$", do not.
+func isSuppressionPosition(s string, at int) bool {
+	return at == 0 || isPHPSpace(s[at-1]) || strings.IndexByte(";({,=.", s[at-1]) >= 0
+}
+
 // followsPHPStatement reports whether the word directly before s[i] is echo,
 // print or return, after which PHP reads "(" as the start of an expression.
 func followsPHPStatement(s string, i int) bool {
@@ -360,8 +367,9 @@ type phpCallScan struct {
 //     argument. When the name and the first bracket read as LaTeX (see
 //     isMathSymbol: "$a_{n}(x)$", "$E[X](1-p)$"), the argument must start
 //     with a quote or a variable.
-//   - @$name( : any argument; when the "@" follows a letter, digit or "_", as
-//     in an address or a password, a quoted or variable one.
+//   - @$name( : any argument where the "@" stands as PHP's error suppression
+//     operator does (see isSuppressionPosition); anywhere else, as in a
+//     password such as "!@$Ab(1)", a quoted or variable one.
 //
 // "/* */" comments may stand before the "(". "$$name", "$_name" and an
 // indexed name that is not a PHP superglobal are not read after a member
@@ -438,9 +446,9 @@ func (p *phpCallScan) dollar(i int) bool {
 	case variableVariable:
 		return !member && name != "eval" && p.call(end, valueArgOrStatement)
 	case i > 0 && s[i-1] == '@':
-		rule := anyArg
-		if followsWord(s, i-1) {
-			rule = valueArg
+		rule := valueArg
+		if isSuppressionPosition(s, i-1) {
+			rule = anyArg
 		}
 		return p.call(end, rule)
 	case len(name) > 1 && name[0] == '_':
