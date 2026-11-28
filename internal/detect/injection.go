@@ -120,8 +120,9 @@ func hasEncodedBacktick(s string) bool {
 }
 
 // CodeI reports whether v carries code for an interpreter: PHP open tags,
-// eval/assert of base64_decode, Node child_process access
-// (AEG-CODEI-001), or a Java serialized object (AEG-CODEI-002).
+// eval/assert of base64_decode, Node child_process access, a PHP dynamic
+// call (see hasPHPDynamicCall) (AEG-CODEI-001), or a Java serialized object
+// (AEG-CODEI-002).
 func CodeI(v string) (Hit, bool) {
 	id := codeIRule(v)
 	if id == "" {
@@ -135,8 +136,9 @@ func CodeI(v string) (Hit, bool) {
 	return Hit{RuleID: id, Category: model.CatCodei, Severity: model.SeverityCritical}, true
 }
 
-// LDAP reports whether v contains an LDAP filter breaker: *)( or a closing
-// parenthesis directly followed by a new |, & or ! filter.
+// LDAP reports whether v contains an LDAP filter breaker: *)(, a closing
+// parenthesis directly followed by a new |, & or ! filter, or one of the
+// shapes of hasLDAPTechnique.
 func LDAP(v string) (Hit, bool) {
 	if valueOrDecoded(v, isLDAP) {
 		return Hit{RuleID: "AEG-LDAP-001", Category: model.CatLDAP, Severity: model.SeverityHigh}, true
@@ -146,8 +148,9 @@ func LDAP(v string) (Hit, bool) {
 
 // SSTI reports whether v contains a server-side template expression with
 // code in it: {{ }} holding an attribute walk, filter, call or arithmetic;
-// Spring ${T( }; #{ } expressions; ERB <%= %>; or a Jinja {% %} statement.
-// Plain placeholders such as {{name}} do not match.
+// Spring ${T( }; #{ } expressions; ERB <%= %>; a Jinja {% %} statement; or
+// a Perl @{[ ]} interpolation (see hasPerlInterpolation). Plain placeholders
+// such as {{name}} do not match.
 func SSTI(v string) (Hit, bool) {
 	if valueOrDecoded(v, isSSTI) {
 		return Hit{RuleID: "AEG-SSTI-001", Category: model.CatSSTI, Severity: model.SeverityHigh}, true
@@ -1374,7 +1377,7 @@ func hasShellshock(s string) bool {
 // --- code injection ---
 
 func codeIRule(s string) string {
-	if hasPHPOpenTag(s) || hasEvalBase64(s) || hasNodeExec(s) {
+	if hasPHPOpenTag(s) || hasEvalBase64(s) || hasNodeExec(s) || hasPHPDynamicCall(s) {
 		return "AEG-CODEI-001"
 	}
 	if hasJavaSerialized(s) {
@@ -1477,7 +1480,7 @@ func hasJavaSerialized(s string) bool {
 
 func isLDAP(s string) bool {
 	return strings.Contains(s, "*)(") || strings.Contains(s, ")(|(") ||
-		strings.Contains(s, ")(&(") || strings.Contains(s, ")(!(")
+		strings.Contains(s, ")(&(") || strings.Contains(s, ")(!(") || hasLDAPTechnique(s)
 }
 
 // --- server-side template injection ---
@@ -1541,7 +1544,7 @@ func isLDAP(s string) bool {
 //     (`#{order #{user.name}}`; see eachHashTemplate).
 func isSSTI(s string) bool {
 	if strings.Contains(s, "${T(") || strings.Contains(s, "#{T(") ||
-		hasFreeMarkerNew(s) || eachCodeTemplate(s) {
+		hasFreeMarkerNew(s) || eachCodeTemplate(s) || hasPerlInterpolation(s) {
 		return true
 	}
 	// A FreeMarker directive or a ?new, ?api, ?eval or ?interpret built-in

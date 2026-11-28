@@ -21,8 +21,8 @@ Aegolith inspects the request (method, path, query, headers it knows how to read
 |---|---|---|
 | SQL injection, XSS | `AEG-SQLI-001`, `-002`, `AEG-XSS-001` | libinjection on every free-text value, plus a check for stacked statements that copy to or from a program, SQL time-delay and exec tokens (`WAITFOR DELAY '`, `xp_cmdshell`, `pg_sleep(`, `DBMS_LOCK.SLEEP(`), and [Postgres JSON operators and casts, quote breakouts and delay calls inside an expression](#sql-techniques-added-in-alpha7) |
 | OS command injection | `AEG-CMDI-001` | a shell operator followed by a command used as a shell is used, an absolute system path, reverse-shell and Shellshock markers, [here-strings, globbed system paths and chained Windows `FOR` loops](#command-injection-techniques-added-in-alpha7) |
-| Code injection | `AEG-CODEI-001`, `-002` | PHP open tags, eval of base64, Node `child_process`, Java serialized objects |
-| LDAP, template, JNDI, CRLF injection | `AEG-LDAP-001`, `AEG-SSTI-001`, `-002`, `AEG-JNDI-001`, `AEG-CRLF-001` | filter breakers, code in template expressions, server-side include directives, Log4Shell lookups (with nested obfuscation), header injection in values |
+| Code injection | `AEG-CODEI-001`, `-002` | PHP open tags, eval of base64, Node `child_process`, Java serialized objects, [PHP short tags and dynamic calls](#template-php-and-ldap-techniques-added-in-alpha7) |
+| LDAP, template, JNDI, CRLF injection | `AEG-LDAP-001`, `AEG-SSTI-001`, `-002`, `AEG-JNDI-001`, `AEG-CRLF-001` | filter breakers, code in template expressions, server-side include directives, Log4Shell lookups (with nested obfuscation), header injection in values, [Perl interpolation and more LDAP filters](#template-php-and-ldap-techniques-added-in-alpha7) |
 | File and URL abuse | `AEG-LFI-*`, `AEG-RFI-001`, `AEG-SSRF-*`, `AEG-XXE-001` | traversal and system files, wrapper schemes, metadata and internal hosts, DOCTYPE entities (in a body typed as XML) |
 | NoSQL and prototype pollution | `AEG-NOSQL-*`, `AEG-PPOLL-001` | operator keys in JSON and query strings, `__proto__`, `constructor`, `prototype` (JSON keys; bracket and dot paths in query and form keys) |
 | Reconnaissance | `AEG-SCANNER-*`, `AEG-SESSION-001` | scanner user agents, well-known probe paths and backup files, session ids in URLs |
@@ -290,6 +290,57 @@ Found while reviewing alpha.6 and left as they are. Each was checked against the
 - a `)::` cast with balanced parentheses and no `select` (`1 and (version())::int`), another type, or something else after it (`7)::int--`);
 - a breakout behind another quote (`'' mod 1--`, `x' and 'a'or flag--`), with a quote in its span (`zz'or 'a'--`), with a span over 64 bytes, or that reads as French (`d'or 1=1 flag#`); in the second and third shapes after a plural (`users' mod 1--`, `users' ^ flag--`), after a byte that opens a string (`x ' mod 1--`) or with no blank after the quote (`zz'^flag--`), and in the third with a number as the operand (`zz' ^ 7--`);
 - a delay call with a blank after the comma (`9, sleep(5)`) or before `(` (`x or sleep (5)`), a comment as the blank (`x or/**/sleep(5)`), another operator before it (`x||sleep(5)`), or a first argument that is a variable or another function (`x or sleep(@d)`, `x or sleep(floor(5))`) or a number followed by a word (`x or sleep(5 div 1)`).
+
+### Template, PHP and LDAP techniques added in alpha.7
+
+`AEG-SSTI-001`, `AEG-CODEI-001` and `AEG-LDAP-001` also flag shapes the older checks let through. They are read wherever those rules run, on the value and on its percent-decoded form. A blank is a space or a tab unless a shape says otherwise.
+
+- **Perl interpolation (`AEG-SSTI-001`).** `@{`, optional blanks, `[`, 1 to 128 bytes other than `]` or a line break, `]`: `@{[ scalar localtime ]}`. Two readings of those bytes are not Perl and are clear: a text that starts with `}`, the LaTeX column `@{[}c@{]}`; and a PowerShell typed hashtable key, a type name in the brackets followed, after blanks, by a quote, `$`, `(`, `:`, a letter, a digit or `_` (`@{[string]'a' = 1}`).
+- **PHP short open tag (`AEG-CODEI-001`).** `<?`, white space (a line break counts), then `php`, `echo`, `print`, `system`, `exec` (any case) or a variable (`$` followed by a letter, `_` or `{`, so `<? $5` is clear).
+- **PHP listed function (`AEG-CODEI-001`).** For `system`, `exec`, `shell_exec`, `passthru`, `popen`, `proc_open`, `assert`, `eval`, `phpinfo`, `create_function` and `call_user_func`, in any case, with nothing between the parts:
+  - the quoted name in parentheses, then `(`: `('system')(...)`. When the first `(` follows a letter, digit or `_` it opens an argument list, and the argument of the second call must start with a quote or a variable, so `require('assert')(ok)` is clear;
+  - the quoted name directly followed by `(`: `"system"(...)`;
+  - `[system][0](`;
+  - the unquoted name in parentheses, then `(`, where the argument starts with a quote or a variable, or the call's own `)` is directly followed by `;`: `(system)('x')`, `(phpinfo)();`. Not read when the first `(` follows a word other than `echo`, `print` or `return`, so `promisify(exec)('ls')` is clear.
+- **PHP variable call (`AEG-CODEI-001`).** `/* */` comments, with nothing else around them, may stand before the `(`.
+  - `${...}(`, `$$name(` and `$_name(`, only when the argument starts with a quote or a variable, or the call ends `);`. Clear: `Total ${amount}(incl. tax)`, `$$f(x) = x^2$$`, `$_update(value) {`. `${path}(` followed by `${` or `$${` is template text and is clear when the path is letters, digits, `_`, `.` and `?.` (`${name}(${id})`). `$$eval(` is the browser automation selector call and is clear.
+  - `$name` with one or more `[...]` or `{...}` indexes, none empty, then `(` with any argument: `$_GET['f']($x)`, `$a[0](1)`. When the name and the first bracket read as LaTeX, a name ending in `_` before `{` (`$a_{n}(x)$`) or one capital letter before `[` (`$E[X](1-p)$`), the argument must start with a quote or a variable.
+  - `@$name(` with any argument. When the `@` follows a letter, digit or `_` (an address, a password), the argument must start with a quote or a variable.
+  - `$$name(`, `$_name(` and an indexed name are not read after a member access, a `.` that follows a letter, digit, `_`, `)`, `]` or `?` (`this.$refs['form'](x)`, `$scope.$$postDigest(...)`). An indexed PHP superglobal (`$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`, `$_SERVER`, `$_ENV`, `$_FILES`, `$_SESSION`, `$GLOBALS`) is read there too.
+  - A bare `$name(` is not flagged: `$t('x')`, `$emit('y')`, `$('div')`, `$$('div')`, `$_('id')`.
+- **LDAP (`AEG-LDAP-001`).** `attr` is 1 to 41 letters, digits, `.`, `_` and `-`, starting with a letter, with no blank around it or the operator:
+  - `)(attr~=` or `)(attr=*`;
+  - `)`, then `!`, `&` or `|`, then `(attr=`, `~=`, `>=` or `<=` (with `>=` and `<=` the name holds no `.`, so `(df.a>0)&(df.b>=2)` is clear);
+  - `(`, then `|`, `&` or `!`, then `(attr=`;
+  - `)(&)` or `)(|)`;
+  - `attr:OID:=`, where the OID is three or more numbers joined by `.`.
+
+  In the first three, the value must be one a filter can hold: no `(` before its `)`, and after `=` no second `=`. So `if(!(a==b))` and `if(!(n=read()))` are clear.
+
+**False positives (accepted; exclude the rule on a field that carries code, templates or filters):**
+
+- `AEG-SSTI-001`: Perl pasted into a message (`print "@{[ scalar localtime ]}\n";`) and a bracketed LaTeX column separator (`l@{[mm]}r`).
+- `AEG-CODEI-001` on pasted PHP, Perl or JavaScript: `$callbacks[$event]($payload);`, `$dispatch{$cmd}($arg)`, `$$method('x')`, `<? echo $title ?>`, jQuery and AngularJS `$this[method]($el);` and `$scope[fnName](data);`, and `$_reset();`.
+- `AEG-CODEI-001` on template strings that build code or text: `` `${table}("id", "name")` ``, `` `${fnName}();` ``, `` `${user.name}('${user.role}')` ``, a first part that is not a plain path (`` `${row[0]}(${row[1]})` ``) and `${amount}($currency)`.
+- `AEG-CODEI-001` on C that calls `(assert)(ptr != NULL);`, on prose that quotes a listed name directly before a parenthesis (`the "system"(s) check`, `'exec'(without quotes)`) and on a Markdown link directly after an indexed `$` word (`$HOME[1](#paths)`).
+- `AEG-LDAP-001` on a filter pasted into a text field (`(&(objectClass=user)(cn=jdoe))`, `(|(mail=a@example.com)(mail=b@example.com))`).
+- `AEG-LDAP-001` on code written without blanks: `if(!(x=y))`, `while(!(c=*p))`, Objective-C `if(!(self=[super init]))`, a data-frame mask on plain names (`df[(x>0)&(y<=5)]`, `(a)|(b=1)`), a regular expression (`(a)|(id=\d+)`, `(\?|#)(&)`) and a text value that holds `(0,10)&(sort=asc)`.
+
+**Missed (accepted). The readings above that keep ordinary text clear can be used to evade a check:**
+
+- a call that follows a word: a quoted listed name in parentheses with another argument (`strval('system')(base64_decode(c))`), an unquoted one after any word but `echo`, `print` and `return` (`trim(system)('x')`), and `x@$f(1)`;
+- a call after a bare word and `.`, which PHP reads as joining strings and Aegolith as a member access: `x.$$f('a')`, `x.$a['b']('c')`, `x.$_f('a')`;
+- `${path}(${...})` (`${f}(${a});`), `$$eval(`, a LaTeX-like index call with another argument (`$x_{0}(1)`, `$A[0](1)`), and a `${...}(`, `$$name(` or `$_name(` call with an argument that is not a string or a variable and no `;` after it (`$$f(1)`, `$_f(1)`, `${f}(1)`);
+- in Perl, a text that reads as a PowerShell key or a LaTeX column (`@{[x]y}`, `@{[}x]}`).
+
+**Also missed:**
+
+- Perl with a line break before the `[`, another form (`@{\(x)}`) or more than 128 bytes in the brackets;
+- a blank before the `(` (`$a ('x')`, `$a[0] (1)`, `('system') (1)`), a `#` comment there, a comment between a name and its index or between indexes (`$a/*c*/[0](1)`) or inside the parentheses; a namespaced or concatenated name (`('\system')(1)`, `('sys'.'tem')(1)`); `['system'][0](` and another index than `[system][0](`;
+- a blank before the `;` that ends a call (`(system)(ls) ;`), or a `)` inside a string before it (`(system)(f(")"));`);
+- a `[`, `]` or `}` inside a string in an index or in `${...}`, since brackets are counted as they stand (`$a['[']('x')`, `${'}'}('x')`);
+- a bare `$name(` or a method call, and `<?` followed by a comment or a non-breaking space;
+- in LDAP, another comparison after a plain `)(` (`x)(uid=admin`), `>=`, `<=` or `~=` after `(|(`, a blank around the name or operator, a name that is a numeric OID or carries an option (`cn;lang-en`), an extensible match by a rule's name or by fewer than three numbers (`a:caseExactMatch:=b`, `a:1.2:=b`), a value that holds `(` before its `)` or starts with a second `=`, and a dotted name before `>=` or `<=`.
 
 ### The four corpus misses
 

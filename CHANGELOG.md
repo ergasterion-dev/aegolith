@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Template, PHP and LDAP techniques (`AEG-SSTI-001`, `AEG-CODEI-001`, `AEG-LDAP-001`)
+
+- **New `AEG-SSTI-001` detections:** Perl interpolation (`@{[ ... ]}`).
+- **New `AEG-CODEI-001` detections:** a short PHP tag followed by blanks (`<? echo`, `<? $x`), a listed function named in quotes or parentheses and called (`('system')(...)`, `"exec"(...)`, `(system)('...')`, `[system][0](`), and calls of a variable (`$_GET[...](...)`, `${...}('...')`, `$$name($x)`, `@$name(`, `$_name('...')`).
+- **New `AEG-LDAP-001` detections:** `)(attr=*` and `)(attr~=`, `)&(attr=` and the like, `(|(attr=`, `(&(attr=` and `(!(attr=` anywhere, `)(&)`, `)(|)` and extensible matches (`attr:1.2.840.113556.1.4.803:=`).
+- Clear: `$t('x')`, `$('div')`, `Total ${amount}(incl. tax)`, `` `${name}(${id})` ``, `page.$$eval(...)`, `this.$refs['form'](x)`, `$$f(x) = x^2$$`, `$a_{n}(x)$`, `require('assert')(ok)`, `f(x)(y=2)`, `if(!(a==b))`, `if(!(n=read()))`.
+- **False positives to expect:** pasted PHP, Perl, jQuery or template-string code that calls what a variable holds, an LDAP filter pasted into a text field, and conditions or masks written without blanks (`if(!(x=y))`, `(x>0)&(y<=5)`). Exclude the rule on a field that carries such text ([every accepted false positive and miss](docs/threat-model.md#template-php-and-ldap-techniques-added-in-alpha7), including the readings that can be used to evade a check).
+
 ### Bodies of every non-binary content type are inspected
 
 - Before, a body was inspected only when it was JSON, a urlencoded form, multipart, `text/*`, or (with `allow_xml`) `application/xml`. XML, SOAP and other textual bodies (`application/soap+xml`, `application/graphql`, `application/yaml`, ...) allowed through `allowed_content_types` or a silenced `AEG-PROTO-002` were not inspected. They are now scanned as text and **can now block**. A body without a content type is scanned the same way.
