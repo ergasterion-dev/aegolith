@@ -242,14 +242,17 @@ func probeMatch(p string, keep func(start, end int) bool) bool {
 // rootNames match as the first segment only (followed by the end, '/' or
 // '.'): admin and status pages an API may also have below its prefix, and
 // secret files (shell histories, registry and cloud credentials, private
-// keys) that are ordinary file names in a repository browser or a key
-// store deeper in the path ("/api/v1/repos/1/files/.npmrc",
-// "/api/v1/keys/id_rsa").
+// keys) and the settings of AI coding assistants, which are ordinary file
+// names in a repository browser or a key store deeper in the path
+// ("/api/v1/repos/1/files/.npmrc", "/api/v1/keys/id_rsa",
+// "/repo/files/.claude/x").
 var rootNames = [...]string{
 	"/wp-admin", "/phpmyadmin", "/actuator", "/server-status",
 	"/.npmrc", "/.netrc", "/.pgpass", "/.ds_store", "/.s3cfg", "/.dockercfg", "/.docker", "/.kube",
 	"/.bash_history", "/.zsh_history", "/.mysql_history", "/.psql_history",
 	"/id_rsa", "/id_dsa", "/id_ecdsa", "/id_ed25519",
+	"/.claude", "/.cursor", "/.cursorignore", "/.continue", "/.windsurf", "/.zed", "/.roo", "/.kiro",
+	"/.junie", "/.opencode", "/.plandex", "/.rovodev", "/.a0proj",
 }
 
 // namedSegment reports whether rest starts with pre (case-insensitively)

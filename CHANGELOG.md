@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Mail command injection, AI-assistant files and URL spellings (`AEG-CRLF-001`, `AEG-SCANNER-002`, `AEG-SSRF-*`)
+
+- **New `AEG-CRLF-001` detections:** SMTP, POP3 and IMAP commands at the start of a line after a line break, in upper case (`MAIL FROM:<`, `RCPT TO:` an address, `EHLO` or `HELO` a host, `AUTH PLAIN`, `RETR 1`, `TOP 1 0`, `a001 LOGIN user pass`, `a001 SELECT INBOX`, `x1 STORE 1 +FLAGS`).
+- **New `AEG-SCANNER-002` detections:** AI-assistant files and directories as the first path segment (`/.claude`, `/.cursor`, `/.cursorignore`, `/.continue`, `/.windsurf`, `/.zed`, `/.roo`, `/.kiro`, `/.junie`, `/.opencode`, `/.plandex`, `/.rovodev`, `/.a0proj`), excused on declared routes like the other root names.
+- **New `AEG-SSRF-001` and `-002` detections:** `http:host` and `http:/host` read as `http://host/`, and U+3002, U+FF0E and U+FF61 read as `.` in any URL host.
+- Clear: `MAIL FROM: the team`, a closing line `QUIT`, quoted or prefixed transcripts, `A320 LIST`, `TOP 10 PRODUCTS 2026`, `AUTH LOGIN failed`, `/repo/files/.claude/x`, `the http:status header`, `http:error codes`, `http:404`, public hosts in every spelling.
+- **False positives to expect:** mail transcripts or commands pasted one to a line without a prefix, a line that has a command's shape by chance (`TOP 10 2026`, `A101 STORE 5`), an API that serves an assistant name at its root, and text that spells an internal host without slashes (`http:localhost`, a tag `http:10.0.1`). Exclude the rule on a field that carries such text ([every accepted false positive and miss](docs/threat-model.md#mail-commands-assistant-files-and-url-spellings-added-in-alpha7), including the readings that can be used to evade a check).
+
 ### Template, PHP and LDAP techniques (`AEG-SSTI-001`, `AEG-CODEI-001`, `AEG-LDAP-001`)
 
 - **New `AEG-SSTI-001` detections:** Perl interpolation (`@{[ ... ]}`).

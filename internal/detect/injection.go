@@ -273,9 +273,11 @@ func JNDI(v string) (Hit, bool) {
 	return Hit{}, false
 }
 
-// CRLF reports whether v injects an HTTP header: a CR or LF (raw or
-// percent-encoded) followed by a response header an attacker would set.
-// Multi-line notes such as "Note: ring bell" on a new line do not match.
+// CRLF reports whether v injects an HTTP header or a mail command: a CR or LF
+// (raw or percent-encoded) followed by a response header an attacker would
+// set, or, after optional blanks, by an SMTP, POP3 or IMAP command (see
+// mailCommandAt). Multi-line notes such as "Note: ring bell" on a new line do
+// not match.
 func CRLF(v string) (Hit, bool) {
 	if valueOrDecoded(v, isCRLF) {
 		return Hit{RuleID: "AEG-CRLF-001", Category: model.CatCRLF, Severity: model.SeverityHigh}, true
@@ -2379,7 +2381,7 @@ func isCRLF(s string) bool {
 		for j < len(s) && (s[j] == '\r' || s[j] == '\n') {
 			j++
 		}
-		if injectedHeaderAt(s, j) {
+		if injectedHeaderAt(s, j) || mailCommandAt(s, skipBlanks(s, j)) {
 			return true
 		}
 		i = j - 1

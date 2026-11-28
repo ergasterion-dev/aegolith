@@ -287,6 +287,7 @@ func TestProbePathAndUserAgentLinear(t *testing.T) {
 		"actuator-x": "/actuator/",
 		"env":        "/.env.",
 		"slashes":    "/",
+		"assistant":  "/.cursor",
 	}
 	// One long first segment: the root dump scan reads it once.
 	roots := map[string]string{"sql": ".sql", "sql-almost": ".sq", "dots": "."}
@@ -333,4 +334,53 @@ func TestProbePathRootCompressedWebTypes(t *testing.T) {
 		"/x.sql.mjs.gz", "/backup.tar.rss.gz", "/backup.zip.woff2.gz", "/x.mjs.tar.gz", "/x.ico.gz.gz",
 		"/font.woff2.zip", "/x.htm.tar", "/feed.rss.7z", "/app.mjs.map.gz", "/x.mjsx.gz", "/x.woff3.gz",
 	})
+}
+
+// assistantNames are the AI-assistant files and directories ProbePath reads
+// as the first segment.
+var assistantNames = []string{
+	".claude", ".cursor", ".cursorignore", ".continue", ".windsurf", ".zed", ".roo", ".kiro", ".junie",
+	".opencode", ".plandex", ".rovodev", ".a0proj",
+}
+
+// Each name matches as the whole first segment, or before a '.', in any case.
+func TestProbePathAssistantConfig(t *testing.T) {
+	probe := Hit{RuleID: "AEG-SCANNER-002", Category: model.CatScanner, Severity: model.SeverityMedium}
+	for _, n := range assistantNames {
+		upper := strings.ToUpper(n)
+		assertHits(t, "ProbePath", ProbePath, probe, []string{
+			"/" + n, "/" + upper, "/" + n + "/", "/" + n + "/settings.json", "/" + n + "/a/b",
+			"/" + n + ".json", "/" + n + ".bak",
+		})
+		assertNoHits(t, "ProbePath", ProbePath, []string{
+			// Without the dot, below the first segment, or part of a longer
+			// name.
+			"/" + n[1:], "/" + n[1:] + "/settings.json", "/a/" + n, "/repo/files/" + n + "/x",
+			"//" + n, "/x" + n, "/" + n + "x", "/" + n + "d", "/" + n + "-notes", "/" + n + "_old",
+			"/" + n + "rc", "/." + n, "/" + n + ";x", "/" + n + "\\x",
+		})
+	}
+	assertNoHits(t, "ProbePath", ProbePath, []string{
+		"/continue", "/zed", "/a/.cursor", "/.well-known/openid-configuration", "/.clauded", "/.zedx",
+		"/.cursorrules", "/.cursor-tutor", "/.continueignore", "/.rooignore", "/.roomodes", "/.windsurfrules",
+		"/repo/files/.claude/x",
+		"/.claude%2Fx", "/api/v1/.continue", "/.git-guide",
+	})
+}
+
+// The excuse for a declared route covers a root name to the end of the path,
+// as for the other root names.
+func TestProbePathAssistantConfigRange(t *testing.T) {
+	const p = "/.claude/settings.json"
+	var got []string
+	ProbePathExcept(p, func(s, e int) bool { got = append(got, p[s:e]); return true })
+	if len(got) != 1 || got[0] != p[1:] {
+		t.Fatalf("ranges %q, want %q", got, p[1:])
+	}
+}
+
+// Accepted false positives, listed in docs/threat-model.md.
+func TestProbePathAssistantConfigFalsePositives(t *testing.T) {
+	probe := Hit{RuleID: "AEG-SCANNER-002", Category: model.CatScanner, Severity: model.SeverityMedium}
+	assertHits(t, "ProbePath", ProbePath, probe, []string{"/.continue", "/.zed.png", "/.roo/status", "/.cursor.next"})
 }

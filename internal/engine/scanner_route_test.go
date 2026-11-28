@@ -250,3 +250,28 @@ func TestDeclaredRouteNotExcused(t *testing.T) {
 		t.Errorf("template with a trailing slash: %v", ids)
 	}
 }
+
+// TestDeclaredRouteAssistantConfig: an AI-assistant name is excused as the
+// other root names are, only when the declared route spells the whole path
+// literally.
+func TestDeclaredRouteAssistantConfig(t *testing.T) {
+	e := newEngine(t, Options{Mode: model.ModeMonitor, FailOpen: true, UnknownRoute: model.ActionMonitor, Routes: []policy.Route{
+		{Method: "GET", Path: "/.continue"},
+		{Method: "GET", Path: "/.zed/status"},
+		{Method: "GET", Path: "/.claude/:file"},
+		{Method: "GET", Path: "/:slug"},
+	}})
+	for path, want := range map[string]bool{
+		"/.continue":             false,
+		"/.zed/status":           false,
+		"/.claude/settings.json": true, // the name runs into a parameter
+		"/.cursor":               true, // /:slug
+		"/.zed/other":            true, // undeclared
+		"/.continue/":            true, // a slash the template does not have
+	} {
+		d := e.Inspect(&model.Request{Method: "GET", RawPath: path, Header: http.Header{}})
+		if ids := scannerRules(d); (len(ids) == 1 && ids[0] == "AEG-SCANNER-002") != want || !want && len(ids) != 0 {
+			t.Errorf("%q: %v, want flagged %v", path, ids, want)
+		}
+	}
+}

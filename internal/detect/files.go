@@ -44,18 +44,20 @@ func RFI(v string) (Hit, bool) {
 	return Hit{}, false
 }
 
-// SSRF reports whether v holds a URL (scheme then "://") whose host is a
-// cloud metadata endpoint (AEG-SSRF-001) or a loopback, private or
-// link-local address or localhost (AEG-SSRF-002). Hosts are compared after
-// lower-casing, dropping userinfo, port and a trailing dot; numeric hosts
-// are read the way inet_aton does (127.1, 2130706433, 0x7f000001,
-// 0177.0.0.1) and bracketed IPv6 hosts as IPv6, IPv4-mapped included. An
-// address outside a URL ("router at 192.168.1.1") does not count.
+// SSRF reports whether v holds a URL (scheme then "://", or "http:" with one
+// or no slash; see slashlessRule) whose host is a cloud metadata endpoint
+// (AEG-SSRF-001) or a loopback, private or link-local address or localhost
+// (AEG-SSRF-002). Hosts are compared after lower-casing, dropping userinfo,
+// port and a trailing dot, and reading U+3002, U+FF0E and U+FF61 as "."
+// (see asciiDots); numeric hosts are read the way inet_aton does (127.1,
+// 2130706433, 0x7f000001, 0177.0.0.1) and bracketed IPv6 hosts as IPv6,
+// IPv4-mapped included. An address outside a URL ("router at 192.168.1.1")
+// does not count.
 func SSRF(v string) (Hit, bool) {
-	rule := ssrfRule(v)
+	rule := hostRule(v)
 	if rule != ssrfMetadata {
 		if d, _ := normalize.DecodeValue(v); d != v {
-			rule = max(rule, ssrfRule(d))
+			rule = max(rule, hostRule(d))
 		}
 	}
 	switch rule {
@@ -207,7 +209,7 @@ const (
 	ssrfMetadata
 )
 
-// ssrfRule classifies the host of every URL in s and returns the worst
+// ssrfRule classifies the host of every "://" URL in s and returns the worst
 // class found. Each authority scan stops at the first '/', and every later
 // "://" contains one, so no scan reaches past the next "://": every byte is
 // read a bounded number of times, linear overall.
@@ -248,12 +250,14 @@ func isAuthorityEnd(c byte) bool {
 	return false
 }
 
-// urlHost returns the host of an authority: after the last '@', without the
-// port, without a trailing dot. A bracketed IPv6 host keeps its brackets.
+// urlHost returns the host of an authority: after the last '@', with
+// ideographic dots read as "." (see asciiDots), without the port, without a
+// trailing dot. A bracketed IPv6 host keeps its brackets.
 func urlHost(auth string) string {
 	if i := strings.LastIndexByte(auth, '@'); i >= 0 {
 		auth = auth[i+1:]
 	}
+	auth = asciiDots(auth)
 	if strings.HasPrefix(auth, "[") {
 		if i := strings.IndexByte(auth, ']'); i >= 0 {
 			return auth[:i+1]
